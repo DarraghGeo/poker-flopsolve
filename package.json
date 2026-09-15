@@ -1,0 +1,32 @@
+{
+  "name": "@toysolver/holdem",
+  "version": "0.1.0",
+  "description": "Postflop Texas Hold'em solver — give it a board, two ranges and a betting scheme, and it solves to showdown.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "solve": "node --import tsx bin/solve.ts"
+  },
+  "keywords": ["poker", "holdem", "gto", "cfr", "solver", "postflop"],
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
