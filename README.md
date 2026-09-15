@@ -110,9 +110,13 @@ Measured on a 133 vs 145 combo spot, 8 cores:
 
 `workers: 'auto'` uses one less than the machine's parallelism; `workers: 1` stays on one
 thread. A river spot has a single runout and silently stays single-threaded whatever is
-asked for. Results agree to floating point rather than bit-for-bit: a worker sums its own
-slice before the totals are summed across workers, which associates the same addition
-differently.
+asked for.
+
+Results are bitwise deterministic at a fixed worker count, but agree with a different count
+only to floating point: a worker sums its own slice before the totals are summed across
+workers, which associates the same addition differently, and the non-linear CFR+ clamp
+compounds that rounding. Measured, the gap sits at 1e-15 through 300 iterations and reaches
+1e-7 by 2,000 — always orders of magnitude below the exploitability at that point.
 
 The single largest cost is the number of runouts: a river board has one, a turn 48, a flop
 2,352. Tree width matters nearly as much — a second bet size roughly quadruples the work.

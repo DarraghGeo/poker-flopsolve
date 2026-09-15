@@ -236,9 +236,16 @@ export interface SolveOptions {
 	readonly precision?: 'f32' | 'f64';
 	/**
 	 * Worker threads to split the runouts across. 1 stays single-threaded;
-	 * 'auto' picks a count from the machine. Results agree to floating point
-	 * either way — workers associate the runout sum differently, so the last
-	 * bit or two can move; nothing above that does.
+	 * 'auto' picks a count from the machine.
+	 *
+	 * A fixed worker count is bitwise deterministic, but CHANGING it moves the
+	 * answer slightly: a worker sums its own slice of runouts before the totals
+	 * are summed across workers, which associates the same addition
+	 * differently, and the non-linear clamp in CFR+ compounds that rounding.
+	 * Measured here it sits at 1e-15 through three hundred iterations and
+	 * reaches 1e-7 by two thousand — always orders of magnitude under the
+	 * exploitability, so never the largest error in the answer, but do not
+	 * expect two worker counts to agree bit for bit.
 	 */
 	readonly workers?: number | 'auto';
 }

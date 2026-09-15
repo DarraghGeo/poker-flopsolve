@@ -239,7 +239,9 @@ describe('worker parallelism', () => {
 	// point, not bit-for-bit: a worker sums its own slice before the totals are
 	// summed across workers, which associates the runout sum differently. A
 	// wrong slice boundary or a doubly applied update would show up far above
-	// that noise floor.
+	// that noise floor. At 60 iterations the rounding gap is ~1e-15, four
+	// orders under what is asserted; it widens with iteration count, because
+	// the clamp is non-linear, so raising the count here wants a looser bound.
 	const spot = () =>
 		defineSpot({
 			board: 'Qs Jh 4d 2c',
