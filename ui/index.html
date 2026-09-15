@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>hold'em solver</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg:#f6f7f9; --panel:#fff; --panel-2:#fbfbfd; --ink:#16181d; --ink-dim:#61656e;
+  --ink-faint:#9aa0aa; --line:#e3e5ea; --line-soft:#eef0f4; --accent:#3b5bdb;
+  --accent-soft:#e7ecfd; --warn:#c2410c;
+  --fold:#9aa0aa; --check:#2f9e69; --call:#1f8a70; --bet:#e8890c; --raise:#d9480f; --allin:#b02525;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#14161a; --panel:#1b1e24; --panel-2:#20242b; --ink:#e7e9ee; --ink-dim:#a2a8b4;
+    --ink-faint:#6e747f; --line:#2b3038; --line-soft:#242830; --accent:#7391ff;
+    --accent-soft:#232a42; --warn:#f08b4f;
+    --fold:#6e747f; --check:#46b883; --call:#3aa88b; --bet:#f0a33c; --raise:#ef7a45; --allin:#e05a5a;
+  }
+}
+* { box-sizing:border-box; }
+[hidden] { display:none !important; }
+body {
+  margin:0; background:var(--bg); color:var(--ink); height:100vh; overflow:hidden;
+  display:flex; flex-direction:column;
+  font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+}
+header {
+  display:flex; align-items:center; gap:16px; padding:0 16px; height:48px; flex:none;
+  background:var(--panel); border-bottom:1px solid var(--line);
+}
+header h1 { font-size:14px; font-weight:650; margin:0; letter-spacing:-.01em; }
+header h1 span { color:var(--ink-faint); font-weight:400; }
+.stats { display:flex; gap:18px; margin-left:auto; align-items:center; transition:opacity .2s; }
+.stats.stale { opacity:.3; }
+.stat { display:flex; flex-direction:column; line-height:1.25; }
+.stat b { font:600 13px/1.25 var(--mono); }
+.stat i { font-style:normal; font-size:10px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.05em; }
+
+main { flex:1; display:grid; grid-template-columns:300px 260px 1fr; min-height:0; }
+.col { min-height:0; display:flex; flex-direction:column; border-right:1px solid var(--line); background:var(--panel); }
+.col:last-child { border-right:0; background:var(--bg); }
+.col > h2 {
+  margin:0; padding:9px 14px; flex:none; font-size:10.5px; font-weight:650;
+  text-transform:uppercase; letter-spacing:.07em; color:var(--ink-faint);
+  border-bottom:1px solid var(--line-soft); display:flex; align-items:center; gap:8px;
+}
+.scroll { overflow-y:auto; flex:1; min-height:0; }
+#grid { overflow-x:auto; }
+
+.form { padding:12px 14px; display:flex; flex-direction:column; gap:9px; }
+.field { display:grid; grid-template-columns:76px 1fr; align-items:center; gap:8px; }
+.field > label { font-size:11.5px; color:var(--ink-dim); }
+.field.wide { grid-template-columns:1fr; gap:4px; }
+input, select, button, textarea {
+  font:inherit; color:var(--ink); background:var(--panel-2); border:1px solid var(--line);
+  border-radius:6px; padding:5px 7px; width:100%;
+}
+input[type=number], .mono { font-family:var(--mono); }
+input:focus, select:focus, textarea:focus { outline:2px solid var(--accent-soft); border-color:var(--accent); }
+.row2 { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; padding:8px; cursor:pointer; }
+button.primary:hover { filter:brightness(1.08); }
+#stop { color:var(--warn); border-color:color-mix(in srgb,var(--warn) 30%,var(--line)); cursor:pointer; font-weight:600; padding:8px; }
+.estimate {
+  font:11px/1.55 var(--mono); color:var(--ink-dim); background:var(--panel-2);
+  border:1px solid var(--line-soft); border-radius:9px; padding:8px 10px; white-space:pre-wrap;
+}
+.estimate.bad { color:var(--warn); border-color:color-mix(in srgb,var(--warn) 35%,var(--line)); }
+.hint { font:11px/1.4 var(--mono); color:var(--ink-faint); }
+.progress { height:3px; background:var(--line-soft); border-radius:2px; overflow:hidden; margin-top:6px; }
+.progress i { display:block; height:100%; background:var(--accent); transition:width .2s; }
+.err { color:var(--warn); font-size:11.5px; white-space:pre-wrap; }
+
+.line { display:flex; align-items:center; gap:7px; width:100%; padding:5px 12px; border:0; background:none; cursor:pointer; text-align:left; font-size:12px; }
+.line:hover { background:var(--line-soft); }
+.line.sel { background:var(--accent-soft); color:var(--accent); font-weight:600; }
+.line .guide { font:12px/1 var(--mono); color:var(--ink-faint); opacity:.55; white-space:pre; flex:none; letter-spacing:-.5px; }
+.line.sel .guide { opacity:.9; }
+.line .txt { font-family:var(--mono); font-size:11.5px; white-space:nowrap; }
+.line .deal { font:9.5px var(--mono); color:var(--ink-faint); border:1px solid var(--line); border-radius:3px; padding:1px 3px; margin-left:5px; }
+.line .spacer { flex:1; }
+.line .pl { font:600 9.5px/1 var(--mono); padding:3px 4px; border-radius:3px; background:var(--line); color:var(--ink-dim); flex:none; }
+.line.sel .pl { background:var(--accent); color:#fff; }
+.line .pot { font:11px var(--mono); color:var(--ink-faint); flex:none; }
+
+.toolbar { display:flex; gap:8px; align-items:center; flex:none; padding:9px 14px; border-bottom:1px solid var(--line); background:var(--panel); }
+.toolbar .grow { flex:1; }
+.toolbar input, .toolbar select, .toolbar button { width:auto; }
+.board button { width:28px; padding:5px 0; cursor:pointer; font-family:var(--mono); }
+.cards { font:600 13px var(--mono); letter-spacing:.04em; padding:0 4px; }
+.crumb { padding:9px 14px; border-bottom:1px solid var(--line-soft); background:var(--panel); font:12px var(--mono); color:var(--ink-dim); display:flex; align-items:center; gap:6px; flex-wrap:wrap; flex:none; }
+.crumb b { color:var(--accent); font-weight:650; }
+.crumb .arrow { color:var(--ink-faint); opacity:.6; }
+.legend { display:flex; gap:10px; flex-wrap:wrap; padding:8px 14px; font-size:11px; color:var(--ink-dim); border-bottom:1px solid var(--line-soft); flex:none; background:var(--panel); }
+.legend span { display:flex; align-items:center; gap:5px; }
+.legend i { width:9px; height:9px; border-radius:2px; display:block; }
+
+.matrix { display:grid; gap:2px; padding:14px; width:max-content; }
+.mx-head, .mx-side { font:600 10.5px var(--mono); color:var(--ink-faint); display:flex; align-items:center; justify-content:center; }
+.mx-side { justify-content:flex-end; padding-right:4px; }
+.mx-cell { position:relative; border:1px solid var(--line-soft); border-radius:3px; background:var(--panel); overflow:hidden; min-width:46px; }
+.mx-cell.dim { opacity:.2; }
+.mx-label { position:absolute; inset:2px auto auto 3px; z-index:1; pointer-events:none; font:600 9.5px var(--mono); color:var(--ink-faint); text-shadow:0 0 3px var(--panel); }
+.mx-cols { display:grid; align-items:end; height:36px; }
+.mx-cols i { display:block; width:100%; align-self:end; }
+.empty { padding:40px 20px; text-align:center; color:var(--ink-faint); font-size:12.5px; }
+.spinner { width:13px; height:13px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite; display:inline-block; vertical-align:-2px; }
+@keyframes spin { to { transform:rotate(360deg); } }
+#tip { position:fixed; z-index:50; max-width:280px; pointer-events:none; background:var(--panel); border:1px solid var(--line); border-radius:7px; padding:8px 10px; font-size:11.5px; line-height:1.45; box-shadow:0 6px 22px rgba(0,0,0,.18); opacity:0; transition:opacity .12s; }
+#tip.on { opacity:1; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>hold'em <span>postflop solver</span></h1>
+  <div class="stats" id="stats"></div>
+</header>
+
+<main>
+  <section class="col">
+    <h2>Spot</h2>
+    <div class="scroll">
+      <div class="form">
+        <div class="field"><label for="preset">Preset</label><select id="preset"></select></div>
+        <div class="field"><label for="board">Board</label>
+          <input id="board" class="mono" placeholder="As Kh 7d" data-tip="Three, four or five cards. Three solves the flop through to showdown, four the turn, five just the river."></div>
+        <div class="field"><label>Pot / stack</label>
+          <div class="row2">
+            <input type="number" id="pot" min="1" data-tip="Dead money already in the middle, in chips.">
+            <input type="number" id="stack" min="1" data-tip="Effective stack still behind, per player.">
+          </div>
+        </div>
+        <div class="field wide"><label for="oop">Out of position <span style="color:var(--ink-faint)">acts first</span></label>
+          <textarea id="oop" rows="2" class="mono" data-tip="Range notation: AA, KK-99, 22+, AKs, A2s+, AKo, AsKh, Ax, AXs, random. Add :0.5 for a partial weight. Board cards are removed automatically."></textarea></div>
+        <div class="field wide"><label for="ip">In position</label>
+          <textarea id="ip" rows="2" class="mono" data-tip="Range notation, same forms as above."></textarea></div>
+        <div class="field"><label for="bets">Bet sizes</label>
+          <input id="bets" class="mono" placeholder="0.5, 1.0" data-tip="Comma separated. A number is a fraction of the pot after calling; 4c is four chips; allin shoves."></div>
+        <div class="field"><label>Raises / iters</label>
+          <div class="row2">
+            <input type="number" id="raises" min="0" max="4" data-tip="Aggressive actions allowed per round. The opening bet counts as the first. Each extra raise multiplies the work.">
+            <input type="number" id="iters" min="1" step="50" data-tip="CFR+ iterations. Stopping early is fine — exploitability is usually low well before the end.">
+          </div>
+        </div>
+        <div class="estimate" id="estimate">…</div>
+        <button class="primary" id="solve">Solve</button>
+        <button id="stop" hidden>Stop</button>
+        <div id="status"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="col">
+    <h2>Betting lines <span id="lineCount" style="margin-left:auto;font-weight:400;text-transform:none;letter-spacing:0"></span></h2>
+    <div class="scroll" id="lines"><div class="empty">Solve a spot first.</div></div>
+  </section>
+
+  <section class="col">
+    <div class="toolbar">
+      <div class="board" id="boardPicker"></div>
+      <div class="grow"></div>
+      <input id="filter" placeholder="filter hands…" style="width:150px" data-tip="Match a hand label, e.g. AKs or As.">
+    </div>
+    <div class="crumb" id="crumb"></div>
+    <div class="legend" id="legend"></div>
+    <div class="scroll" id="grid"><div class="empty">No line selected.</div></div>
+  </section>
+</main>
+
+<script type="module">
+import { buildGeometry } from './grid.js';
+
+const $ = (id) => document.getElementById(id);
+const RANK_LABELS = 'AKQJT98765432'.split('');
+const SUITS = 'shdc';
+
+let presets = {}, session = null, summary = null, nodes = [], selected = null, board = 0;
+let table = null, geometry = null, columnEls = null, rowsByCombo = new Map(), lastLoad = 0;
+
+const bytes = (n) => n > 1<<30 ? (n/2**30).toFixed(1)+' GB' : n > 1<<20 ? (n/2**20).toFixed(0)+' MB' : (n/1024).toFixed(0)+' KB';
+const comboName = (c) => { const b = Math.floor((1+Math.sqrt(1+8*c))/2); const a = c - (b*(b-1))/2; return card(b)+card(a); };
+const card = (c) => RANK_LABELS[12 - (c >> 2)] + SUITS[c & 3];
+
+function readConfig() {
+  return {
+    board: $('board').value,
+    pot: +$('pot').value, stack: +$('stack').value,
+    oop: $('oop').value, ip: $('ip').value,
+    betSizes: [$('bets').value.split(',').map((t) => {
+      const s = t.trim();
+      if (s === 'allin') return 'allin';
+      if (/^[\d.]+c$/i.test(s)) return { chips: Number(s.slice(0, -1)) };
+      return Number(s);
+    })],
+    maxRaises: +$('raises').value,
+  };
+}
+function writeConfig(c) {
+  $('board').value = c.board; $('pot').value = c.pot; $('stack').value = c.stack;
+  $('oop').value = c.oop; $('ip').value = c.ip;
+  $('bets').value = c.betSizes[0].map((s) => s === 'allin' ? 'allin' : typeof s === 'object' ? s.chips+'c' : s).join(', ');
+  $('raises').value = c.maxRaises ?? 1;
+  $('iters').value = c.iterations ?? 500;
+}
+
+let estimateTimer;
+const scheduleEstimate = () => { $('stats').classList.add('stale'); clearTimeout(estimateTimer); estimateTimer = setTimeout(runEstimate, 250); };
+async function runEstimate() {
+  const el = $('estimate');
+  try {
+    const r = await (await fetch('/api/estimate', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ config: readConfig() }) })).json();
+    if (!r.ok) { el.className = 'estimate bad'; el.textContent = r.message.split('\n').slice(0,4).join('\n'); $('solve').disabled = true; return; }
+    const e = r.estimate;
+    el.className = 'estimate';
+    el.textContent =
+      `${e.combos[0]} vs ${e.combos[1]} combos · ${e.runouts.toLocaleString()} runout(s)\n` +
+      `${e.totalSlots.toLocaleString()} slots · ${bytes(e.bytes)}\n` +
+      `~${(e.secondsPerThousandIterations * (+$('iters').value / 1000)).toFixed(0)}s at ${$('iters').value} iterations`;
+    $('solve').disabled = false;
+  } catch (err) { el.className = 'estimate bad'; el.textContent = String(err); $('solve').disabled = true; }
+}
+
+async function solve() {
+  $('lines').innerHTML = '<div class="empty"><span class="spinner"></span></div>';
+  $('grid').innerHTML = '<div class="empty">Building…</div>';
+  $('legend').innerHTML = ''; $('crumb').innerHTML = ''; $('boardPicker').innerHTML = ''; $('stats').innerHTML = '';
+  nodes = []; selected = null; table = null; summary = null; geometry = null; columnEls = null;
+  $('solve').hidden = true; $('stop').hidden = false;
+  const { id } = await (await fetch('/api/solve', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ config: readConfig(), iterations: +$('iters').value }) })).json();
+  session = id;
+  poll();
+}
+
+async function poll() {
+  const s = await (await fetch(`/api/status?id=${session}`)).json();
+  if (s.summary && !summary) {
+    summary = s.summary;
+    geometry = buildGeometry(13, 4, 2, RANK_LABELS);
+  }
+  if (s.nodes && !nodes.length) applyNodes(s.nodes);
+
+  if (s.status === 'error') {
+    $('status').innerHTML = `<div class="err">${s.error}</div>`;
+    $('lines').innerHTML = '<div class="empty">Solve failed.</div>';
+    $('grid').innerHTML = '<div class="empty">—</div>';
+    $('solve').hidden = false; $('stop').hidden = true;
+    return;
+  }
+
+  const total = +$('iters').value;
+  const p = s.progress;
+  renderStats(s);
+
+  if (s.status === 'ready') {
+    $('status').innerHTML = s.result?.stopped ? `<div class="hint">stopped at ${s.result.iterations.toLocaleString()} iterations</div>` : '';
+    $('solve').hidden = false; $('stop').hidden = true;
+    refresh(true);
+    return;
+  }
+  $('status').innerHTML =
+    `<div class="hint"><span class="spinner"></span> ${p ? `${p.iteration.toLocaleString()} / ${total.toLocaleString()}` : 'building…'}` +
+    `${p && isFinite(p.exploitability) ? ` · ${p.exploitability.toFixed(3)}% of pot` : ''}</div>` +
+    `<div class="progress"><i style="width:${p ? (100*p.iteration/total).toFixed(1) : 2}%"></i></div>`;
+  refresh(false);
+  setTimeout(poll, 300);
+}
+
+function renderStats(s) {
+  if (!summary) return;
+  const r = s.result, p = s.progress;
+  const cells = [];
+  if (r) cells.push(['EV oop', r.ev[0].toFixed(2)]);
+  const eps = r?.exploitability ?? p?.exploitability;
+  if (eps !== undefined && isFinite(eps)) cells.push(['exploitability', eps.toFixed(3) + '%']);
+  cells.push(['combos', summary.combos.join(' v ')], ['runouts', summary.runouts.toLocaleString()],
+    ['memory', bytes(summary.bytes)], ['time', ((r?.elapsedMs ?? p?.elapsedMs ?? 0)/1000).toFixed(1)+'s']);
+  $('stats').innerHTML = cells.map(([k,v]) => `<div class="stat"><b>${v}</b><i>${k}</i></div>`).join('');
+  $('stats').classList.remove('stale');
+}
+
+function applyNodes(list) {
+  nodes = list;
+  $('lineCount').textContent = nodes.length;
+  const byId = new Map(nodes.map((n,i) => [n.id, i]));
+  const kids = new Map();
+  for (const n of nodes) { if (n.parent < 0) continue; if (!kids.has(n.parent)) kids.set(n.parent, []); kids.get(n.parent).push(n.id); }
+
+  const rows = [];
+  const emit = (id, prefix, isLast, isRoot) => {
+    const n = nodes[byId.get(id)];
+    rows.push({ id, prefix: prefix + (isRoot ? '' : isLast ? '└─ ' : '├─ '), node: n });
+    const children = kids.get(id) ?? [];
+    const next = prefix + (isRoot ? '' : isLast ? '   ' : '│  ');
+    children.forEach((k,i) => emit(k, next, i === children.length-1, false));
+  };
+  nodes.filter((n) => n.parent < 0).forEach((n,i,a) => emit(n.id, '', i === a.length-1, true));
+
+  $('lines').innerHTML = rows.map(({ id, prefix, node }) =>
+    `<button class="line" data-i="${byId.get(id)}" title="${node.path}">` +
+    `<span class="guide">${prefix}</span><span class="txt">${node.parent < 0 ? 'start' : node.via}</span>` +
+    `${node.dealt ? '<span class="deal">deal</span>' : ''}` +
+    `<span class="spacer"></span><span class="pl">P${node.player}</span><span class="pot">${node.pot}</span></button>`).join('');
+  $('lines').querySelectorAll('.line').forEach((el) => el.addEventListener('click', () => select(+el.dataset.i)));
+  select(0);
+}
+
+function lineOf(i) {
+  const byId = new Map(nodes.map((n,j) => [n.id, j]));
+  const steps = [];
+  let n = nodes[i];
+  while (n && n.parent >= 0) {
+    const p = nodes[byId.get(n.parent)];
+    if (n.dealt) steps.push('<i>deal</i>');
+    steps.push(`<b>${p.player ? 'IP' : 'OOP'}</b> ${n.via}`);
+    n = p;
+  }
+  steps.reverse();
+  steps.push(`<b>${nodes[i].player ? 'IP' : 'OOP'}</b> to act`);
+  return steps.join('<span class="arrow">→</span>');
+}
+
+const COLOR = (label) => {
+  const k = label.split(' ')[0];
+  return `var(--${['fold','check','call','bet','raise','allin'].includes(k) ? k : 'fold'})`;
+};
+
+async function select(i) { selected = i; board = 0; $('lines').querySelectorAll('.line').forEach((el,j) => el.classList.toggle('sel', j===i)); await load(); }
+function refresh(force) { if (selected === null) return; const now = Date.now(); if (!force && now - lastLoad < 800) return; lastLoad = now; load(true); }
+
+async function load(quiet) {
+  const at = selected, onBoard = board, node = nodes[at];
+  if (!quiet) $('grid').innerHTML = '<div class="empty"><span class="spinner"></span></div>';
+  const next = await (await fetch(`/api/strategy?id=${session}&node=${node.id}&board=${onBoard}`)).json();
+  if (selected !== at || board !== onBoard) return;
+  table = next;
+  renderPicker(node);
+  render();
+}
+
+function renderPicker(node) {
+  const el = $('boardPicker');
+  if (node.boards <= 1) { el.innerHTML = `<span class="cards">${table.boardLabel ?? ''}</span>`; return; }
+  el.innerHTML = `<button id="bPrev" title="previous runout (←)">‹</button><span class="cards">${table.boardLabel}</span>` +
+    `<button id="bNext" title="next runout (→)">›</button>` +
+    `<input id="bJump" type="number" min="1" max="${node.boards}" value="${board+1}" style="width:76px">` +
+    `<span class="hint">/ ${node.boards.toLocaleString()}</span>`;
+  $('bPrev').onclick = () => step(-1);
+  $('bNext').onclick = () => step(1);
+  $('bJump').onchange = () => { const n = Math.min(node.boards, Math.max(1, +$('bJump').value)) - 1; if (n !== board) { board = n; load(); } };
+}
+function step(d) { const n = nodes[selected]?.boards ?? 1; if (n <= 1) return; board = (board + d + n) % n; load(); }
+
+function render() {
+  if (!table) return;
+  if (table.error) { $('grid').innerHTML = `<div class="empty err">${table.error}</div>`; columnEls = null; return; }
+  const acts = table.actions;
+  $('crumb').innerHTML = lineOf(selected);
+  $('legend').innerHTML = `<span style="color:var(--ink-faint)">pot ${nodes[selected].pot}</span>` +
+    acts.map((a) => `<span><i style="background:${COLOR(a)}"></i>${a}</span>`).join('');
+
+  const mounted = $('grid').firstElementChild?.classList.contains('matrix');
+  if (!mounted || !columnEls) { $('grid').innerHTML = ''; $('grid').appendChild(buildMatrix()); }
+  paint();
+}
+
+function buildMatrix() {
+  const g = geometry;
+  const root = document.createElement('div');
+  root.className = 'matrix';
+  root.style.gridTemplateColumns = `auto repeat(13, 46px)`;
+  columnEls = new Array(g.handCount).fill(null);
+  const cellCols = new Array(169).fill(null);
+  const lab = (cls, text) => { const e = document.createElement('div'); e.className = cls; e.textContent = text; return e; };
+
+  root.appendChild(lab('mx-head',''));
+  for (let c = 0; c < 13; c++) root.appendChild(lab('mx-head', g.rankLabels[c]));
+  for (let r = 0; r < 13; r++) {
+    root.appendChild(lab('mx-side', g.rankLabels[r]));
+    for (let c = 0; c < 13; c++) {
+      const index = r*13 + c;
+      const cell = document.createElement('div');
+      cell.className = 'mx-cell'; cell.dataset.cell = String(index);
+      cell.appendChild(lab('mx-label', g.cellLabel[index]));
+      const cols = document.createElement('div');
+      cols.className = 'mx-cols';
+      cols.style.gridTemplateColumns = `repeat(${g.cellSlots[index]}, 1fr)`;
+      const list = [];
+      for (let i = 0; i < g.cellSlots[index]; i++) { const bar = document.createElement('i'); cols.appendChild(bar); list.push(bar); }
+      cell.appendChild(cols); root.appendChild(cell);
+      cellCols[index] = list;
+    }
+  }
+  for (let hand = 0; hand < g.handCount; hand++) {
+    const list = cellCols[g.cellOf[hand]];
+    if (!list) continue;
+    const bar = list[g.slotOf[hand]];
+    bar.dataset.hand = String(hand);
+    columnEls[hand] = bar;
+  }
+  return root;
+}
+
+function paint() {
+  const acts = table.actions;
+  rowsByCombo = new Map(table.rows.map((r) => [r.combo, r]));
+  let maxReach = 0;
+  for (const r of table.rows) if (r.reach > maxReach) maxReach = r.reach;
+  if (!(maxReach > 0)) maxReach = 1;
+  const q = $('filter').value.trim().toLowerCase();
+  const liveCells = new Map();
+
+  for (let hand = 0; hand < geometry.handCount; hand++) {
+    const bar = columnEls[hand];
+    if (!bar) continue;
+    const row = rowsByCombo.get(hand);
+    if (!row) { bar.style.height = '0%'; bar.style.background = 'none'; continue; }
+    const h = Math.min(100, (row.reach / maxReach) * 100);
+    bar.style.height = h < 0.2 ? '0%' : h.toFixed(2)+'%';
+    let at = 0; const stops = [];
+    for (let a = 0; a < row.probs.length; a++) {
+      if (row.probs[a] <= 0.0005) continue;
+      const to = Math.min(100, at + row.probs[a]*100);
+      stops.push(`${COLOR(acts[a])} ${at.toFixed(2)}% ${to.toFixed(2)}%`);
+      at = to;
+    }
+    bar.style.background = stops.length ? `linear-gradient(to top, ${stops.join(',')})` : 'none';
+    const hit = !q || comboName(hand).toLowerCase().includes(q);
+    bar.style.opacity = hit ? '' : '0.15';
+    if (hit) liveCells.set(geometry.cellOf[hand], true);
+  }
+  for (const cell of $('grid').querySelectorAll('.mx-cell')) {
+    cell.classList.toggle('dim', !!q && !liveCells.get(+cell.dataset.cell));
+  }
+}
+
+/* ---------- wiring ---------- */
+$('preset').addEventListener('change', () => { const c = presets[$('preset').value]; if (c) { writeConfig(c); runEstimate(); } });
+for (const id of ['board','pot','stack','oop','ip','bets','raises','iters']) $(id).addEventListener('input', scheduleEstimate);
+$('solve').addEventListener('click', solve);
+$('stop').addEventListener('click', () => fetch('/api/control', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ id: session, action:'stop' }) }));
+$('filter').addEventListener('input', () => table && paint());
+document.addEventListener('keydown', (e) => { if (e.target.matches('input, select, textarea')) return; if (e.key === 'ArrowLeft') step(-1); if (e.key === 'ArrowRight') step(1); });
+
+const tip = Object.assign(document.createElement('div'), { id:'tip' });
+document.body.appendChild(tip);
+function showTip(el) {
+  if (!el) { tip.classList.remove('on'); return; }
+  tip.textContent = el.dataset.tip; tip.classList.add('on');
+  const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
+  let x = r.right + 10;
+  if (x + t.width > innerWidth - 8) x = Math.max(8, r.left - t.width - 10);
+  tip.style.left = x+'px';
+  tip.style.top = Math.min(innerHeight - t.height - 8, Math.max(8, r.top - 4))+'px';
+}
+document.addEventListener('mouseover', (e) => {
+  const bar = e.target.closest?.('.mx-cols > i');
+  if (bar && table) {
+    const hand = +bar.dataset.hand, row = rowsByCombo.get(hand);
+    bar.dataset.tip = row
+      ? `${comboName(hand)} — ${table.actions.map((a,i) => `${a} ${(row.probs[i]*100).toFixed(1)}%`).join(', ')}. Reaches here ${(row.reach*100).toFixed(2)}% of the time.`
+      : `${comboName(hand)} — not in this player's range, or blocked by the board.`;
+    showTip(bar); return;
+  }
+  showTip(e.target.closest?.('[data-tip]'));
+});
+document.addEventListener('mouseout', (e) => { if (!e.relatedTarget?.closest?.('[data-tip], .mx-cols > i')) tip.classList.remove('on'); });
+
+presets = await (await fetch('/api/presets')).json();
+$('preset').innerHTML = Object.keys(presets).map((k) => `<option>${k}</option>`).join('');
+$('preset').dispatchEvent(new Event('change'));
+</script>
+</body>
+</html>

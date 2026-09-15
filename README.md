@@ -36,6 +36,28 @@ npm run solve -- --board "As Kh 7d 2c" --pot 60 --stack 120 \
 
 `--help` lists every flag.
 
+## Browser UI
+
+```bash
+npm run ui     # -> http://localhost:5174
+```
+
+Pick a preset or type a spot, solve, then walk the betting tree and read the strategy as a
+13x13 rank matrix. Each cell splits horizontally into one column per individual combination
+— six for a pair, four suited, twelve offsuit — and each column fills vertically with that
+combination's own action mix. Nothing is averaged.
+
+Column height is how often that combination actually reaches the node, so the grid shows
+the range narrowing as you descend a line. A combination the board has taken leaves its
+column empty. Hovering gives the exact frequencies and reach.
+
+Nodes past a deal get a runout picker: step rivers with the arrow keys, or jump to one by
+number. The line reaching the selected node is spelled out above the grid —
+`OOP check → IP check → deal → OOP check → IP to act`.
+
+Solving runs in its own worker thread, so progress streams and **Stop** ends early while
+keeping the partial answer.
+
 ## Ranges
 
 ```

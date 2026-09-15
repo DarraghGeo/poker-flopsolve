@@ -267,25 +267,42 @@ export interface StrategyView {
 	readonly probs: Float64Array;
 }
 
+/** An in-progress solve the caller drives. */
+export interface SolveRun {
+	readonly spot: Spot;
+	/** Iterations completed so far. */
+	readonly completed: number;
+	/** Run `count` more CFR+ iterations. */
+	step(count: number): void;
+	/** Distance from equilibrium as a percentage of the pot. */
+	exploitabilityPercent(): number;
+	/** A view of the strategy as it stands; cheap, take a fresh one each time. */
+	snapshot(history?: readonly Progress[]): Solution;
+}
+
 /**
- * Solve a prepared spot.
+ * Prepare a solve without running it.
+ *
+ * Stepping costs nothing over one long call — the work per iteration is
+ * identical — and it is what lets a caller report progress or stop early while
+ * keeping the partial answer.
+ *
  * @param spot from {@link defineSpot}
- * @param options solver tuning
+ * @param options solver setup
  */
-export function solve(spot: Spot, options: SolveOptions = {}): Solution {
-	const iterations = options.iterations ?? 500;
-	const exploitEvery = options.exploitEvery ?? 0;
+export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const precision = options.precision ?? (spot.estimate.totalSlots < 4_000_000 ? 'f64' : 'f32');
 
 	// Hands neither player holds never carry reach, so they need no ranking.
 	const relevant = new Uint8Array(COMBOS);
 	for (const combo of spot.players[0].combos) relevant[combo] = 1;
 	for (const combo of spot.players[1].combos) relevant[combo] = 1;
+
 	const showdown = buildShowdownTable(spot.runouts, relevant);
 	const layout = buildLayout(spot.tree, spot.runouts, spot.players, precision === 'f64' ? 8 : 4);
 	const alloc = precision === 'f64' ? Float64Array : Float32Array;
-
 	const weights = runoutWeights(spot.runouts);
+
 	const ctx: Context = {
 		tree: spot.tree,
 		runouts: spot.runouts,
@@ -305,26 +322,55 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 	};
 
 	const solver = makeSolver(ctx);
+	let completed = 0;
+
+	return {
+		spot,
+		get completed() {
+			return completed;
+		},
+		step(count) {
+			if (count <= 0) return;
+			solver.iterate(count, completed);
+			completed += count;
+		},
+		exploitabilityPercent() {
+			return (100 * solver.exploitability()) / (spot.potUnits / spot.chipScale);
+		},
+		snapshot(history = []) {
+			return makeSolution(spot, ctx, solver, completed, [...history]);
+		},
+	};
+}
+
+/**
+ * Solve a prepared spot.
+ * @param spot from {@link defineSpot}
+ * @param options solver tuning
+ */
+export function solve(spot: Spot, options: SolveOptions = {}): Solution {
+	const iterations = options.iterations ?? 500;
+	const exploitEvery = options.exploitEvery ?? 0;
+	const run = createRun(spot, options);
 	const history: Progress[] = [];
 	const started = Date.now();
 
 	let done = 0;
 	while (done < iterations) {
 		const chunk = exploitEvery > 0 ? Math.min(exploitEvery, iterations - done) : iterations - done;
-		solver.iterate(chunk, done);
+		run.step(chunk);
 		done += chunk;
 		if (exploitEvery > 0) {
 			const info: Progress = {
 				iteration: done,
-				exploitability: solver.exploitability(),
+				exploitability: run.snapshot().exploitability(),
 				elapsedMs: Date.now() - started,
 			};
 			history.push(info);
 			options.onProgress?.(info);
 		}
 	}
-
-	return makeSolution(spot, ctx, solver, iterations, history);
+	return run.snapshot(history);
 }
 
 function makeSolution(
