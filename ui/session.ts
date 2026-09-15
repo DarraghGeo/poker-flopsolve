@@ -130,7 +130,9 @@ port.on('message', (message: Record<string, unknown>) => {
 
 async function main(): Promise<void> {
 	const spot = defineSpot(config);
-	run = createRun(spot);
+	// Workers split the runouts; on a flop spot that is the difference between
+	// a minute and quarter of one.
+	run = createRun(spot, { workers: 'auto' });
 
 	// Betting lines are structural, so the tree can be browsed before a single
 	// iteration has run.

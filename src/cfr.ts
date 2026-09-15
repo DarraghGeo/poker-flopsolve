@@ -92,6 +92,8 @@ export interface Context {
 	readonly strategySum: Float64Array | Float32Array;
 	readonly scratch: TerminalScratch;
 	readonly chipScale: number;
+	/** Which combinations each player can hold on each board. */
+	readonly active: ActiveLists;
 	/**
 	 * Board completions still to come after each round, with four cards already
 	 * removed for the two hands. A hand that ends early would otherwise be
@@ -100,6 +102,23 @@ export interface Context {
 	readonly runoutWeight: Float64Array;
 	/** Total weighted mass of legal matchups; divides raw values into chips. */
 	readonly totalMass: number;
+	/**
+	 * Runout range this traversal is responsible for, as [start, end), at
+	 * `shardRound`. Workers each take a slice; a single-threaded solve takes
+	 * the whole level. Runouts partition storage, so slices never collide.
+	 */
+	shardStart: number;
+	shardEnd: number;
+	/** Round at which sharding applies; -1 to disable. */
+	shardRound: number;
+	/** Whether traverser nodes accumulate regret. False during a collect pass. */
+	applyUpdates: boolean;
+	/** Captures the reach a worker will need, instead of expanding. */
+	chanceCollect: ((node: number, reachMe: Float64Array, reachOpp: Float64Array) => void) | null;
+	/** Values to substitute for chance nodes at the shard round, by entry index. */
+	chanceOverride: Float64Array | null;
+	/** Node index to entry index for shard-round chance nodes, else -1. */
+	entryIndexOf: Int32Array | null;
 }
 
 /**
@@ -147,16 +166,73 @@ export function matchupMass(a: Float64Array, b: Float64Array): number {
 	return mass;
 }
 
+/**
+ * Which combinations each player can hold on each board.
+ *
+ * This depends only on the board and the player, never on the node, so
+ * rebuilding it at every one of the tens of thousands of node visits per
+ * traversal was pure repetition.
+ */
+interface ActiveLists {
+	/** Start of each list in `list`, indexed by `slotOf(round, board, player)`. */
+	readonly start: Int32Array;
+	readonly count: Uint16Array;
+	readonly list: Uint16Array;
+	/** First list index of each round. */
+	readonly roundBase: Int32Array;
+}
+
+function buildActiveLists(
+	runouts: Runouts,
+	players: readonly [PlayerIndex, PlayerIndex],
+): ActiveLists {
+	const roundBase = new Int32Array(runouts.rounds + 1);
+	for (let round = 0; round < runouts.rounds; round++) {
+		roundBase[round + 1] = roundBase[round] + runouts.counts[round];
+	}
+	const slots = roundBase[runouts.rounds] * 2;
+
+	const start = new Int32Array(slots);
+	const count = new Uint16Array(slots);
+	const entries: number[] = [];
+	const onBoard = new Uint8Array(DECK);
+
+	for (let round = 0; round < runouts.rounds; round++) {
+		const width = runouts.width[round];
+		const cards = runouts.cards[round];
+		for (let board = 0; board < runouts.counts[round]; board++) {
+			onBoard.fill(0);
+			for (let i = 0; i < width; i++) onBoard[cards[board * width + i]] = 1;
+			for (let player = 0; player < 2; player++) {
+				const index = players[player];
+				const slot = (roundBase[round] + board) * 2 + player;
+				start[slot] = entries.length;
+				for (let i = 0; i < index.count; i++) {
+					const combo = index.combos[i];
+					if (onBoard[COMBO_CARDS[combo * 2]] || onBoard[COMBO_CARDS[combo * 2 + 1]]) continue;
+					entries.push(combo);
+				}
+				count[slot] = entries.length - start[slot];
+			}
+		}
+	}
+	return { start, count, list: Uint16Array.from(entries), roundBase };
+}
+
 /** Per-depth buffers, so the hot loop never allocates. */
 interface Buffers {
 	readonly value: Float64Array[];
-	readonly reach: Float64Array[];
+	/**
+	 * Reach buffers per player. Only ever written at that player's own
+	 * combinations, so entries belonging to the other player stay zero from
+	 * allocation and never need clearing.
+	 */
+	readonly reachFor: readonly [Float64Array[], Float64Array[]];
 	readonly other: Float64Array[];
 	readonly strategy: Float64Array[];
 	readonly actionValues: Float64Array[];
 	readonly sum: Float64Array[];
 	readonly live: Uint16Array[];
-	readonly active: Uint16Array[];
 }
 
 function makeBuffers(tree: Tree, maxActions: number): Buffers {
@@ -164,13 +240,12 @@ function makeBuffers(tree: Tree, maxActions: number): Buffers {
 	const make = <T>(factory: () => T): T[] => Array.from({ length: depth }, factory);
 	return {
 		value: make(() => new Float64Array(COMBOS)),
-		reach: make(() => new Float64Array(COMBOS)),
+		reachFor: [make(() => new Float64Array(COMBOS)), make(() => new Float64Array(COMBOS))],
 		other: make(() => new Float64Array(COMBOS)),
 		strategy: make(() => new Float64Array(maxActions * COMBOS)),
 		actionValues: make(() => new Float64Array(maxActions * COMBOS)),
 		sum: make(() => new Float64Array(COMBOS)),
 		live: make(() => new Uint16Array(COMBOS)),
-		active: make(() => new Uint16Array(COMBOS)),
 	};
 }
 
@@ -200,18 +275,19 @@ function regretMatch(
 	actions: number,
 	stride: number,
 	active: Uint16Array,
+	from: number,
 	count: number,
 	slot: Int32Array,
 	strategy: Float64Array,
 	sum: Float64Array,
 ): void {
-	for (let i = 0; i < count; i++) sum[active[i]] = 0;
+	for (let i = 0; i < count; i++) sum[active[from + i]] = 0;
 	for (let a = 0; a < actions; a++) {
-		const from = base + a * stride;
+		const row = base + a * stride;
 		const to = a * COMBOS;
 		for (let i = 0; i < count; i++) {
-			const combo = active[i];
-			const value = regret[from + slot[combo]];
+			const combo = active[from + i];
+			const value = regret[row + slot[combo]];
 			const positive = value > 0 ? value : 0;
 			strategy[to + combo] = positive;
 			sum[combo] += positive;
@@ -221,7 +297,7 @@ function regretMatch(
 	for (let a = 0; a < actions; a++) {
 		const to = a * COMBOS;
 		for (let i = 0; i < count; i++) {
-			const combo = active[i];
+			const combo = active[from + i];
 			strategy[to + combo] = sum[combo] > 0 ? strategy[to + combo] / sum[combo] : uniform;
 		}
 	}
@@ -234,23 +310,24 @@ function averageStrategy(
 	actions: number,
 	stride: number,
 	active: Uint16Array,
+	from: number,
 	count: number,
 	slot: Int32Array,
 	strategy: Float64Array,
 	sum: Float64Array,
 ): void {
-	for (let i = 0; i < count; i++) sum[active[i]] = 0;
+	for (let i = 0; i < count; i++) sum[active[from + i]] = 0;
 	for (let a = 0; a < actions; a++) {
-		const from = base + a * stride;
-		for (let i = 0; i < count; i++) sum[active[i]] += strategySum[from + slot[active[i]]];
+		const row = base + a * stride;
+		for (let i = 0; i < count; i++) sum[active[from + i]] += strategySum[row + slot[active[from + i]]];
 	}
 	const uniform = 1 / actions;
 	for (let a = 0; a < actions; a++) {
-		const from = base + a * stride;
+		const row = base + a * stride;
 		const to = a * COMBOS;
 		for (let i = 0; i < count; i++) {
-			const combo = active[i];
-			strategy[to + combo] = sum[combo] > 0 ? strategySum[from + slot[combo]] / sum[combo] : uniform;
+			const combo = active[from + i];
+			strategy[to + combo] = sum[combo] > 0 ? strategySum[row + slot[combo]] / sum[combo] : uniform;
 		}
 	}
 }
@@ -289,17 +366,40 @@ function traverse(
 	if (kind === NodeKind.Chance) {
 		for (let i = 0; i < liveCount; i++) out[live[i]] = 0;
 		const nextRound = tree.round[node] + 1;
+
+		// At the shard boundary the subtree below belongs to the workers: the
+		// collect pass records what they need, and the apply pass reads back
+		// the totals they produced.
+		if (ctx.entryIndexOf !== null && nextRound === ctx.shardRound) {
+			const entry = ctx.entryIndexOf[node];
+			if (entry >= 0) {
+				if (ctx.chanceCollect !== null) {
+					ctx.chanceCollect(node, reachMe, reachOpp);
+					return out;
+				}
+				if (ctx.chanceOverride !== null) {
+					const base = entry * COMBOS;
+					for (let i = 0; i < liveCount; i++) out[live[i]] = ctx.chanceOverride[base + live[i]];
+					return out;
+				}
+			}
+		}
+
 		const factor = runouts.childFactor[nextRound];
 		const child = tree.edgeChild[tree.firstEdge[node]];
 		const width = runouts.width[nextRound];
 		const cards = runouts.cards[nextRound];
 
-		const childMe = buffers.reach[depth];
+		const childMe = buffers.reachFor[traverser][depth];
 		const childOpp = buffers.other[depth];
 		const childLive = buffers.live[depth];
 		const comboCards = COMBO_CARDS;
 
-		for (let local = 0; local < factor; local++) {
+		const sharded = nextRound === ctx.shardRound;
+		const from = sharded ? ctx.shardStart : 0;
+		const to = sharded ? ctx.shardEnd : factor;
+
+		for (let local = from; local < to; local++) {
 			const childBoard = board * factor + local;
 			const dealt = cards[childBoard * width + width - 1];
 
@@ -332,19 +432,20 @@ function traverse(
 	const slotBase = ctx.layout.offset[node] + board * actions * stride;
 	const isTraverser = owner === traverser;
 
-	// Only hands this player actually holds, and that the board leaves alive.
-	const active = buffers.active[depth];
-	let activeCount = 0;
-	for (let i = 0; i < liveCount; i++) {
-		if (index.slot[live[i]] >= 0) active[activeCount++] = live[i];
-	}
+	// Which hands this player can hold here was settled when the boards were
+	// enumerated; it does not depend on the node.
+	const lists = ctx.active;
+	const listSlot = (lists.roundBase[tree.round[node]] + board) * 2 + owner;
+	const active = lists.list;
+	const activeFrom = lists.start[listSlot];
+	const activeCount = lists.count[listSlot];
 
 	const strategy = buffers.strategy[depth];
 	const sum = buffers.sum[depth];
 	if (mode === Mode.Train) {
-		regretMatch(ctx.regret, slotBase, actions, stride, active, activeCount, index.slot, strategy, sum);
+		regretMatch(ctx.regret, slotBase, actions, stride, active, activeFrom, activeCount, index.slot, strategy, sum);
 	} else {
-		averageStrategy(ctx.strategySum, slotBase, actions, stride, active, activeCount, index.slot, strategy, sum);
+		averageStrategy(ctx.strategySum, slotBase, actions, stride, active, activeFrom, activeCount, index.slot, strategy, sum);
 	}
 
 	for (let i = 0; i < liveCount; i++) out[live[i]] = 0;
@@ -357,11 +458,11 @@ function traverse(
 				tree.edgeChild[edgeBase + a], board, reachMe, reachOpp, live, liveCount, depth + 1,
 			);
 			if (first) {
-				for (let i = 0; i < activeCount; i++) out[active[i]] = value[active[i]];
+				for (let i = 0; i < activeCount; i++) out[active[activeFrom + i]] = value[active[activeFrom + i]];
 				first = false;
 			} else {
 				for (let i = 0; i < activeCount; i++) {
-					const combo = active[i];
+					const combo = active[activeFrom + i];
 					if (value[combo] > out[combo]) out[combo] = value[combo];
 				}
 			}
@@ -369,17 +470,16 @@ function traverse(
 		return out;
 	}
 
-	const childReach = buffers.reach[depth];
+	// Owned by whoever is acting, so hands they cannot hold are already zero
+	// and only their own need writing.
+	const childReach = buffers.reachFor[owner][depth];
 	const actionValues = buffers.actionValues[depth];
 
 	for (let a = 0; a < actions; a++) {
 		const offset = a * COMBOS;
 		const source = isTraverser ? reachMe : reachOpp;
-		// Hands this player does not hold must read as zero downstream, and
-		// only the live ones are ever read.
-		for (let i = 0; i < liveCount; i++) childReach[live[i]] = 0;
 		for (let i = 0; i < activeCount; i++) {
-			const combo = active[i];
+			const combo = active[activeFrom + i];
 			childReach[combo] = source[combo] * strategy[offset + combo];
 		}
 
@@ -393,7 +493,7 @@ function traverse(
 
 		if (isTraverser) {
 			for (let i = 0; i < activeCount; i++) {
-				const combo = active[i];
+				const combo = active[activeFrom + i];
 				actionValues[offset + combo] = value[combo];
 				out[combo] += strategy[offset + combo] * value[combo];
 			}
@@ -404,14 +504,14 @@ function traverse(
 		}
 	}
 
-	if (isTraverser && mode === Mode.Train) {
+	if (isTraverser && mode === Mode.Train && ctx.applyUpdates) {
 		const regret = ctx.regret;
 		const strategySum = ctx.strategySum;
 		for (let a = 0; a < actions; a++) {
 			const offset = a * COMBOS;
 			const slotRow = slotBase + a * stride;
 			for (let i = 0; i < activeCount; i++) {
-				const combo = active[i];
+				const combo = active[activeFrom + i];
 				const at = slotRow + index.slot[combo];
 				// CFR+: clamp the accumulated regret at zero in the same pass.
 				const updated = regret[at] + actionValues[offset + combo] - out[combo];
@@ -427,6 +527,19 @@ function traverse(
 /** A prepared solver. */
 export interface Solver {
 	readonly ctx: Context;
+	/** One traversal for `traverser`, returning the root value vector. */
+	traverseRoot(mode: Mode, traverser: 0 | 1, iterWeight: number): Float64Array;
+	/** One chance node's subtree, honouring the context shard. */
+	traverseChance(
+		traverser: 0 | 1,
+		iterWeight: number,
+		node: number,
+		reachMe: Float64Array,
+		reachOpp: Float64Array,
+	): Float64Array;
+	/** Combinations live on the given board, shared by root and workers. */
+	readonly rootLive: Uint16Array;
+	readonly rootCount: number;
 	iterate(count: number, from: number): void;
 	expectedValue(): [number, number];
 	exploitability(): number;
@@ -481,6 +594,16 @@ export function makeSolver(ctx: Context): Solver {
 
 	return {
 		ctx,
+		rootLive,
+		get rootCount() {
+			return rootCount;
+		},
+		traverseRoot: run,
+		traverseChance(traverser, iterWeight, node, me, opp) {
+			return traverse(
+				ctx, buffers, Mode.Train, traverser, iterWeight, node, 0, me, opp, rootLive, rootCount, 0,
+			);
+		},
 		iterate(count, from) {
 			for (let i = 0; i < count; i++) {
 				const t = from + i + 1;
@@ -514,4 +637,4 @@ export function makeSolver(ctx: Context): Solver {
 	};
 }
 
-export { makeTerminalScratch };
+export { buildActiveLists, makeTerminalScratch };

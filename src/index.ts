@@ -15,8 +15,11 @@ import type { Runouts } from './runouts.ts';
 import { enumerateRunouts } from './runouts.ts';
 import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
+import type { Pool } from './parallel.ts';
+import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
 import type { Context, PlayerIndex, Solver } from './cfr.ts';
 import {
+	buildActiveLists,
 	buildLayout,
 	buildPlayerIndex,
 	makeSolver,
@@ -117,6 +120,8 @@ export interface Spot {
 	readonly chipScale: number;
 	readonly potUnits: number;
 	readonly stackUnits: number;
+	/** The configuration this was built from, so a worker can rebuild it. */
+	readonly source: SpotConfig;
 }
 
 /**
@@ -218,6 +223,7 @@ export function defineSpot(config: SpotConfig): Spot {
 		chipScale,
 		potUnits: Math.round(config.pot * chipScale),
 		stackUnits: Math.round(config.stack * chipScale),
+		source: config,
 	};
 }
 
@@ -228,6 +234,13 @@ export interface SolveOptions {
 	readonly exploitEvery?: number;
 	readonly onProgress?: (info: Progress) => void;
 	readonly precision?: 'f32' | 'f64';
+	/**
+	 * Worker threads to split the runouts across. 1 stays single-threaded;
+	 * 'auto' picks a count from the machine. Results agree to floating point
+	 * either way — workers associate the runout sum differently, so the last
+	 * bit or two can move; nothing above that does.
+	 */
+	readonly workers?: number | 'auto';
 }
 
 export interface Progress {
@@ -278,6 +291,10 @@ export interface SolveRun {
 	exploitabilityPercent(): number;
 	/** A view of the strategy as it stands; cheap, take a fresh one each time. */
 	snapshot(history?: readonly Progress[]): Solution;
+	/** Release worker threads. Snapshots taken before this stay usable. */
+	close(): void;
+	/** Worker threads actually in use; 1 when single-threaded. */
+	readonly workers: number;
 }
 
 /**
@@ -300,8 +317,20 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 
 	const showdown = buildShowdownTable(spot.runouts, relevant);
 	const layout = buildLayout(spot.tree, spot.runouts, spot.players, precision === 'f64' ? 8 : 4);
-	const alloc = precision === 'f64' ? Float64Array : Float32Array;
 	const weights = runoutWeights(spot.runouts);
+
+	const requested = options.workers === 'auto' ? defaultWorkerCount() : (options.workers ?? 1);
+	const plan = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
+
+	// Workers need the accumulators in shared memory. Allocating shared for a
+	// single-threaded solve would cost nothing but buys nothing either.
+	const width = precision === 'f64' ? 8 : 4;
+	const makeStore = (): Float64Array | Float32Array => {
+		const buffer = plan
+			? new SharedArrayBuffer(layout.totalSlots * width)
+			: new ArrayBuffer(layout.totalSlots * width);
+		return precision === 'f64' ? new Float64Array(buffer) : new Float32Array(buffer);
+	};
 
 	const ctx: Context = {
 		tree: spot.tree,
@@ -309,11 +338,19 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		players: spot.players,
 		layout,
 		showdown,
-		regret: new alloc(layout.totalSlots),
-		strategySum: new alloc(layout.totalSlots),
+		regret: makeStore(),
+		strategySum: makeStore(),
 		scratch: makeTerminalScratch(),
 		chipScale: spot.chipScale,
+		active: buildActiveLists(spot.runouts, spot.players),
 		runoutWeight: weights,
+		shardStart: 0,
+		shardEnd: plan ? plan.boards : 0,
+		shardRound: plan ? plan.round : -1,
+		applyUpdates: true,
+		chanceCollect: null,
+		chanceOverride: null,
+		entryIndexOf: plan ? plan.entryIndexOf : null,
 		// The traversal sums over every runout, so the denominator has to count
 		// them too: a hand pair is dealt once per compatible completion, not
 		// once. With a river board that factor is 1, which is exactly why this
@@ -322,17 +359,32 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	};
 
 	const solver = makeSolver(ctx);
+	const pool: Pool | null = plan
+		? startPool(ctx, solver, plan, { config: spot.source }, requested)
+		: null;
 	let completed = 0;
 
 	return {
 		spot,
+		workers: pool ? pool.workers : 1,
 		get completed() {
 			return completed;
 		},
 		step(count) {
 			if (count <= 0) return;
-			solver.iterate(count, completed);
+			if (pool) {
+				for (let i = 0; i < count; i++) {
+					const t = completed + i + 1;
+					pool.traverse(0, t);
+					pool.traverse(1, t);
+				}
+			} else {
+				solver.iterate(count, completed);
+			}
 			completed += count;
+		},
+		close() {
+			pool?.close();
 		},
 		exploitabilityPercent() {
 			return (100 * solver.exploitability()) / (spot.potUnits / spot.chipScale);
@@ -355,6 +407,13 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 	const history: Progress[] = [];
 	const started = Date.now();
 
+	try {
+		return runAll();
+	} finally {
+		run.close();
+	}
+
+	function runAll(): Solution {
 	let done = 0;
 	while (done < iterations) {
 		const chunk = exploitEvery > 0 ? Math.min(exploitEvery, iterations - done) : iterations - done;
@@ -371,6 +430,7 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 		}
 	}
 	return run.snapshot(history);
+	}
 }
 
 function makeSolution(

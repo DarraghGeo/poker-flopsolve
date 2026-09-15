@@ -49,6 +49,7 @@ if (!args.board || args.help) {
     --bet     bet sizes, comma separated: pot fractions, "4c", or "allin"
     --raises  maximum aggressive actions per round (default 1)
     --iters   CFR+ iterations (default 500)
+    --workers worker threads, or 1 for single-threaded (default: auto)
     --allin   also offer a shove at every decision
     --max-combos  refuse a range wider than this
     --node    show the strategy at this node index (default: every node)
@@ -78,9 +79,11 @@ console.log(
 );
 
 const iterations = Number(args.iters ?? 500);
+const workers = args.workers === undefined ? 'auto' : Number(args.workers);
 const started = Date.now();
 const solution = solve(spot, {
 	iterations,
+	workers,
 	exploitEvery: Math.max(1, Math.round(iterations / 5)),
 	onProgress: ({ iteration, exploitability }) => {
 		// Carriage returns only make sense on a terminal; piped, they turn the

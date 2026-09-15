@@ -91,6 +91,29 @@ Measured on an Apple M2, single threaded:
 `defineSpot` reports the projected cost before anything is allocated, and refuses a spot
 over `maxBytes` with concrete suggestions. `maxCombos` caps range width.
 
+### Workers
+
+`solve(spot, { workers })` splits the runouts across threads. Storage is indexed
+runout-outermost, so each worker owns a disjoint slice of shared memory and takes no locks.
+Only the round above the split stays on the main thread, because CFR+ clamps regrets at
+zero and partial sums cannot be added through a clamp.
+
+Measured on a 133 vs 145 combo spot, 8 cores:
+
+| Workers | Turn, 400 iters | Flop, 100 iters |
+|---|---|---|
+| 1 | 3.6 s | 82.1 s |
+| 2 | 2.0 s | — |
+| 4 | 1.3 s | 24.8 s |
+| 7 (default) | 1.2 s | 18.6 s |
+| 8 | 1.2 s | 19.3 s |
+
+`workers: 'auto'` uses one less than the machine's parallelism; `workers: 1` stays on one
+thread. A river spot has a single runout and silently stays single-threaded whatever is
+asked for. Results agree to floating point rather than bit-for-bit: a worker sums its own
+slice before the totals are summed across workers, which associates the same addition
+differently.
+
 The single largest cost is the number of runouts: a river board has one, a turn 48, a flop
 2,352. Tree width matters nearly as much — a second bet size roughly quadruples the work.
 

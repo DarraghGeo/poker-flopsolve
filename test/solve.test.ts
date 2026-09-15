@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defineSpot, formatCombo, solve, SpotTooLargeError } from '../src/index.ts';
+import { createRun, defineSpot, formatCombo, solve, SpotTooLargeError } from '../src/index.ts';
 
 /**
  * The clairvoyance game, with real cards.
@@ -230,5 +230,57 @@ describe('normalisation across entry points', () => {
 		expect(Math.abs(sol.ev(0))).toBeLessThanOrEqual(pot / 2 + stack);
 		// And on a board like this, with similar ranges, it should be small.
 		expect(Math.abs(sol.ev(0))).toBeLessThan(pot / 2);
+	});
+});
+
+describe('worker parallelism', () => {
+	// Sharding splits the runouts across threads, each owning a disjoint slice
+	// of shared storage. It must be a pure speed-up. Agreement is to floating
+	// point, not bit-for-bit: a worker sums its own slice before the totals are
+	// summed across workers, which associates the runout sum differently. A
+	// wrong slice boundary or a doubly applied update would show up far above
+	// that noise floor.
+	const spot = () =>
+		defineSpot({
+			board: 'Qs Jh 4d 2c',
+			pot: 40,
+			stack: 60,
+			oop: 'JJ, TT, AQs, KQs, QTs, J9s, 87s',
+			ip: 'AA, KK, AJs, QJs, JTs, T9s, 65s',
+			betSizes: [[0.75]],
+			maxRaises: 1,
+		});
+
+	it('agrees with a single-threaded solve to the last bit', () => {
+		const single = solve(spot(), { iterations: 60, workers: 1 });
+		const shared = solve(spot(), { iterations: 60, workers: 4 });
+
+		expect(shared.ev(0)).toBeCloseTo(single.ev(0), 10);
+		expect(shared.ev(1)).toBeCloseTo(single.ev(1), 10);
+		expect(shared.exploitability()).toBeCloseTo(single.exploitability(), 10);
+
+		// EVs could match while individual strategies drifted, so check the
+		// actual numbers a user reads off the screen.
+		const node = single.spot.tree.decisionNodes[0];
+		const a = single.strategyAt(node, 0);
+		const b = shared.strategyAt(node, 0);
+		for (let i = 0; i < a.probs.length; i++) expect(b.probs[i]).toBeCloseTo(a.probs[i], 10);
+	});
+
+	it('runs single-threaded when there is nothing to divide', () => {
+		// A river spot has one runout; asking for workers must not hang or throw.
+		const river = defineSpot({
+			board: 'Qs Jh 4d 2c 9h',
+			pot: 40,
+			stack: 60,
+			oop: 'JJ, TT, AQs',
+			ip: 'AA, KK, AJs',
+			betSizes: [[0.75]],
+			maxRaises: 1,
+		});
+		const run = createRun(river, { workers: 4 });
+		expect(run.workers).toBe(1);
+		run.step(20);
+		run.close();
 	});
 });
