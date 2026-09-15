@@ -91,6 +91,37 @@ Measured on an Apple M2, single threaded:
 `defineSpot` reports the projected cost before anything is allocated, and refuses a spot
 over `maxBytes` with concrete suggestions. `maxCombos` caps range width.
 
+### Accuracy targets
+
+`solve(spot, { targetPercent })` stops as soon as exploitability reaches that percentage of
+the pot, making `iterations` a cap rather than a plan. This is the cheapest way to cut solve
+time, because the last decimal place of accuracy costs most of the run:
+
+| Target | Iterations | Time |
+|---|---|---|
+| 2% | 20 | 0.28 s |
+| 1% | 24 | 0.26 s |
+| 0.5% | 39 | 0.29 s |
+| 0.25% | 57 | 0.35 s |
+| 0.1% | 127 | 0.57 s |
+| 0.05% | 200 | 0.73 s |
+| none (500 iterations) | 500 | 1.43 s |
+
+As a guide, 1% of pot is a sketch, 0.5% is enough to read strategies off, and 0.1% is
+publishable. On the flop preset in the browser UI, a 0.5% target finishes in 2 s against an
+estimated 24 s for the full iteration count.
+
+Checking is not free: it is a full best-response pass for both players and, unlike the solve
+itself, it does not use the worker pool, so with workers on it costs a couple of iterations.
+Rather than pick a cadence, the solver predicts when the target will be met — CFR+
+exploitability falls as roughly `C / T^p`, so two measurements pin the crossing — and checks
+just short of it. On a 500-iteration run that is 7 checks and 4% overhead, against 50 checks
+and 23% for a fixed cadence of 10.
+
+`solution.stoppedAt` is `'target'` or `'iterations'`. The second with a target set means the
+target was *not* reached and the answer is looser than asked for, which the CLI and the UI
+both say out loud.
+
 ### Workers
 
 `solve(spot, { workers })` splits the runouts across threads. Storage is indexed

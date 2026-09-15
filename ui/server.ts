@@ -40,7 +40,7 @@ const sessions = new Map<string, Session>();
 let counter = 0;
 
 /** A few spots worth opening with. */
-const PRESETS: Record<string, SpotConfig & { iterations?: number }> = {
+const PRESETS: Record<string, SpotConfig & { iterations?: number; targetPercent?: number }> = {
 	'River: polarised': {
 		board: '2c 7d 9h Js 3c', pot: 100, stack: 75,
 		oop: 'JJ,54s', ip: 'TT',
@@ -60,14 +60,14 @@ const PRESETS: Record<string, SpotConfig & { iterations?: number }> = {
 	'Flop: narrow': {
 		board: 'As Kh 7d', pot: 60, stack: 100,
 		oop: 'AA,KK,QQ,AKs,AQs,KQs,76s,65s', ip: 'JJ,TT,99,AJs,KJs,QJs,JTs,T9s',
-		betSizes: [[0.66]], maxRaises: 1, iterations: 150,
+		betSizes: [[0.66]], maxRaises: 1, iterations: 400, targetPercent: 0.5,
 	},
 };
 
-function createSession(config: SpotConfig, iterations: number): Session {
+function createSession(config: SpotConfig, iterations: number, targetPercent: number): Session {
 	const id = `s${++counter}`;
 	const worker = new Worker(fileURLToPath(new URL('./session.ts', import.meta.url)), {
-		workerData: { config, iterations },
+		workerData: { config, iterations, targetPercent },
 	});
 
 	const session: Session = {
@@ -185,7 +185,11 @@ const server = createServer((request, response) => {
 			}
 			if (url.pathname === '/api/solve' && request.method === 'POST') {
 				const body = await readJson(request);
-				const session = createSession(body.config as SpotConfig, Number(body.iterations ?? 500));
+				const session = createSession(
+					body.config as SpotConfig,
+					Number(body.iterations ?? 500),
+					Number(body.targetPercent ?? 0),
+				);
 				json(200, { id: session.id });
 				return;
 			}

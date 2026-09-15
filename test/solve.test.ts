@@ -286,3 +286,59 @@ describe('worker parallelism', () => {
 		run.close();
 	});
 });
+
+describe('accuracy targets', () => {
+	const cfg = {
+		board: 'As Kh 7d 2c',
+		pot: 60,
+		stack: 100,
+		oop: '22+, A2s+, KTs+, QJs, AJo+, KQo',
+		ip: '22+, A2s+, K9s+, Q9s+, JTs, ATo+, KJo+',
+		betSizes: [[0.75]],
+		maxRaises: 1,
+	} as const;
+
+	it('stops as soon as the requested accuracy is reached', () => {
+		const loose = solve(defineSpot(cfg), { iterations: 4000, targetPercent: 1, workers: 1 });
+		const tight = solve(defineSpot(cfg), { iterations: 4000, targetPercent: 0.1, workers: 1 });
+
+		expect(loose.stoppedAt).toBe('target');
+		expect(tight.stoppedAt).toBe('target');
+		expect(loose.exploitabilityPercent()).toBeLessThanOrEqual(1);
+		expect(tight.exploitabilityPercent()).toBeLessThanOrEqual(0.1);
+
+		// The whole point is buying time back, so a looser target must cost
+		// strictly fewer iterations, and neither may run to the cap.
+		expect(loose.iterations).toBeLessThan(tight.iterations);
+		expect(tight.iterations).toBeLessThan(4000);
+	});
+
+	it('says so when the target is out of reach instead of pretending', () => {
+		const missed = solve(defineSpot(cfg), { iterations: 40, targetPercent: 0.001, workers: 1 });
+		expect(missed.stoppedAt).toBe('iterations');
+		expect(missed.iterations).toBe(40);
+		expect(missed.exploitabilityPercent()).toBeGreaterThan(0.001);
+	});
+
+	it('schedules checks without perturbing the solve', () => {
+		// Measuring is a best-response pass that writes nothing, so a run that
+		// measures often must land on exactly the same answer as one that never
+		// does. If this ever drifts, a check is mutating solver state.
+		const quiet = solve(defineSpot(cfg), { iterations: 120, workers: 1 });
+		const watched = solve(defineSpot(cfg), { iterations: 120, exploitEvery: 5, workers: 1 });
+		const predicted = solve(defineSpot(cfg), {
+			iterations: 120,
+			// Unreachable, so this runs the full 120 while checking throughout.
+			targetPercent: 1e-9,
+			workers: 1,
+		});
+
+		expect(watched.ev(0)).toBe(quiet.ev(0));
+		expect(predicted.ev(0)).toBe(quiet.ev(0));
+		expect(watched.exploitability()).toBe(quiet.exploitability());
+		expect(predicted.exploitability()).toBe(quiet.exploitability());
+
+		// Predicting the crossing must take far fewer passes than a fixed cadence.
+		expect(predicted.history.length).toBeLessThan(watched.history.length);
+	});
+});

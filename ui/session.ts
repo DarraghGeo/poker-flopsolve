@@ -26,12 +26,17 @@ import {
 	NodeKind,
 } from '../src/index.ts';
 import type { Progress, SolveRun, SpotConfig } from '../src/index.ts';
+import { predictCrossing } from '../src/index.ts';
 import { boardAtRound } from '../src/runouts.ts';
 
 if (!parentPort) throw new Error('session worker must be started as a worker thread');
 const port: MessagePort = parentPort;
 
-const { config, iterations } = workerData as { config: SpotConfig; iterations: number };
+const { config, iterations, targetPercent } = workerData as {
+	config: SpotConfig;
+	iterations: number;
+	targetPercent: number;
+};
 
 /** Progress ticks across a run; chunk size follows from this. */
 const PROGRESS_TICKS = 40;
@@ -192,22 +197,57 @@ async function main(): Promise<void> {
 
 	const chunk = Math.max(1, Math.round(iterations / PROGRESS_TICKS));
 	const totalChunks = Math.ceil(iterations / chunk);
-	const measureEvery = Math.max(1, Math.round(totalChunks / EXPLOIT_SAMPLES));
 	const started = Date.now();
 	let exploitability = Number.NaN;
 	setState('running');
+
+	// Without a target, measure a fixed handful of times across the run. With
+	// one, measure where the target is predicted to be met, so a loose target
+	// costs few passes and a tight one is not overshot by an eighth of the run.
+	const measureEvery = Math.max(1, Math.round(totalChunks / EXPLOIT_SAMPLES));
+	let nextMeasure = targetPercent > 0 ? Math.min(iterations, 10) : 0;
+	let prevIteration = 0;
+	let prevExploitability = 0;
+	let hitTarget = false;
 
 	for (let index = 0; run.completed < iterations; index++) {
 		if (state() === 'stopped') break;
 		run.step(Math.min(chunk, iterations - run.completed));
 		const last = run.completed >= iterations;
-		if (index % measureEvery === 0 || last) exploitability = run.exploitabilityPercent();
+
+		const due =
+			targetPercent > 0 ? run.completed >= nextMeasure || last : index % measureEvery === 0 || last;
+		if (due) {
+			exploitability = run.exploitabilityPercent();
+			if (targetPercent > 0) {
+				const predicted = predictCrossing(
+					prevIteration,
+					prevExploitability,
+					run.completed,
+					exploitability,
+					targetPercent,
+				);
+				const aim = predicted > 0 ? predicted * 0.95 : run.completed * 2;
+				nextMeasure = Math.max(
+					run.completed + chunk,
+					Math.ceil(Math.min(Math.max(aim, run.completed * 1.1), run.completed * 2)),
+				);
+				prevIteration = run.completed;
+				prevExploitability = exploitability;
+			}
+		}
+
 		port.postMessage({
 			type: 'progress',
 			iteration: run.completed,
 			exploitability,
 			elapsedMs: Date.now() - started,
 		} satisfies Progress & { type: string });
+
+		if (targetPercent > 0 && due && exploitability <= targetPercent) {
+			hitTarget = true;
+			break;
+		}
 		await yieldToMessages();
 	}
 
@@ -218,6 +258,11 @@ async function main(): Promise<void> {
 	port.postMessage({
 		type: 'done',
 		stopped,
+		hitTarget,
+		// A target that was asked for and not met leaves a looser answer than
+		// requested, which the page says out loud rather than hiding.
+		missedTarget: targetPercent > 0 && !hitTarget && !stopped,
+		targetPercent,
 		iterations: run.completed,
 		elapsedMs: Date.now() - started,
 		ev: [final.ev(0), final.ev(1)],

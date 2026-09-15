@@ -144,8 +144,11 @@ button.primary:hover { filter:brightness(1.08); }
         <div class="field"><label>Raises / iters</label>
           <div class="row2">
             <input type="number" id="raises" min="0" max="4" data-tip="Aggressive actions allowed per round. The opening bet counts as the first. Each extra raise multiplies the work.">
-            <input type="number" id="iters" min="1" step="50" data-tip="CFR+ iterations. Stopping early is fine — exploitability is usually low well before the end.">
+            <input type="number" id="iters" min="1" step="50" data-tip="Iteration cap. With a target accuracy set, the solve normally stops well before this; without one it runs the whole way.">
           </div>
+        </div>
+        <div class="field"><label for="target">Target accuracy</label>
+          <input id="target" class="mono" placeholder="off" data-tip="Stop once exploitability reaches this % of the pot — the cheapest way to cut solve time. 1% is a sketch, 0.5% is readable, 0.1% is publishable and costs several times longer. Blank runs the full iteration count.">
         </div>
         <div class="estimate" id="estimate">…</div>
         <button class="primary" id="solve">Solve</button>
@@ -206,6 +209,7 @@ function writeConfig(c) {
   $('bets').value = c.betSizes[0].map((s) => s === 'allin' ? 'allin' : typeof s === 'object' ? s.chips+'c' : s).join(', ');
   $('raises').value = c.maxRaises ?? 1;
   $('iters').value = c.iterations ?? 500;
+  $('target').value = c.targetPercent ?? '';
 }
 
 let estimateTimer;
@@ -220,7 +224,11 @@ async function runEstimate() {
     el.textContent =
       `${e.combos[0]} vs ${e.combos[1]} combos · ${e.runouts.toLocaleString()} runout(s)\n` +
       `${e.totalSlots.toLocaleString()} slots · ${bytes(e.bytes)}\n` +
-      `~${(e.secondsPerThousandIterations * (+$('iters').value / 1000)).toFixed(0)}s at ${$('iters').value} iterations`;
+      // With a target the cap is a ceiling, not a plan, so quoting it as the
+      // expected time overstates it — often by an order of magnitude.
+      (+$('target').value > 0
+        ? `~${(e.secondsPerThousandIterations * (+$('iters').value / 1000)).toFixed(0)}s at the ${$('iters').value}-iteration cap,\nusually far less once ${$('target').value}% of pot is reached`
+        : `~${(e.secondsPerThousandIterations * (+$('iters').value / 1000)).toFixed(0)}s at ${$('iters').value} iterations`);
     $('solve').disabled = false;
   } catch (err) { el.className = 'estimate bad'; el.textContent = String(err); $('solve').disabled = true; }
 }
@@ -231,7 +239,7 @@ async function solve() {
   $('legend').innerHTML = ''; $('crumb').innerHTML = ''; $('boardPicker').innerHTML = ''; $('stats').innerHTML = '';
   nodes = []; selected = null; table = null; summary = null; geometry = null; columnEls = null;
   $('solve').hidden = true; $('stop').hidden = false;
-  const { id } = await (await fetch('/api/solve', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ config: readConfig(), iterations: +$('iters').value }) })).json();
+  const { id } = await (await fetch('/api/solve', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ config: readConfig(), iterations: +$('iters').value, targetPercent: +$('target').value || 0 }) })).json();
   session = id;
   poll();
 }
@@ -257,18 +265,28 @@ async function poll() {
   renderStats(s);
 
   if (s.status === 'ready') {
-    $('status').innerHTML = s.result?.stopped ? `<div class="hint">stopped at ${s.result.iterations.toLocaleString()} iterations</div>` : '';
+    const r = s.result;
+    $('status').innerHTML = r?.stopped
+      ? `<div class="hint">stopped at ${r.iterations.toLocaleString()} iterations</div>`
+      : r?.hitTarget
+        ? `<div class="hint">reached ${r.targetPercent}% of pot in ${r.iterations.toLocaleString()} iterations</div>`
+        : r?.missedTarget
+          ? `<div class="hint">ran out at ${r.iterations.toLocaleString()} iterations without reaching ${r.targetPercent}% — raise the cap</div>`
+          : '';
     $('solve').hidden = false; $('stop').hidden = true;
     refresh(true);
     return;
   }
   $('status').innerHTML =
     `<div class="hint"><span class="spinner"></span> ${p ? `${p.iteration.toLocaleString()} / ${total.toLocaleString()}` : 'building…'}` +
-    `${p && isFinite(p.exploitability) ? ` · ${p.exploitability.toFixed(3)}% of pot` : ''}</div>` +
+    `${p && shown(p.exploitability) ? ` · ${p.exploitability.toFixed(3)}% of pot` : ''}</div>` +
     `<div class="progress"><i style="width:${p ? (100*p.iteration/total).toFixed(1) : 2}%"></i></div>`;
   refresh(false);
   setTimeout(poll, 300);
 }
+
+/** A real, finite number. JSON turns NaN into null, and isFinite(null) is true. */
+const shown = (v) => typeof v === 'number' && isFinite(v);
 
 function renderStats(s) {
   if (!summary) return;
@@ -276,7 +294,7 @@ function renderStats(s) {
   const cells = [];
   if (r) cells.push(['EV oop', r.ev[0].toFixed(2)]);
   const eps = r?.exploitability ?? p?.exploitability;
-  if (eps !== undefined && isFinite(eps)) cells.push(['exploitability', eps.toFixed(3) + '%']);
+  if (shown(eps)) cells.push(['exploitability', eps.toFixed(3) + '%']);
   cells.push(['combos', summary.combos.join(' v ')], ['runouts', summary.runouts.toLocaleString()],
     ['memory', bytes(summary.bytes)], ['time', ((r?.elapsedMs ?? p?.elapsedMs ?? 0)/1000).toFixed(1)+'s']);
   $('stats').innerHTML = cells.map(([k,v]) => `<div class="stat"><b>${v}</b><i>${k}</i></div>`).join('');
@@ -440,6 +458,7 @@ function paint() {
 
 /* ---------- wiring ---------- */
 $('preset').addEventListener('change', () => { const c = presets[$('preset').value]; if (c) { writeConfig(c); runEstimate(); } });
+$('target').addEventListener('input', scheduleEstimate);
 for (const id of ['board','pot','stack','oop','ip','bets','raises','iters']) $(id).addEventListener('input', scheduleEstimate);
 $('solve').addEventListener('click', solve);
 $('stop').addEventListener('click', () => fetch('/api/control', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ id: session, action:'stop' }) }));

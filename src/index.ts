@@ -229,8 +229,33 @@ export function defineSpot(config: SpotConfig): Spot {
 
 /** Solver tuning. */
 export interface SolveOptions {
+	/**
+	 * Iterations to run. With `targetPercent` set this is only a cap, and the
+	 * solve normally stops well before it; `stoppedAt` on the result says which
+	 * of the two ended it.
+	 */
 	readonly iterations?: number;
-	/** Measure exploitability every N iterations. Each costs about one iteration. */
+	/**
+	 * Stop once exploitability falls to this percentage of the pot — the
+	 * accuracy knob, and the cheapest way to cut solve time.
+	 *
+	 * Solvers conventionally quote accuracy this way, and it is the only form
+	 * comparable between spots of different sizes. As a rough guide, 1% of pot
+	 * is a sketch, 0.5% is enough to read strategies off, 0.1% is publishable
+	 * and costs several times as long.
+	 *
+	 * Checking is not free — see `exploitEvery` — so the solve overshoots the
+	 * target slightly rather than stopping on the exact iteration it was met.
+	 */
+	readonly targetPercent?: number;
+	/**
+	 * Measure exploitability every N iterations. Each costs about one iteration,
+	 * because it is a full best-response pass for both players.
+	 *
+	 * Left unset with `targetPercent` given, checks are scheduled by predicting
+	 * when the target will be met rather than at any fixed cadence — see
+	 * `nextCheck`. Setting this forces a fixed cadence instead.
+	 */
 	readonly exploitEvery?: number;
 	readonly onProgress?: (info: Progress) => void;
 	readonly precision?: 'f32' | 'f64';
@@ -260,6 +285,14 @@ export interface Progress {
 export interface Solution {
 	readonly spot: Spot;
 	readonly iterations: number;
+	/**
+	 * Which stopping rule ended the solve. 'iterations' with a `targetPercent`
+	 * set means the target was NOT reached and the answer is looser than asked
+	 * for — worth surfacing rather than swallowing.
+	 */
+	readonly stoppedAt: 'target' | 'iterations';
+	/** Worker threads the solve actually used, which 'auto' does not tell you. */
+	readonly workers: number;
 	/** Chips per hand for a player, under the average strategy. */
 	ev(player: 0 | 1): number;
 	/** Distance from equilibrium, in chips per hand. */
@@ -297,7 +330,7 @@ export interface SolveRun {
 	/** Distance from equilibrium as a percentage of the pot. */
 	exploitabilityPercent(): number;
 	/** A view of the strategy as it stands; cheap, take a fresh one each time. */
-	snapshot(history?: readonly Progress[]): Solution;
+	snapshot(history?: readonly Progress[], stoppedAt?: 'target' | 'iterations'): Solution;
 	/** Release worker threads. Snapshots taken before this stay usable. */
 	close(): void;
 	/** Worker threads actually in use; 1 when single-threaded. */
@@ -396,8 +429,8 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		exploitabilityPercent() {
 			return (100 * solver.exploitability()) / (spot.potUnits / spot.chipScale);
 		},
-		snapshot(history = []) {
-			return makeSolution(spot, ctx, solver, completed, [...history]);
+		snapshot(history = [], stoppedAt = 'iterations') {
+			return makeSolution(spot, ctx, solver, completed, [...history], stoppedAt, pool ? pool.workers : 1);
 		},
 	};
 }
@@ -409,7 +442,8 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
  */
 export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 	const iterations = options.iterations ?? 500;
-	const exploitEvery = options.exploitEvery ?? 0;
+	const target = options.targetPercent ?? 0;
+	const fixed = options.exploitEvery ?? 0;
 	const run = createRun(spot, options);
 	const history: Progress[] = [];
 	const started = Date.now();
@@ -421,23 +455,97 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 	}
 
 	function runAll(): Solution {
-	let done = 0;
-	while (done < iterations) {
-		const chunk = exploitEvery > 0 ? Math.min(exploitEvery, iterations - done) : iterations - done;
-		run.step(chunk);
-		done += chunk;
-		if (exploitEvery > 0) {
+		// Nothing to measure for: run straight through in one call.
+		if (fixed <= 0 && target <= 0) {
+			run.step(iterations);
+			return run.snapshot(history, 'iterations');
+		}
+
+		let stoppedAt: 'target' | 'iterations' = 'iterations';
+		let done = 0;
+		let next = fixed > 0 ? fixed : Math.min(iterations, FIRST_CHECK);
+		let prevIteration = 0;
+		let prevExploitability = 0;
+
+		while (done < iterations) {
+			const until = Math.min(next, iterations);
+			run.step(until - done);
+			done = until;
+
+			// One snapshot, because it caches the best-response pass that both
+			// of these read. Two calls on the run itself would pay for it twice.
+			const measured = run.snapshot();
 			const info: Progress = {
 				iteration: done,
-				exploitability: run.snapshot().exploitability(),
+				exploitability: measured.exploitability(),
 				elapsedMs: Date.now() - started,
 			};
 			history.push(info);
 			options.onProgress?.(info);
+
+			if (target > 0 && measured.exploitabilityPercent() <= target) {
+				stoppedAt = 'target';
+				break;
+			}
+
+			if (fixed > 0) {
+				next = done + fixed;
+			} else {
+				// Aim just short of where the target is predicted to be met, so
+				// the overshoot is a few iterations rather than a whole doubling.
+				const predicted = predictCrossing(
+					prevIteration,
+					prevExploitability,
+					done,
+					info.exploitability,
+					(target * spot.potUnits) / (100 * spot.chipScale),
+				);
+				const aim = predicted > 0 ? predicted * 0.95 : done * MAX_GROWTH;
+				const bounded = Math.min(Math.max(aim, done * MIN_GROWTH), done * MAX_GROWTH);
+				next = Math.max(done + 1, Math.ceil(bounded));
+				prevIteration = done;
+				prevExploitability = info.exploitability;
+			}
 		}
+		return run.snapshot(history, stoppedAt);
 	}
-	return run.snapshot(history);
-	}
+}
+
+/** Iterations before the first exploitability check. */
+const FIRST_CHECK = 10;
+
+/** Bounds on how far ahead the next check may be scheduled. */
+const MIN_GROWTH = 1.1;
+const MAX_GROWTH = 2;
+
+/**
+ * Predict the iteration at which exploitability will reach `target`.
+ *
+ * CFR+ exploitability falls as roughly `C / T^p`, so two measurements pin both
+ * constants and the crossing follows. This beats any fixed cadence badly enough
+ * to be worth the eight lines: a check is a full best-response pass for both
+ * players and, unlike the solve itself, it does not use the worker pool, so
+ * with workers on it costs a couple of iterations rather than one.
+ *
+ * Returns 0 when the two points say nothing useful — equal values, a rise, or a
+ * non-finite fit — and the caller falls back to stepping the gap up.
+ *
+ * Exported because the browser UI drives its own loop, to stay stoppable, and
+ * should schedule its checks the same way rather than reinventing a cadence.
+ * Unit-agnostic: `e1`, `e2` and `target` need only share units.
+ */
+export function predictCrossing(
+	t1: number,
+	e1: number,
+	t2: number,
+	e2: number,
+	target: number,
+): number {
+	if (!(e1 > e2) || !(e2 > 0) || t2 <= t1) return 0;
+	const p = Math.log(e1 / e2) / Math.log(t2 / t1);
+	if (!(p > 0)) return 0;
+	const predicted = t2 * (e2 / target) ** (1 / p);
+	return Number.isFinite(predicted) ? predicted : 0;
 }
 
 function makeSolution(
@@ -446,6 +554,8 @@ function makeSolution(
 	solver: Solver,
 	iterations: number,
 	history: Progress[],
+	stoppedAt: 'target' | 'iterations',
+	workers: number,
 ): Solution {
 	const { tree } = spot;
 	const parent = new Int32Array(tree.nodeCount).fill(-1);
@@ -470,6 +580,8 @@ function makeSolution(
 	return {
 		spot,
 		iterations,
+		stoppedAt,
+		workers,
 		history,
 		ev(player) {
 			cachedEv ??= solver.expectedValue();

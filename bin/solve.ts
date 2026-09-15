@@ -48,7 +48,8 @@ if (!args.board || args.help) {
     --ip      in-position range
     --bet     bet sizes, comma separated: pot fractions, "4c", or "allin"
     --raises  maximum aggressive actions per round (default 1)
-    --iters   CFR+ iterations (default 500)
+    --iters   CFR+ iteration cap (default 500)
+    --target  stop at this accuracy, as a % of pot, e.g. 0.5
     --workers worker threads, or 1 for single-threaded (default: auto)
     --allin   also offer a shove at every decision
     --max-combos  refuse a range wider than this
@@ -80,23 +81,39 @@ console.log(
 
 const iterations = Number(args.iters ?? 500);
 const workers = args.workers === undefined ? 'auto' : Number(args.workers);
+const target = args.target === undefined ? 0 : Number(args.target);
 const started = Date.now();
 const solution = solve(spot, {
 	iterations,
 	workers,
-	exploitEvery: Math.max(1, Math.round(iterations / 5)),
+	targetPercent: target,
+	// With a target the solver schedules its own checks by predicting when the
+	// target will be met, which is cheaper than any cadence we could pick here.
+	exploitEvery: target > 0 ? undefined : Math.max(1, Math.round(iterations / 5)),
 	onProgress: ({ iteration, exploitability }) => {
 		// Carriage returns only make sense on a terminal; piped, they turn the
 		// progress line into one long smear.
 		const percent = ((100 * exploitability) / Number(args.pot ?? 100)).toFixed(3);
-		const line = `  solving  ${iteration}/${iterations}  exploitability ${percent}% of pot`;
+		const goal = target > 0 ? ` (target ${target}%)` : '';
+		const line = `  solving  ${iteration}/${iterations}  exploitability ${percent}% of pot${goal}`;
 		if (process.stdout.isTTY) process.stdout.write(`\r${line}   `);
 	},
 });
 if (process.stdout.isTTY) process.stdout.write('\r' + ' '.repeat(72) + '\r');
 
+// A target that was not met leaves a looser answer than was asked for; saying
+// so is the whole value of tracking it.
+const outcome =
+	target > 0 && solution.stoppedAt === 'iterations'
+		? `  stopped at the ${iterations}-iteration cap WITHOUT reaching ${target}% of pot;` +
+			' raise --iters to go further\n'
+		: '';
+
 console.log(
-	`  solved in ${((Date.now() - started) / 1000).toFixed(1)}s\n` +
+	`  solved in ${((Date.now() - started) / 1000).toFixed(1)}s` +
+		` (${solution.iterations} iterations, ` +
+		`${solution.workers === 1 ? 'single-threaded' : `${solution.workers} workers`})\n` +
+		outcome +
 		`  EV out of position ${solution.ev(0).toFixed(3)} chips   ` +
 		`exploitability ${solution.exploitabilityPercent().toFixed(3)}% of pot\n`,
 );
