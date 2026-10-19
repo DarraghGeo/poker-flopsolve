@@ -25,7 +25,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "solve": "node --import tsx bin/solve.ts",
-    "ui": "node --import tsx ui/server.ts"
+    "ui": "node --import tsx ui/server.ts",
+    "bench": "node --import tsx bin/bench.ts"
   },
   "keywords": [
     "poker",

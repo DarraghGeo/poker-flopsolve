@@ -15,6 +15,14 @@
  * workers need, once to apply updates from the totals they returned. It carries
  * a single board, so this costs almost nothing.
  *
+ * The main thread takes the first shard itself rather than sleeping while the
+ * workers run, so `workers` counts every thread doing the work: two means the
+ * main thread and one worker.
+ *
+ * Every traversal goes through here, not just training: an exploitability
+ * check is a full best-response pass, and left single-threaded it would cost
+ * as many iterations as there are threads.
+ *
  * Coordination is through Atomics rather than messages, so the public solve API
  * stays synchronous.
  *
@@ -27,7 +35,7 @@ import { availableParallelism } from 'node:os';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { COMBOS } from './cards.ts';
-import type { Context, Solver } from './cfr.ts';
+import type { Context, RootTraversal, Solver } from './cfr.ts';
 import { Mode } from './cfr.ts';
 import type { Runouts } from './runouts.ts';
 import type { Tree } from './tree.ts';
@@ -40,6 +48,7 @@ export const CONTROL = {
 	traverser: 3,
 	iterWeight: 4,
 	ready: 5,
+	mode: 6,
 	size: 8,
 } as const;
 
@@ -52,7 +61,7 @@ export interface ShardPlan {
 	/** Chance nodes feeding that round. */
 	readonly entryNodes: Int32Array;
 	readonly entryIndexOf: Int32Array;
-	/** Shard boundaries, `workers + 1` entries. */
+	/** Shard boundaries, `workers + 1` entries; shard 0 is the main thread's. */
 	readonly bounds: Int32Array;
 }
 
@@ -95,6 +104,7 @@ export function planShards(tree: Tree, runouts: Runouts, workers: number): Shard
 
 /** Everything a worker needs to rebuild the solver. */
 export interface WorkerSetup {
+	/** Index among the spawned threads; this worker owns shard `workerId + 1`. */
 	readonly workerId: number;
 	readonly payload: unknown;
 	readonly plan: { round: number; entryNodes: Int32Array; entryIndexOf: Int32Array };
@@ -106,14 +116,14 @@ export interface WorkerSetup {
 	readonly control: SharedArrayBuffer;
 	readonly exchange: SharedArrayBuffer;
 	readonly entryCount: number;
-	readonly workers: number;
 }
 
 /** A running pool of solver workers. */
 export interface Pool {
 	/** One traversal for one traverser, returning the root value vector. */
-	traverse(traverser: 0 | 1, iterWeight: number): Float64Array;
+	readonly traverse: RootTraversal;
 	close(): void;
+	/** Threads doing the work, the main thread included. */
 	readonly workers: number;
 }
 
@@ -124,7 +134,7 @@ export interface Pool {
  * @param solver single-threaded solver, used for the round above the split
  * @param plan how the runouts are split
  * @param payload everything the worker needs to rebuild the context
- * @param workers worker count
+ * @param workers threads doing the work, the main thread included
  */
 export function startPool(
 	ctx: Context,
@@ -134,8 +144,10 @@ export function startPool(
 	workers: number,
 ): Pool {
 	const entryCount = plan.entryNodes.length;
+	// The main thread is one of the `workers`; only the rest are spawned.
+	const spawned = workers - 1;
 	const reachFloats = entryCount * 2 * COMBOS;
-	const partialFloats = workers * entryCount * COMBOS;
+	const partialFloats = spawned * entryCount * COMBOS;
 	const exchangeBuffer = new SharedArrayBuffer((reachFloats + partialFloats) * 8);
 	const exchange = new Float64Array(exchangeBuffer);
 	const controlBuffer = new SharedArrayBuffer(CONTROL.size * 4);
@@ -149,28 +161,27 @@ export function startPool(
 	const threads: Worker[] = [];
 	let failure: Error | null = null;
 
-	for (let w = 0; w < workers; w++) {
+	for (let w = 0; w < spawned; w++) {
 		const setup: WorkerSetup = {
 			workerId: w,
 			payload,
 			plan: { round: plan.round, entryNodes: plan.entryNodes, entryIndexOf: plan.entryIndexOf },
-			shardStart: plan.bounds[w],
-			shardEnd: plan.bounds[w + 1],
+			shardStart: plan.bounds[w + 1],
+			shardEnd: plan.bounds[w + 2],
 			regret: ctx.regret.buffer as SharedArrayBuffer,
 			strategySum: ctx.strategySum.buffer as SharedArrayBuffer,
 			float64: ctx.regret instanceof Float64Array,
 			control: controlBuffer,
 			exchange: exchangeBuffer,
 			entryCount,
-			workers,
 		};
 		const thread = new Worker(fileURLToPath(workerUrl), { workerData: setup });
 		// A worker that dies would otherwise leave the main thread waiting on a
 		// counter that can never reach its target.
 		thread.on('error', (error: Error) => {
 			failure ??= error;
-			Atomics.store(control, CONTROL.ready, workers);
-			Atomics.add(control, CONTROL.done, workers);
+			Atomics.store(control, CONTROL.ready, spawned);
+			Atomics.add(control, CONTROL.done, spawned);
 			Atomics.notify(control, CONTROL.done);
 			Atomics.notify(control, CONTROL.ready);
 		});
@@ -182,7 +193,7 @@ export function startPool(
 	// the generation change, and the pool would deadlock.
 	for (;;) {
 		const ready = Atomics.load(control, CONTROL.ready);
-		if (ready >= workers || failure) break;
+		if (ready >= spawned || failure) break;
 		Atomics.wait(control, CONTROL.ready, ready, 20);
 	}
 	if (failure) {
@@ -193,17 +204,46 @@ export function startPool(
 	const total = new Float64Array(COMBOS);
 	const chanceValues = new Float64Array(entryCount * COMBOS);
 
-	const dispatch = (traverser: 0 | 1, iterWeight: number): void => {
+	const mainReachMe = new Float64Array(COMBOS);
+	const mainReachOpp = new Float64Array(COMBOS);
+
+	const dispatch = (mode: Mode, traverser: 0 | 1, iterWeight: number): void => {
 		Atomics.store(control, CONTROL.done, 0);
+		Atomics.store(control, CONTROL.mode, mode);
 		Atomics.store(control, CONTROL.traverser, traverser);
 		Atomics.store(control, CONTROL.iterWeight, iterWeight);
 		Atomics.store(control, CONTROL.command, COMMAND.work);
 		Atomics.add(control, CONTROL.generation, 1);
 		Atomics.notify(control, CONTROL.generation);
 
+		// Shard 0 is this thread's, done while the workers do theirs. With no
+		// collect or override set the split-round chance nodes expand as usual,
+		// over whatever slice the context names.
+		const fullStart = ctx.shardStart;
+		const fullEnd = ctx.shardEnd;
+		ctx.shardStart = plan.bounds[0];
+		ctx.shardEnd = plan.bounds[1];
+		// Pass A left updates off; below the split they are this shard's own.
+		ctx.applyUpdates = true;
+		try {
+			for (let entry = 0; entry < entryCount; entry++) {
+				for (let i = 0; i < COMBOS; i++) {
+					mainReachMe[i] = exchange[entry * 2 * COMBOS + i];
+					mainReachOpp[i] = exchange[entry * 2 * COMBOS + COMBOS + i];
+				}
+				const value = solver.traverseChance(
+					mode, traverser, iterWeight, plan.entryNodes[entry], mainReachMe, mainReachOpp,
+				);
+				chanceValues.set(value.subarray(0, COMBOS), entry * COMBOS);
+			}
+		} finally {
+			ctx.shardStart = fullStart;
+			ctx.shardEnd = fullEnd;
+		}
+
 		for (;;) {
 			const done = Atomics.load(control, CONTROL.done);
-			if (done >= workers) break;
+			if (done >= spawned) break;
 			if (failure) throw failure;
 			Atomics.wait(control, CONTROL.done, done, 50);
 		}
@@ -212,7 +252,7 @@ export function startPool(
 
 	return {
 		workers,
-		traverse(traverser, iterWeight) {
+		traverse(mode, traverser, iterWeight) {
 			// Pass A: walk the round above the split to capture what each worker
 			// needs, applying nothing.
 			ctx.applyUpdates = false;
@@ -222,23 +262,29 @@ export function startPool(
 				exchange.set(reachMe.subarray(0, COMBOS), entry * 2 * COMBOS);
 				exchange.set(reachOpp.subarray(0, COMBOS), entry * 2 * COMBOS + COMBOS);
 			};
-			solver.traverseRoot(Mode.Train, traverser, iterWeight);
+			try {
+				solver.traverseRoot(mode, traverser, iterWeight);
+			} finally {
+				ctx.chanceCollect = null;
+			}
 
-			dispatch(traverser, iterWeight);
+			// Leaves this thread's own partial in `chanceValues`.
+			dispatch(mode, traverser, iterWeight);
 
-			chanceValues.fill(0);
-			for (let w = 0; w < workers; w++) {
+			for (let w = 0; w < spawned; w++) {
 				const base = reachFloats + w * entryCount * COMBOS;
 				for (let i = 0; i < entryCount * COMBOS; i++) chanceValues[i] += exchange[base + i];
 			}
 
 			// Pass B: finish that round from the totals, now applying updates.
-			ctx.chanceCollect = null;
 			ctx.chanceOverride = chanceValues;
 			ctx.applyUpdates = true;
-			const value = solver.traverseRoot(Mode.Train, traverser, iterWeight);
-			total.set(value.subarray(0, COMBOS));
-			ctx.chanceOverride = null;
+			try {
+				const value = solver.traverseRoot(mode, traverser, iterWeight);
+				total.set(value.subarray(0, COMBOS));
+			} finally {
+				ctx.chanceOverride = null;
+			}
 			return total;
 		},
 		close() {
@@ -251,13 +297,15 @@ export function startPool(
 }
 
 /**
- * Suggested worker count for this machine.
+ * Suggested worker count for this machine, the main thread included.
  *
- * One less than the available parallelism. Scaling stays monotone right up to
- * the core count — a flop solve measured 3.3x on 4 workers, 3.9x on 6 and 4.3x
- * on 8 across 8 cores — so the only reason to hold one back is leaving the
- * machine responsive.
+ * One less than the available parallelism, but never under two. Scaling stays
+ * monotone right up to the core count — a flop solve measured 3.3x on 4
+ * workers, 3.9x on 6 and 4.3x on 8 across 8 cores — so the only reason to hold
+ * one back is leaving the machine responsive, and on two cores that would mean
+ * not splitting at all.
  */
 export function defaultWorkerCount(): number {
-	return Math.max(1, availableParallelism() - 1);
+	const cores = availableParallelism();
+	return cores < 2 ? 1 : Math.max(2, cores - 1);
 }

@@ -3,7 +3,8 @@
  *
  * Purpose: traverse one shard of the runout space.
  *
- * A worker owns a contiguous range of runouts at the split round. Because
+ * A worker owns a contiguous range of runouts at the split round; the main
+ * thread owns the first, so worker `n` takes shard `n + 1`. Because
  * storage is indexed runout-outermost, everything it writes below that round is
  * its own; nothing is shared and nothing is locked. It never visits a node above
  * the split, so the non-linear CFR+ clamp there stays the main thread's job.
@@ -15,7 +16,7 @@
 
 import { parentPort, workerData } from 'node:worker_threads';
 import { COMBOS } from './cards.ts';
-import type { Context } from './cfr.ts';
+import type { Context, Mode } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
@@ -31,7 +32,7 @@ import type { WorkerSetup } from './parallel.ts';
 import { COMMAND, CONTROL } from './parallel.ts';
 
 const setup = workerData as WorkerSetup;
-const { config } = setup.payload as { config: SpotConfig };
+const { config, dcfr } = setup.payload as { config: SpotConfig; dcfr: boolean };
 
 const spot = defineSpot(config);
 const relevant = new Uint8Array(COMBOS);
@@ -56,6 +57,7 @@ const ctx: Context = {
 	active: buildActiveLists(spot.runouts, spot.players),
 	runoutWeight: weights,
 	totalMass: matchupMass(spot.players[0].weights, spot.players[1].weights) * weights[0],
+	dcfr,
 	shardStart: setup.shardStart,
 	shardEnd: setup.shardEnd,
 	shardRound: setup.plan.round,
@@ -85,6 +87,7 @@ for (;;) {
 	generation = Atomics.load(control, CONTROL.generation);
 	if (Atomics.load(control, CONTROL.command) === COMMAND.exit) break;
 
+	const mode = Atomics.load(control, CONTROL.mode) as Mode;
 	const traverser = Atomics.load(control, CONTROL.traverser) as 0 | 1;
 	const iterWeight = Atomics.load(control, CONTROL.iterWeight);
 
@@ -94,7 +97,7 @@ for (;;) {
 			reachMe[i] = exchange[entry * 2 * COMBOS + i];
 			reachOpp[i] = exchange[entry * 2 * COMBOS + COMBOS + i];
 		}
-		const value = solver.traverseChance(traverser, iterWeight, node, reachMe, reachOpp);
+		const value = solver.traverseChance(mode, traverser, iterWeight, node, reachMe, reachOpp);
 		for (let i = 0; i < COMBOS; i++) exchange[partialBase + entry * COMBOS + i] = value[i];
 	}
 

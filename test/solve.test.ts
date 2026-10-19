@@ -88,6 +88,20 @@ describe('the clairvoyance game', () => {
 		const sol = solve(clairvoyance(fraction), { iterations: 6000 });
 		expect(sol.ev(0)).toBeCloseTo(expected, 2);
 	});
+
+	it('is solved by discounted CFR too', () => {
+		const fraction = 0.75;
+		const spot = clairvoyance(fraction);
+		const sol = solve(spot, { iterations: 4000, algorithm: 'dcfr' });
+
+		expect(sol.exploitabilityPercent()).toBeLessThan(0.01);
+		const facingBet = spot.tree.decisionNodes.find((n) => sol.path(n).startsWith('allin') || sol.path(n).startsWith('bet'));
+		const defence = sol.strategyAt(facingBet!, 0);
+		const callIndex = defence.actions.indexOf('call');
+		for (let i = 0; i < defence.combos.length; i++) {
+			expect(defence.probs[i * defence.actions.length + callIndex]).toBeCloseTo(1 / (1 + fraction), 2);
+		}
+	});
 });
 
 describe('solver invariants', () => {
@@ -267,6 +281,42 @@ describe('worker parallelism', () => {
 		const a = single.strategyAt(node, 0);
 		const b = shared.strategyAt(node, 0);
 		for (let i = 0; i < a.probs.length; i++) expect(b.probs[i]).toBeCloseTo(a.probs[i], 10);
+	});
+
+	it('agrees with a single-threaded solve under discounted CFR', () => {
+		// Unclamped regrets near zero change sign on rounding alone, so the gap
+		// grows faster than under CFR+: ~1e-14 at 20 iterations, ~1e-10 by 60.
+		// A wrong slice or a doubled update shows from the second iteration.
+		const single = solve(spot(), { iterations: 20, workers: 1, algorithm: 'dcfr' });
+		const shared = solve(spot(), { iterations: 20, workers: 4, algorithm: 'dcfr' });
+
+		expect(shared.ev(0)).toBeCloseTo(single.ev(0), 10);
+		expect(shared.exploitability()).toBeCloseTo(single.exploitability(), 10);
+		const node = single.spot.tree.decisionNodes[0];
+		const a = single.strategyAt(node, 0);
+		const b = shared.strategyAt(node, 0);
+		for (let i = 0; i < a.probs.length; i++) expect(b.probs[i]).toBeCloseTo(a.probs[i], 10);
+	});
+
+	it('measures exploitability and EV across threads as it would on one', () => {
+		// Same accumulators, measured both ways: only the runout sum's
+		// association may differ.
+		const run = createRun(spot(), { workers: 4 });
+		try {
+			expect(run.workers).toBe(4);
+			run.step(30);
+			const pooled = run.snapshot();
+			const pooledExploit = pooled.exploitability();
+			const pooledEv = [pooled.ev(0), pooled.ev(1)];
+
+			run.solver.useRoot(null);
+			const alone = run.snapshot();
+			expect(pooledExploit).toBeCloseTo(alone.exploitability(), 12);
+			expect(pooledEv[0]).toBeCloseTo(alone.ev(0), 12);
+			expect(pooledEv[1]).toBeCloseTo(alone.ev(1), 12);
+		} finally {
+			run.close();
+		}
 	});
 
 	it('runs single-threaded when there is nothing to divide', () => {

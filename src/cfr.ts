@@ -103,6 +103,8 @@ export interface Context {
 	readonly runoutWeight: Float64Array;
 	/** Total weighted mass of legal matchups; divides raw values into chips. */
 	readonly totalMass: number;
+	/** Discounted CFR in place of CFR+; see `discountFactors`. */
+	readonly dcfr: boolean;
 	/**
 	 * Runout range this traversal is responsible for, as [start, end), at
 	 * `shardRound`. Workers each take a slice; a single-threaded solve takes
@@ -265,6 +267,20 @@ function treeDepth(tree: Tree): number {
 	}
 	return max;
 }
+
+/**
+ * Discounted CFR (Brown & Sandholm, 2019) at its usual setting. Before
+ * iteration `t` adds its regrets, accumulated positive regret is scaled by
+ * `(t-1)^α / ((t-1)^α + 1)` and negative regret by `(t-1)^β / ((t-1)^β + 1)`,
+ * so a negative regret is halved each iteration rather than clamped; the
+ * strategy sum is scaled by `((t-1) / t)^γ`, weighting iteration `t` about
+ * `t^γ`. Every slot is visited exactly once per iteration, by its owner's
+ * traversal, so discounting at that visit is the same as discounting
+ * everything between iterations — without a separate pass over memory.
+ */
+const DCFR_ALPHA = 1.5;
+const DCFR_BETA = 0;
+const DCFR_GAMMA = 2;
 
 export const Mode = { Train: 0, BestResponse: 1, Average: 2 } as const;
 export type Mode = (typeof Mode)[keyof typeof Mode];
@@ -505,7 +521,29 @@ function traverse(
 		}
 	}
 
-	if (isTraverser && mode === Mode.Train && ctx.applyUpdates) {
+	if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.dcfr) {
+		// `iterWeight` is the iteration number, counted from 1.
+		const previous = iterWeight - 1;
+		const grown = previous ** DCFR_ALPHA;
+		const shrunk = previous ** DCFR_BETA;
+		const keepPositive = grown / (grown + 1);
+		const keepNegative = shrunk / (shrunk + 1);
+		const keepSum = (previous / iterWeight) ** DCFR_GAMMA;
+		const regret = ctx.regret;
+		const strategySum = ctx.strategySum;
+		for (let a = 0; a < actions; a++) {
+			const offset = a * COMBOS;
+			const slotRow = slotBase + a * stride;
+			for (let i = 0; i < activeCount; i++) {
+				const combo = active[activeFrom + i];
+				const at = slotRow + index.slot[combo];
+				const accumulated = regret[at];
+				regret[at] =
+					accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[offset + combo] - out[combo];
+				strategySum[at] = strategySum[at] * keepSum + reachMe[combo] * strategy[offset + combo];
+			}
+		}
+	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates) {
 		const regret = ctx.regret;
 		const strategySum = ctx.strategySum;
 		for (let a = 0; a < actions; a++) {
@@ -525,13 +563,26 @@ function traverse(
 	return out;
 }
 
+/** A whole-tree traversal, returning the root value vector. */
+export type RootTraversal = (mode: Mode, traverser: 0 | 1, iterWeight: number) => Float64Array;
+
 /** A prepared solver. */
 export interface Solver {
 	readonly ctx: Context;
-	/** One traversal for `traverser`, returning the root value vector. */
+	/**
+	 * One traversal for `traverser` on this thread alone, returning the root
+	 * value vector.
+	 */
 	traverseRoot(mode: Mode, traverser: 0 | 1, iterWeight: number): Float64Array;
+	/**
+	 * Route the whole-tree traversals behind `iterate`, `expectedValue` and
+	 * `exploitability` elsewhere — a worker pool — or back to `traverseRoot`
+	 * with null.
+	 */
+	useRoot(root: RootTraversal | null): void;
 	/** One chance node's subtree, honouring the context shard. */
 	traverseChance(
+		mode: Mode,
 		traverser: 0 | 1,
 		iterWeight: number,
 		node: number,
@@ -609,6 +660,8 @@ export function makeSolver(ctx: Context): Solver {
 		return traverse(ctx, buffers, mode, traverser, iterWeight, 0, 0, me, opp, rootLive, rootCount, 0);
 	};
 
+	let root: RootTraversal = run;
+
 	const total = (values: Float64Array, traverser: 0 | 1): number => {
 		// Values are counterfactual, so weighting by this player's own reach
 		// turns them into the value of the spot.
@@ -628,24 +681,27 @@ export function makeSolver(ctx: Context): Solver {
 			return rootCount;
 		},
 		traverseRoot: run,
-		traverseChance(traverser, iterWeight, node, me, opp) {
+		useRoot(next) {
+			root = next ?? run;
+		},
+		traverseChance(mode, traverser, iterWeight, node, me, opp) {
 			return traverse(
-				ctx, buffers, Mode.Train, traverser, iterWeight, node, 0, me, opp, rootLive, rootCount, 0,
+				ctx, buffers, mode, traverser, iterWeight, node, 0, me, opp, rootLive, rootCount, 0,
 			);
 		},
 		iterate(count, from) {
 			for (let i = 0; i < count; i++) {
 				const t = from + i + 1;
-				run(Mode.Train, 0, t);
-				run(Mode.Train, 1, t);
+				root(Mode.Train, 0, t);
+				root(Mode.Train, 1, t);
 			}
 		},
 		expectedValue() {
-			return [total(run(Mode.Average, 0, 0), 0), total(run(Mode.Average, 1, 0), 1)];
+			return [total(root(Mode.Average, 0, 0), 0), total(root(Mode.Average, 1, 0), 1)];
 		},
 		exploitability() {
-			const br0 = total(run(Mode.BestResponse, 0, 0), 0);
-			const br1 = total(run(Mode.BestResponse, 1, 0), 1);
+			const br0 = total(root(Mode.BestResponse, 0, 0), 0);
+			const br1 = total(root(Mode.BestResponse, 1, 0), 1);
 			return (br0 + br1) / 2;
 		},
 		valuesAt(node, board, traverser, reachMe, reachOpp, live, liveCount) {
