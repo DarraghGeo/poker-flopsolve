@@ -32,6 +32,7 @@ export * from './cards.ts';
 export * from './eval7.ts';
 export { activeCombos, parseRange, rangeWeight } from './range.ts';
 export type { BetSize } from './tree.ts';
+export type { Solver } from './cfr.ts';
 export { ACTION_LABELS, ActionKind, NodeKind } from './tree.ts';
 
 /** Sub-chip resolution, so pot-fraction sizing is exact. */
@@ -57,6 +58,8 @@ export interface SpotConfig {
 	readonly ip: string;
 	/** Bet sizes per betting round; a single row applies to every round. */
 	readonly betSizes: readonly (readonly BetSize[])[];
+	/** Sizes offered when facing a bet; unset, raises use the bet sizes. */
+	readonly raiseSizes?: readonly BetSize[];
 	/** Maximum aggressive actions per round; the opening bet is the first. */
 	readonly maxRaises?: number;
 	/** Offer a shove alongside the configured sizes. Default false. */
@@ -179,6 +182,7 @@ export function defineSpot(config: SpotConfig): Spot {
 			potUnits: Math.round(config.pot * chipScale),
 			stackUnits: Math.round(config.stack * chipScale),
 			betSizes: rows,
+			raiseSizes: config.raiseSizes,
 			maxRaises: config.maxRaises ?? 1,
 			allowAllIn: config.allowAllIn ?? false,
 			chipScale,
@@ -273,6 +277,11 @@ export interface SolveOptions {
 	 * expect two worker counts to agree bit for bit.
 	 */
 	readonly workers?: number | 'auto';
+	/**
+	 * Allocate only the strategy sums, for loading a saved strategy and
+	 * analysing it. Such a run must never be stepped.
+	 */
+	readonly analysisOnly?: boolean;
 }
 
 export interface Progress {
@@ -335,6 +344,8 @@ export interface SolveRun {
 	close(): void;
 	/** Worker threads actually in use; 1 when single-threaded. */
 	readonly workers: number;
+	/** The underlying solver, for per-node analysis once solving is done. */
+	readonly solver: Solver;
 }
 
 /**
@@ -348,7 +359,7 @@ export interface SolveRun {
  * @param options solver setup
  */
 export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
-	const precision = options.precision ?? (spot.estimate.totalSlots < 4_000_000 ? 'f64' : 'f32');
+	const precision = options.analysisOnly ? 'f32' : options.precision ?? (spot.estimate.totalSlots < 4_000_000 ? 'f64' : 'f32');
 
 	// Hands neither player holds never carry reach, so they need no ranking.
 	const relevant = new Uint8Array(COMBOS);
@@ -359,7 +370,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const layout = buildLayout(spot.tree, spot.runouts, spot.players, precision === 'f64' ? 8 : 4);
 	const weights = runoutWeights(spot.runouts);
 
-	const requested = options.workers === 'auto' ? defaultWorkerCount() : (options.workers ?? 1);
+	const requested = options.analysisOnly ? 1 : options.workers === 'auto' ? defaultWorkerCount() : (options.workers ?? 1);
 	const plan = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
 
 	// Workers need the accumulators in shared memory. Allocating shared for a
@@ -378,7 +389,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		players: spot.players,
 		layout,
 		showdown,
-		regret: makeStore(),
+		regret: options.analysisOnly ? new Float32Array(0) : makeStore(),
 		strategySum: makeStore(),
 		scratch: makeTerminalScratch(),
 		chipScale: spot.chipScale,
@@ -406,6 +417,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 
 	return {
 		spot,
+		solver,
 		workers: pool ? pool.workers : 1,
 		get completed() {
 			return completed;

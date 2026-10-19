@@ -77,6 +77,32 @@ include the pair, because a pair is not suited; `Xs` forms do not.
 
 Board cards are removed from both ranges automatically.
 
+## Raise sizes
+
+`betSizes` also size raises unless `raiseSizes` is given. A raise size can be a multiple of
+the bet being faced, measured from what both players had in when the round opened:
+
+```ts
+defineSpot({ ..., betSizes: [[0.5]], raiseSizes: [{ times: 3 }], maxRaises: 2 });
+// bet 40 into 80, raise to 120
+```
+
+## Reading a solved spot
+
+`createRun` returns the solver itself as `run.solver`, for analysis after (or between)
+iterations, without changing anything:
+
+- `solver.valuesAt(node, board, traverser, reachMe, reachOpp, live, liveCount)` gives the
+  traverser's counterfactual values from any node under the average strategy, for reach
+  vectors you choose. Values are linear in `reachOpp`, so a one-hot opponent reach gives
+  each hand's value against one specific opposing hand.
+- `solver.exploitability()` is the best-response measure for whatever strategy sums the
+  solver holds.
+
+`createRun(spot, { analysisOnly: true })` allocates only the strategy sums (single
+precision, one thread, no regrets). Fill `run.solver.ctx.strategySum` from a saved or
+modified strategy, then analyse it the same way. Such a run must never be stepped.
+
 ## Performance
 
 Measured on an Apple M2, single threaded:

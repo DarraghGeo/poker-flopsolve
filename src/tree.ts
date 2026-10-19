@@ -16,8 +16,11 @@
 
 import type { Runouts } from './runouts.ts';
 
-/** One available bet size: a fraction of the pot after calling, absolute chips, or a shove. */
-export type BetSize = number | { chips: number } | 'allin';
+/**
+ * One available bet size: a fraction of the pot after calling, absolute chips,
+ * a multiple of the bet being faced (raises only), or a shove.
+ */
+export type BetSize = number | { chips: number } | { times: number } | 'allin';
 
 export const NodeKind = {
 	Decision: 0,
@@ -45,6 +48,11 @@ export interface TreeConfig {
 	readonly stackUnits: number;
 	/** Bet sizes offered on each betting round. */
 	readonly betSizes: readonly (readonly BetSize[])[];
+	/**
+	 * Sizes offered when facing a bet, on every round. Unset, raises use the
+	 * round's bet sizes.
+	 */
+	readonly raiseSizes?: readonly BetSize[];
 	/** Maximum aggressive actions per round; the opening bet is the first. */
 	readonly maxRaises: number;
 	/** Offer a shove alongside the configured sizes. */
@@ -85,6 +93,8 @@ interface BetState {
 	readonly aggressions: number;
 	readonly lastRaise: number;
 	readonly acted: number;
+	/** What each player had in when this round opened; equal for both. */
+	readonly base: number;
 }
 
 /**
@@ -144,6 +154,7 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 			aggressions: 0,
 			lastRaise: minRaiseUnits,
 			acted: 0,
+			base: state.invested[0],
 		};
 		// With someone already all in there is nothing left to decide, so the
 		// remaining streets run out straight to showdown.
@@ -169,6 +180,7 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 		let target: number;
 		if (size === 'allin') target = cap;
 		else if (typeof size === 'number') target = mine + owed + Math.round(size * potAfterCall);
+		else if ('times' in size) target = state.base + Math.round(size.times * (theirs - state.base));
 		else target = mine + owed + Math.round(size.chips * chipScale);
 
 		target = Math.min(target, cap);
@@ -206,7 +218,10 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 		const cap = Math.min(stackUnits, theirs + (stackUnits - theirs));
 		if (state.aggressions < maxRaises && myRemaining > owed) {
 			const seen = new Set<number>();
-			const sizes: BetSize[] = [...(config.betSizes[state.round] ?? [])];
+			const sizes: BetSize[] =
+				owed > 0 && config.raiseSizes
+					? [...config.raiseSizes]
+					: [...(config.betSizes[state.round] ?? [])].filter((size) => !(typeof size === 'object' && 'times' in size));
 			if (config.allowAllIn) sizes.push('allin');
 
 			for (const size of sizes) {
@@ -253,6 +268,7 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 					aggressions: state.aggressions + 1,
 					lastRaise: entry.target - theirs,
 					acted: state.acted + 1,
+					base: state.base,
 				});
 			}
 			edgeChild[base + i] = child;
@@ -268,6 +284,7 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 		aggressions: 0,
 		lastRaise: minRaiseUnits,
 		acted: 0,
+		base: 0,
 	});
 
 	const decisionNodes: number[] = [];
