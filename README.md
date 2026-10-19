@@ -142,9 +142,8 @@ As a guide, 1% of pot is a sketch, 0.5% is enough to read strategies off, and 0.
 publishable. On the flop preset in the browser UI, a 0.5% target finishes in 2 s against an
 estimated 24 s for the full iteration count.
 
-Checking is not free: it is a full best-response pass for both players and, unlike the solve
-itself, it does not use the worker pool, so with workers on it costs a couple of iterations.
-Rather than pick a cadence, the solver predicts when the target will be met — CFR+
+Checking is not free: it is a full best-response pass for both players, about one
+iteration's work, spread across the same threads as the solve. Rather than pick a cadence, the solver predicts when the target will be met — CFR+
 exploitability falls as roughly `C / T^p`, so two measurements pin the crossing — and checks
 just short of it. On a 500-iteration run that is 7 checks and 4% overhead, against 50 checks
 and 23% for a fixed cadence of 10.
@@ -155,10 +154,11 @@ both say out loud.
 
 ### Workers
 
-`solve(spot, { workers })` splits the runouts across threads. Storage is indexed
-runout-outermost, so each worker owns a disjoint slice of shared memory and takes no locks.
-Only the round above the split stays on the main thread, because CFR+ clamps regrets at
-zero and partial sums cannot be added through a clamp.
+`solve(spot, { workers })` splits the runouts across threads, the calling thread included:
+`workers: 2` is the caller and one worker thread. Storage is indexed runout-outermost, so
+each thread owns a disjoint slice of shared memory and takes no locks. Only the round above
+the split stays on the main thread alone, because CFR+ clamps regrets at zero and partial
+sums cannot be added through a clamp. Exploitability and EV passes are split the same way.
 
 Measured on a 133 vs 145 combo spot, 8 cores:
 
@@ -170,8 +170,8 @@ Measured on a 133 vs 145 combo spot, 8 cores:
 | 7 (default) | 1.2 s | 18.6 s |
 | 8 | 1.2 s | 19.3 s |
 
-`workers: 'auto'` uses one less than the machine's parallelism; `workers: 1` stays on one
-thread. A river spot has a single runout and silently stays single-threaded whatever is
+`workers: 'auto'` uses one less than the machine's parallelism, but never fewer than two, so
+a 2-core machine still splits; `workers: 1` stays on one thread. A river spot has a single runout and silently stays single-threaded whatever is
 asked for.
 
 Results are bitwise deterministic at a fixed worker count, but agree with a different count
