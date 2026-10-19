@@ -27,7 +27,6 @@ import {
 } from '../src/index.ts';
 import type { Progress, SolveRun, SpotConfig } from '../src/index.ts';
 import { predictCrossing } from '../src/index.ts';
-import { boardAtRound } from '../src/runouts.ts';
 
 if (!parentPort) throw new Error('session worker must be started as a worker thread');
 const port: MessagePort = parentPort;
@@ -57,28 +56,12 @@ let links: Map<number, { parent: number; via: string; action: number; dealt: boo
 
 const yieldToMessages = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
-/** Reach of a player at a node: the product of their own action probabilities. */
+/** Reach of a player at a node, by their storage slot rather than by combination. */
 function reachAt(node: number, board: number, player: 0 | 1): Float64Array {
-	const spot = run!.spot;
-	const solution = run!.snapshot();
-	const index = spot.players[player];
-	const out = new Float64Array(index.count).fill(1);
-	const round = spot.tree.round[node];
-
-	let current = node;
-	for (;;) {
-		const link = links!.get(current);
-		if (!link || link.parent < 0) break;
-		if (spot.tree.player[link.parent] === player) {
-			const at = boardAtRound(spot.runouts.childFactor, board, round, spot.tree.round[link.parent]);
-			const view = solution.strategyAt(link.parent, at);
-			const actions = view.actions.length;
-			for (let i = 0; i < index.count; i++) out[i] *= view.probs[i * actions + link.action];
-		}
-		current = link.parent;
-	}
-	// The range weight itself is the reach before anyone has acted.
-	for (let i = 0; i < index.count; i++) out[i] *= index.weights[index.combos[i]];
+	const index = run!.spot.players[player];
+	const byCombo = run!.snapshot().reachAt(node, board, player);
+	const out = new Float64Array(index.count);
+	for (let i = 0; i < index.count; i++) out[i] = byCombo[index.combos[i]];
 	return out;
 }
 

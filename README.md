@@ -108,6 +108,34 @@ iterations, without changing anything:
 precision, one thread, no regrets). Fill `run.solver.ctx.strategySum` from a saved or
 modified strategy, then analyse it the same way. Such a run must never be stepped.
 
+## Re-solving from a node
+
+Solve the whole spot with a coarse tree, then re-solve the street you are looking at
+with a rich one:
+
+```ts
+const coarse = solve(defineSpot({ ...spot, betSizes: [[0.66]] }), { targetPercent: 0.5 });
+const turn = defineSpot(coarse.subgameAt(node, board, { betSizes: [[0.33, 0.75, 1.25]], maxRaises: 2 }));
+const detailed = solve(turn, { targetPercent: 0.3 });
+```
+
+`solution.subgameAt(node, board, betting?)` returns the spot that starts at a node that
+opens a betting round. It carries the board dealt there, the pot and stacks as they stand,
+and each player's range as their reach there (`solution.reachAt`). Ranges accept these
+per-combination weights as well as notation. Measured on the bench flop: the coarse flop
+took 27 s and 150 MB with 3 threads. Each turn, re-solved with three sizes, two raises and
+a shove, took about 7 s and 15 MB. The same rich tree solved from the flop would need
+1.9 GB.
+
+On lines the original solution plays, a re-solve with the same betting reproduces its
+value to four decimals. On lines it barely plays, the original strategy was never pushed
+to equilibrium, because exploitability weights each line by how often it is reached. The
+re-solve is the better answer there.
+
+This is *unsafe* re-solving. The subgame is solved for the ranges that arrive, so its
+strategy can be exploitable in ways the original allowed for. It also does not make the
+earlier streets any more accurate than their coarse model of the future.
+
 ## Performance
 
 Measured on an Apple M2, single threaded:
