@@ -96,6 +96,11 @@ iterations, without changing anything:
   traverser's counterfactual values from any node under the average strategy, for reach
   vectors you choose. Values are linear in `reachOpp`, so a one-hot opponent reach gives
   each hand's value against one specific opposing hand.
+- `solver.pairValuesAt(node, board, traverser, hands, handReach, live, liveCount)` gives
+  the same as `valuesAt` with a one-hot opponent reach, for many opposing hands in one
+  walk: a row of values against each hand alone. Sharing the walk, the strategy lookups
+  and kernel-free terminals makes it about 3× faster than one `valuesAt` per hand on turns
+  and flops.
 - `solver.exploitability()` is the best-response measure for whatever strategy sums the
   solver holds.
 
