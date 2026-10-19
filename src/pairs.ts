@@ -35,7 +35,6 @@ interface PairBuffers {
 	readonly colReach: Float64Array[];
 	readonly live: Uint16Array[];
 	readonly strategy: Float64Array[];
-	readonly sum: Float64Array[];
 	readonly rank: Int32Array;
 }
 
@@ -66,7 +65,6 @@ function makeBuffers(ctx: Context, width: number): PairBuffers {
 		colReach: make(() => new Float64Array(width)),
 		live: make(() => new Uint16Array(COMBOS)),
 		strategy: make(() => new Float64Array(actions * COMBOS)),
-		sum: make(() => new Float64Array(COMBOS)),
 		rank: new Int32Array(COMBOS),
 	};
 }
@@ -245,7 +243,7 @@ function walk(
 	const activeFrom = lists.start[listSlot];
 	const activeCount = lists.count[listSlot];
 	const strategy = buffers.strategy[depth];
-	averageStrategy(ctx.strategySum, slotBase, actions, stride, active, activeFrom, activeCount, index.slot, strategy, buffers.sum[depth]);
+	averageStrategy(ctx.strategySum, slotBase, actions, stride, active, lists.slot, activeFrom, activeCount, strategy);
 
 	// The traverser's values are counterfactual: its own reach never enters.
 	if (owner === traverser) {

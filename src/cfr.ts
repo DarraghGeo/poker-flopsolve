@@ -181,6 +181,11 @@ interface ActiveLists {
 	readonly start: Int32Array;
 	readonly count: Uint16Array;
 	readonly list: Uint16Array;
+	/**
+	 * Each entry's storage slot in its player's index, beside `list`, so the
+	 * hot loops read it in sequence instead of looking it up per combination.
+	 */
+	readonly slot: Uint16Array;
 	/** First list index of each round. */
 	readonly roundBase: Int32Array;
 }
@@ -198,6 +203,7 @@ function buildActiveLists(
 	const start = new Int32Array(slots);
 	const count = new Uint16Array(slots);
 	const entries: number[] = [];
+	const entrySlots: number[] = [];
 	const onBoard = new Uint8Array(DECK);
 
 	for (let round = 0; round < runouts.rounds; round++) {
@@ -214,12 +220,13 @@ function buildActiveLists(
 					const combo = index.combos[i];
 					if (onBoard[COMBO_CARDS[combo * 2]] || onBoard[COMBO_CARDS[combo * 2 + 1]]) continue;
 					entries.push(combo);
+					entrySlots.push(i);
 				}
 				count[slot] = entries.length - start[slot];
 			}
 		}
 	}
-	return { start, count, list: Uint16Array.from(entries), roundBase };
+	return { start, count, list: Uint16Array.from(entries), slot: Uint16Array.from(entrySlots), roundBase };
 }
 
 /** Per-depth buffers, so the hot loop never allocates. */
@@ -234,7 +241,6 @@ interface Buffers {
 	readonly other: Float64Array[];
 	readonly strategy: Float64Array[];
 	readonly actionValues: Float64Array[];
-	readonly sum: Float64Array[];
 	readonly live: Uint16Array[];
 }
 
@@ -247,7 +253,6 @@ function makeBuffers(tree: Tree, maxActions: number): Buffers {
 		other: make(() => new Float64Array(COMBOS)),
 		strategy: make(() => new Float64Array(maxActions * COMBOS)),
 		actionValues: make(() => new Float64Array(maxActions * COMBOS)),
-		sum: make(() => new Float64Array(COMBOS)),
 		live: make(() => new Uint16Array(COMBOS)),
 	};
 }
@@ -285,6 +290,44 @@ const DCFR_GAMMA = 2;
 export const Mode = { Train: 0, BestResponse: 1, Average: 2 } as const;
 export type Mode = (typeof Mode)[keyof typeof Mode];
 
+/**
+ * Normalise accumulated values into a strategy: each action's share of the
+ * positive values, uniform where there are none. One hand at a time, so its
+ * few actions stay in registers rather than round-tripping through a sum array.
+ *
+ * @param source regrets for the current strategy, strategy sums for the average
+ * @param slots each active entry's storage slot, beside `active`
+ */
+function normalise(
+	source: Float64Array | Float32Array,
+	base: number,
+	actions: number,
+	stride: number,
+	active: Uint16Array,
+	slots: Uint16Array,
+	from: number,
+	count: number,
+	strategy: Float64Array,
+): void {
+	const uniform = 1 / actions;
+	for (let i = 0; i < count; i++) {
+		const combo = active[from + i];
+		const at = base + slots[from + i];
+		let total = 0;
+		for (let a = 0; a < actions; a++) {
+			const value = source[at + a * stride];
+			const positive = value > 0 ? value : 0;
+			strategy[a * COMBOS + combo] = positive;
+			total += positive;
+		}
+		if (total > 0) {
+			for (let a = 0; a < actions; a++) strategy[a * COMBOS + combo] /= total;
+		} else {
+			for (let a = 0; a < actions; a++) strategy[a * COMBOS + combo] = uniform;
+		}
+	}
+}
+
 /** Current strategy from positive regrets; uniform where there is none. */
 function regretMatch(
 	regret: Float64Array | Float32Array,
@@ -292,61 +335,27 @@ function regretMatch(
 	actions: number,
 	stride: number,
 	active: Uint16Array,
+	slots: Uint16Array,
 	from: number,
 	count: number,
-	slot: Int32Array,
 	strategy: Float64Array,
-	sum: Float64Array,
 ): void {
-	for (let i = 0; i < count; i++) sum[active[from + i]] = 0;
-	for (let a = 0; a < actions; a++) {
-		const row = base + a * stride;
-		const to = a * COMBOS;
-		for (let i = 0; i < count; i++) {
-			const combo = active[from + i];
-			const value = regret[row + slot[combo]];
-			const positive = value > 0 ? value : 0;
-			strategy[to + combo] = positive;
-			sum[combo] += positive;
-		}
-	}
-	const uniform = 1 / actions;
-	for (let a = 0; a < actions; a++) {
-		const to = a * COMBOS;
-		for (let i = 0; i < count; i++) {
-			const combo = active[from + i];
-			strategy[to + combo] = sum[combo] > 0 ? strategy[to + combo] / sum[combo] : uniform;
-		}
-	}
+	normalise(regret, base, actions, stride, active, slots, from, count, strategy);
 }
 
-/** Average strategy from accumulated sums. */
+/** Average strategy from accumulated sums, which are never negative. */
 export function averageStrategy(
 	strategySum: Float64Array | Float32Array,
 	base: number,
 	actions: number,
 	stride: number,
 	active: Uint16Array,
+	slots: Uint16Array,
 	from: number,
 	count: number,
-	slot: Int32Array,
 	strategy: Float64Array,
-	sum: Float64Array,
 ): void {
-	for (let i = 0; i < count; i++) sum[active[from + i]] = 0;
-	for (let a = 0; a < actions; a++) {
-		const row = base + a * stride;
-		for (let i = 0; i < count; i++) sum[active[from + i]] += strategySum[row + slot[active[from + i]]];
-	}
-	const uniform = 1 / actions;
-	for (let a = 0; a < actions; a++) {
-		const row = base + a * stride;
-		const to = a * COMBOS;
-		for (let i = 0; i < count; i++) {
-			const combo = active[from + i];
-			strategy[to + combo] = sum[combo] > 0 ? strategySum[row + slot[combo]] / sum[combo] : uniform;
-		}
-	}
+	normalise(strategySum, base, actions, stride, active, slots, from, count, strategy);
 }
 
 function traverse(
@@ -454,15 +463,15 @@ function traverse(
 	const lists = ctx.active;
 	const listSlot = (lists.roundBase[tree.round[node]] + board) * 2 + owner;
 	const active = lists.list;
+	const activeSlot = lists.slot;
 	const activeFrom = lists.start[listSlot];
 	const activeCount = lists.count[listSlot];
 
 	const strategy = buffers.strategy[depth];
-	const sum = buffers.sum[depth];
 	if (mode === Mode.Train) {
-		regretMatch(ctx.regret, slotBase, actions, stride, active, activeFrom, activeCount, index.slot, strategy, sum);
+		regretMatch(ctx.regret, slotBase, actions, stride, active, activeSlot, activeFrom, activeCount, strategy);
 	} else {
-		averageStrategy(ctx.strategySum, slotBase, actions, stride, active, activeFrom, activeCount, index.slot, strategy, sum);
+		averageStrategy(ctx.strategySum, slotBase, actions, stride, active, activeSlot, activeFrom, activeCount, strategy);
 	}
 
 	for (let i = 0; i < liveCount; i++) out[live[i]] = 0;
@@ -536,7 +545,7 @@ function traverse(
 			const slotRow = slotBase + a * stride;
 			for (let i = 0; i < activeCount; i++) {
 				const combo = active[activeFrom + i];
-				const at = slotRow + index.slot[combo];
+				const at = slotRow + activeSlot[activeFrom + i];
 				const accumulated = regret[at];
 				regret[at] =
 					accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[offset + combo] - out[combo];
@@ -551,7 +560,7 @@ function traverse(
 			const slotRow = slotBase + a * stride;
 			for (let i = 0; i < activeCount; i++) {
 				const combo = active[activeFrom + i];
-				const at = slotRow + index.slot[combo];
+				const at = slotRow + activeSlot[activeFrom + i];
 				// CFR+: clamp the accumulated regret at zero in the same pass.
 				const updated = regret[at] + actionValues[offset + combo] - out[combo];
 				regret[at] = updated > 0 ? updated : 0;

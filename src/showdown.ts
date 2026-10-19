@@ -226,9 +226,11 @@ export function showdownValues(
 	}
 
 	// Leave the accumulators as they were found, so the next call needs no
-	// clearing pass of its own.
+	// clearing pass of its own. Only hands with reach ever touched them, and
+	// late in a solve most have none.
 	for (let i = 0; i < live; i++) {
 		const combo = order[orderBase + i];
+		if (reach[combo] === 0) continue;
 		weaker[cards[combo * 2]] = 0;
 		weaker[cards[combo * 2 + 1]] = 0;
 		weaker[deck + combo] = 0;
@@ -281,6 +283,7 @@ export function foldValues(
 	}
 	for (let i = 0; i < liveCount; i++) {
 		const combo = live[i];
+		if (reach[combo] === 0) continue;
 		sums[cards[combo * 2]] = 0;
 		sums[cards[combo * 2 + 1]] = 0;
 		sums[deck + combo] = 0;
