@@ -48,7 +48,8 @@ if (!args.board || args.help) {
     --ip      in-position range
     --bet     bet sizes, comma separated: pot fractions, "4c", or "allin"
     --raises  maximum aggressive actions per round (default 1)
-    --iters   CFR+ iteration cap (default 500)
+    --iters   iteration cap (default 500)
+    --algorithm  dcfr (default) or cfr+
     --target  stop at this accuracy, as a % of pot, e.g. 0.5
     --workers worker threads, or 1 for single-threaded (default: auto)
     --allin   also offer a shove at every decision
@@ -86,6 +87,7 @@ const started = Date.now();
 const solution = solve(spot, {
 	iterations,
 	workers,
+	algorithm: args.algorithm === 'cfr+' ? 'cfr+' : 'dcfr',
 	targetPercent: target,
 	// With a target the solver schedules its own checks by predicting when the
 	// target will be met, which is cheaper than any cadence we could pick here.
