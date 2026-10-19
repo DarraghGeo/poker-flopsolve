@@ -9,8 +9,8 @@
  */
 
 import { COMBO_CARDS, COMBOS, formatCards, parseCards } from './cards.ts';
-import type { BetSize, Tree } from './tree.ts';
-import { ACTION_LABELS, ActionKind, buildTree, NodeKind } from './tree.ts';
+import type { BetSize, RaiseSizes, Tree } from './tree.ts';
+import { ACTION_LABELS, ActionKind, buildTree, NodeKind, raisesPerRound } from './tree.ts';
 import type { Runouts } from './runouts.ts';
 import { boardAtRound, enumerateRunouts } from './runouts.ts';
 import { activeCombos, parseRange, rangeWeight } from './range.ts';
@@ -62,12 +62,18 @@ export interface SpotConfig {
 	readonly ip: string | Float64Array;
 	/** Bet sizes per betting round; a single row applies to every round. */
 	readonly betSizes: readonly (readonly BetSize[])[];
-	/** Sizes offered when facing a bet; unset, raises use the bet sizes. */
-	readonly raiseSizes?: readonly BetSize[];
-	/** Maximum aggressive actions per round; the opening bet is the first. */
-	readonly maxRaises?: number;
-	/** Offer a shove alongside the configured sizes. Default false. */
-	readonly allowAllIn?: boolean;
+	/**
+	 * Sizes offered when facing a bet; unset, raises use the bet sizes. One
+	 * row for every round, or a row per round like `betSizes`.
+	 */
+	readonly raiseSizes?: RaiseSizes;
+	/**
+	 * Maximum aggressive actions per round; the opening bet is the first.
+	 * One number, or one per round. Default 1.
+	 */
+	readonly maxRaises?: number | readonly number[];
+	/** Offer a shove alongside the configured sizes; once, or per round. Default false. */
+	readonly allowAllIn?: boolean | readonly boolean[];
 	/** Refuse a range wider than this many combinations. */
 	readonly maxCombos?: number;
 	/** Refuse a spot needing more than this much storage. */
@@ -216,7 +222,7 @@ export function defineSpot(config: SpotConfig): Spot {
 	if (compressedBytes > maxBytes) {
 		const widest = Math.max(...rows.map((r) => r.length));
 		if (widest > 1) suggestions.push(`use fewer bet sizes (currently up to ${widest} per round)`);
-		if ((config.maxRaises ?? 1) > 1) suggestions.push(`lower maxRaises to 1`);
+		if (Math.max(...[config.maxRaises ?? 1].flat()) > 1) suggestions.push(`lower maxRaises to 1`);
 		suggestions.push(`narrow the ranges (currently ${players[0].count} and ${players[1].count} combos)`);
 		if (runouts.rounds === 3) suggestions.push('solve from the turn instead of the flop');
 	}
@@ -744,8 +750,11 @@ function makeSolution(
 			const cards = spot.runouts.cards[round].subarray(board * width, board * width + width);
 			const invested = (tree.pot[node] - spot.potUnits) / 2;
 			const { source } = spot;
-			const rows =
-				source.betSizes.length === 1 ? source.betSizes : source.betSizes.slice(round);
+			// Settings given per round lose the rounds already played.
+			const later = <T>(value: T | readonly T[], listed: boolean): T | readonly T[] =>
+				listed && (value as readonly T[]).length > 1 ? (value as readonly T[]).slice(round) : value;
+			const rows = later(source.betSizes, true) as readonly (readonly BetSize[])[];
+			const raiseRows = source.raiseSizes && (later<unknown>(source.raiseSizes, raisesPerRound(source.raiseSizes)) as RaiseSizes);
 
 			return {
 				board: formatCards(cards),
@@ -754,9 +763,9 @@ function makeSolution(
 				oop: reachAt(node, board, 0),
 				ip: reachAt(node, board, 1),
 				betSizes: betting.betSizes ?? rows,
-				raiseSizes: 'raiseSizes' in betting ? betting.raiseSizes : source.raiseSizes,
-				maxRaises: betting.maxRaises ?? source.maxRaises,
-				allowAllIn: betting.allowAllIn ?? source.allowAllIn,
+				raiseSizes: 'raiseSizes' in betting ? betting.raiseSizes : raiseRows,
+				maxRaises: betting.maxRaises ?? (source.maxRaises === undefined ? undefined : later(source.maxRaises, Array.isArray(source.maxRaises))),
+				allowAllIn: betting.allowAllIn ?? (source.allowAllIn === undefined ? undefined : later(source.allowAllIn, Array.isArray(source.allowAllIn))),
 				maxCombos: 'maxCombos' in betting ? betting.maxCombos : source.maxCombos,
 				maxBytes: 'maxBytes' in betting ? betting.maxBytes : source.maxBytes,
 				chipScale: spot.chipScale,
