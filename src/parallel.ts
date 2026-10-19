@@ -112,7 +112,9 @@ export interface WorkerSetup {
 	readonly shardEnd: number;
 	readonly regret: SharedArrayBuffer;
 	readonly strategySum: SharedArrayBuffer;
-	readonly float64: boolean;
+	/** Per-block scales, for 16-bit storage only. */
+	readonly regretScale: SharedArrayBuffer | null;
+	readonly sumScale: SharedArrayBuffer | null;
 	readonly control: SharedArrayBuffer;
 	readonly exchange: SharedArrayBuffer;
 	readonly entryCount: number;
@@ -170,7 +172,8 @@ export function startPool(
 			shardEnd: plan.bounds[w + 2],
 			regret: ctx.regret.buffer as SharedArrayBuffer,
 			strategySum: ctx.strategySum.buffer as SharedArrayBuffer,
-			float64: ctx.regret instanceof Float64Array,
+			regretScale: (ctx.regretScale?.buffer as SharedArrayBuffer | undefined) ?? null,
+			sumScale: (ctx.sumScale?.buffer as SharedArrayBuffer | undefined) ?? null,
 			control: controlBuffer,
 			exchange: exchangeBuffer,
 			entryCount,

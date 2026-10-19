@@ -89,6 +89,20 @@ describe('the clairvoyance game', () => {
 		expect(sol.ev(0)).toBeCloseTo(expected, 2);
 	});
 
+	it.each(['dcfr', 'cfr+'] as const)('is solved with 16-bit storage under %s', (algorithm) => {
+		const fraction = 0.75;
+		const spot = clairvoyance(fraction);
+		const sol = solve(spot, { iterations: 4000, algorithm, precision: 'i16' });
+
+		expect(sol.exploitabilityPercent()).toBeLessThan(0.05);
+		const facingBet = spot.tree.decisionNodes.find((n) => sol.path(n).startsWith('allin') || sol.path(n).startsWith('bet'));
+		const defence = sol.strategyAt(facingBet!, 0);
+		const callIndex = defence.actions.indexOf('call');
+		for (let i = 0; i < defence.combos.length; i++) {
+			expect(defence.probs[i * defence.actions.length + callIndex]).toBeCloseTo(1 / (1 + fraction), 2);
+		}
+	});
+
 	it('is solved by discounted CFR too', () => {
 		const fraction = 0.75;
 		const spot = clairvoyance(fraction);
@@ -190,6 +204,31 @@ describe('spot validation', () => {
 			expect(typed.estimate.fits).toBe(false);
 			expect(typed.estimate.suggestions.length).toBeGreaterThan(0);
 		}
+	});
+
+	it('falls back to 16-bit storage when 32-bit will not fit', () => {
+		const config = {
+			board: 'Qs Jh 4d 2c', pot: 40, stack: 60,
+			oop: 'JJ, TT, AQs, KQs, QTs, J9s, 87s', ip: 'AA, KK, AJs, QJs, JTs, T9s, 65s',
+			betSizes: [[0.75]], maxRaises: 1,
+		};
+		const roomy = defineSpot(config);
+		// The accumulators halve; on a spot this small the showdown table,
+		// which does not, is most of the total.
+		expect(roomy.estimate.compressedBytes).toBeLessThan(roomy.estimate.bytes);
+
+		// Room for 16-bit and no more: accepted, and solved at 16 bits.
+		const tight = defineSpot({ ...config, maxBytes: roomy.estimate.compressedBytes });
+		const run = createRun(tight);
+		try {
+			expect(run.solver.ctx.regret).toBeInstanceOf(Int16Array);
+			expect(run.solver.ctx.strategySum).toBeInstanceOf(Uint16Array);
+		} finally {
+			run.close();
+		}
+		expect(createRun(roomy).solver.ctx.regret).toBeInstanceOf(Float64Array);
+
+		expect(() => defineSpot({ ...config, maxBytes: roomy.estimate.compressedBytes - 1 })).toThrow(SpotTooLargeError);
 	});
 
 	it('rejects a betSizes row count that matches no round', () => {
@@ -296,6 +335,16 @@ describe('worker parallelism', () => {
 		const a = single.strategyAt(node, 0);
 		const b = shared.strategyAt(node, 0);
 		for (let i = 0; i < a.probs.length; i++) expect(b.probs[i]).toBeCloseTo(a.probs[i], 10);
+	});
+
+	it('agrees with a single-threaded solve at 16 bits', () => {
+		// The dither that rounds strategy sums is a hash of slot and iteration,
+		// not of the thread, so only the runout sum's association differs.
+		const single = solve(spot(), { iterations: 20, workers: 1, precision: 'i16' });
+		const shared = solve(spot(), { iterations: 20, workers: 4, precision: 'i16' });
+
+		expect(shared.ev(0)).toBeCloseTo(single.ev(0), 6);
+		expect(shared.exploitability()).toBeCloseTo(single.exploitability(), 6);
 	});
 
 	it('measures exploitability and EV across threads as it would on one', () => {

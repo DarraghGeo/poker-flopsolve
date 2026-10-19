@@ -17,7 +17,7 @@ import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
-import type { Context, PlayerIndex, Solver } from './cfr.ts';
+import type { Context, PlayerIndex, RegretStore, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
@@ -78,8 +78,15 @@ export interface Estimate {
 	readonly combos: readonly [number, number];
 	readonly decisionNodes: number;
 	readonly totalSlots: number;
+	/** Storage at 32-bit precision, the default for any sizeable spot. */
 	readonly bytes: number;
+	/**
+	 * Storage at 16-bit precision, a little over half of `bytes`; what a spot
+	 * that does not fit at 32 bits is solved with.
+	 */
+	readonly compressedBytes: number;
 	readonly secondsPerThousandIterations: number;
+	/** Whether the spot fits `maxBytes` at 16 bits or better. */
 	readonly fits: boolean;
 	readonly suggestions: readonly string[];
 }
@@ -89,7 +96,8 @@ export class SpotTooLargeError extends Error {
 	readonly estimate: Estimate;
 	constructor(estimate: Estimate, maxBytes: number) {
 		super(
-			`This spot needs ~${formatBytes(estimate.bytes)} but the limit is ${formatBytes(maxBytes)}.\n` +
+			`This spot needs ~${formatBytes(estimate.compressedBytes)} even at 16-bit precision, ` +
+				`but the limit is ${formatBytes(maxBytes)}.\n` +
 				`  ${estimate.decisionNodes} decision nodes x up to ${estimate.runouts.toLocaleString()} runouts ` +
 				`x ${Math.max(...estimate.combos)} combos.\n` +
 				(estimate.suggestions.length
@@ -195,9 +203,10 @@ export function defineSpot(config: SpotConfig): Spot {
 	const last = runouts.rounds - 1;
 	const showdownBytes = runouts.counts[last] * (2 * COMBOS + COMBOS + 1) * 2;
 	const bytes = layout.bytes + showdownBytes;
+	const compressedBytes = buildLayout(tree, runouts, players, 2).bytes + showdownBytes;
 
 	const suggestions: string[] = [];
-	if (bytes > maxBytes) {
+	if (compressedBytes > maxBytes) {
 		const widest = Math.max(...rows.map((r) => r.length));
 		if (widest > 1) suggestions.push(`use fewer bet sizes (currently up to ${widest} per round)`);
 		if ((config.maxRaises ?? 1) > 1) suggestions.push(`lower maxRaises to 1`);
@@ -212,8 +221,9 @@ export function defineSpot(config: SpotConfig): Spot {
 		decisionNodes: tree.decisionNodes.length,
 		totalSlots: layout.totalSlots,
 		bytes,
+		compressedBytes,
 		secondsPerThousandIterations: (layout.totalSlots * 4 * 1000) / OPS_PER_SECOND,
-		fits: bytes <= maxBytes,
+		fits: compressedBytes <= maxBytes,
 		suggestions,
 	};
 	if (!estimate.fits) throw new SpotTooLargeError(estimate, maxBytes);
@@ -262,7 +272,16 @@ export interface SolveOptions {
 	 */
 	readonly exploitEvery?: number;
 	readonly onProgress?: (info: Progress) => void;
-	readonly precision?: 'f32' | 'f64';
+	/**
+	 * Accumulator storage. Unset, a small spot uses 'f64', a larger one 'f32',
+	 * and one too big for either under the spot's `maxBytes` uses 'i16'.
+	 *
+	 * 'i16' stores regrets and strategy sums as 16-bit integers with one scale
+	 * per node and board, about halving memory. It is for fitting a spot, not
+	 * for speed: the solver is compute-bound, and re-encoding each block on
+	 * update costs a little time per iteration.
+	 */
+	readonly precision?: Precision;
 	/**
 	 * Threads to split the runouts across, the calling thread included: 2 is
 	 * the caller and one worker. 1 stays single-threaded; 'auto' picks a count
@@ -294,6 +313,11 @@ export interface SolveOptions {
 }
 
 export type Algorithm = 'cfr+' | 'dcfr';
+
+export type Precision = 'f64' | 'f32' | 'i16';
+
+/** Bytes per stored value at each precision. */
+export const PRECISION_BYTES = { f64: 8, f32: 4, i16: 2 } as const;
 
 export interface Progress {
 	readonly iteration: number;
@@ -370,7 +394,13 @@ export interface SolveRun {
  * @param options solver setup
  */
 export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
-	const precision = options.analysisOnly ? 'f32' : options.precision ?? (spot.estimate.totalSlots < 4_000_000 ? 'f64' : 'f32');
+	// A saved strategy is loaded as float32 sums, so analysis stays there.
+	const maxBytes = spot.source.maxBytes ?? DEFAULT_MAX_BYTES;
+	const { totalSlots, bytes } = spot.estimate;
+	const precision: Precision = options.analysisOnly
+		? 'f32'
+		: options.precision ??
+			(totalSlots < 4_000_000 && bytes * 2 <= maxBytes ? 'f64' : bytes <= maxBytes ? 'f32' : 'i16');
 
 	// Hands neither player holds never carry reach, so they need no ranking.
 	const relevant = new Uint8Array(COMBOS);
@@ -378,7 +408,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 	const showdown = buildShowdownTable(spot.runouts, relevant);
-	const layout = buildLayout(spot.tree, spot.runouts, spot.players, precision === 'f64' ? 8 : 4);
+	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
 	const weights = runoutWeights(spot.runouts);
 
 	const requested = options.analysisOnly ? 1 : options.workers === 'auto' ? defaultWorkerCount() : (options.workers ?? 1);
@@ -386,13 +416,10 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 
 	// Workers need the accumulators in shared memory. Allocating shared for a
 	// single-threaded solve would cost nothing but buys nothing either.
-	const width = precision === 'f64' ? 8 : 4;
-	const makeStore = (): Float64Array | Float32Array => {
-		const buffer = plan
-			? new SharedArrayBuffer(layout.totalSlots * width)
-			: new ArrayBuffer(layout.totalSlots * width);
-		return precision === 'f64' ? new Float64Array(buffer) : new Float32Array(buffer);
-	};
+	const allocate = (bytes: number): ArrayBuffer | SharedArrayBuffer =>
+		plan ? new SharedArrayBuffer(bytes) : new ArrayBuffer(bytes);
+	const width = PRECISION_BYTES[precision];
+	const quantised = precision === 'i16';
 
 	const ctx: Context = {
 		tree: spot.tree,
@@ -400,8 +427,12 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		players: spot.players,
 		layout,
 		showdown,
-		regret: options.analysisOnly ? new Float32Array(0) : makeStore(),
-		strategySum: makeStore(),
+		regret: options.analysisOnly
+			? new Float32Array(0)
+			: makeRegretStore(precision, allocate(layout.totalSlots * width)),
+		strategySum: makeSumStore(precision, allocate(layout.totalSlots * width)),
+		regretScale: quantised ? new Float64Array(allocate(layout.blocks * 8)) : null,
+		sumScale: quantised ? new Float64Array(allocate(layout.blocks * 8)) : null,
 		scratch: makeTerminalScratch(),
 		chipScale: spot.chipScale,
 		active: buildActiveLists(spot.runouts, spot.players),
@@ -423,7 +454,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 
 	const solver = makeSolver(ctx);
 	const pool: Pool | null = plan
-		? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr }, requested)
+		? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision }, requested)
 		: null;
 	if (pool) solver.useRoot(pool.traverse);
 	let completed = 0;
@@ -452,6 +483,18 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			return makeSolution(spot, ctx, solver, completed, [...history], stoppedAt, pool ? pool.workers : 1);
 		},
 	};
+}
+
+/** View a buffer as regret storage of the given precision. */
+export function makeRegretStore(precision: Precision, buffer: ArrayBuffer | SharedArrayBuffer): RegretStore {
+	if (precision === 'f64') return new Float64Array(buffer);
+	return precision === 'f32' ? new Float32Array(buffer) : new Int16Array(buffer);
+}
+
+/** View a buffer as strategy-sum storage of the given precision. */
+export function makeSumStore(precision: Precision, buffer: ArrayBuffer | SharedArrayBuffer): SumStore {
+	if (precision === 'f64') return new Float64Array(buffer);
+	return precision === 'f32' ? new Float32Array(buffer) : new Uint16Array(buffer);
 }
 
 /**

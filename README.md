@@ -122,6 +122,28 @@ Measured on an Apple M2, single threaded:
 `defineSpot` reports the projected cost before anything is allocated, and refuses a spot
 over `maxBytes` with concrete suggestions. `maxCombos` caps range width.
 
+### 16-bit storage
+
+A spot too big for 32-bit storage under `maxBytes` is solved at 16 bits instead
+(`precision: 'i16'` forces it). Regrets and strategy sums are stored as 16-bit integers with
+one scale per node and board, about halving memory. `estimate.compressedBytes` reports
+that size, and a spot is refused only if even that exceeds `maxBytes`. Measured on AsKh7d:
+
+| Flop | Ranges | 32-bit | 16-bit |
+|---|---|---|---|
+| 1 size, 1 raise | 198 vs 165 | 150 MB | 85 MB |
+| 2 sizes, 1 raise | 198 vs 165 | 824 MB | 425 MB |
+| 2 sizes, 1 raise | 309 vs 424 | 1,645 MB | 836 MB |
+| 2 sizes, 2 raises | 309 vs 424 | 3,344 MB | 1,689 MB |
+
+The 309 vs 424, two-size flop solved with two threads at a peak RSS of about 1.1 GB, so it
+fits a 2 GB machine. It reaches each accuracy target in the same number of iterations as
+32-bit, but each iteration costs about 15–20% more, because every update re-encodes its
+block. Strategy sums round up or down at random, weighted by the remainder: rounded to
+nearest, small sums lose most of each iteration's contribution and exploitability stalls
+near 0.04% of pot. The randomness is a hash of the slot and iteration, so solves stay
+deterministic at any thread count.
+
 ### Algorithm and benchmark
 
 The default update rule is Discounted CFR (`algorithm: 'dcfr'`, α 1.5, β 0, γ 2). CFR+

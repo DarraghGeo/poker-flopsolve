@@ -25,14 +25,14 @@ import {
 	matchupMass,
 	runoutWeights,
 } from './cfr.ts';
-import { defineSpot } from './index.ts';
-import type { SpotConfig } from './index.ts';
+import { defineSpot, makeRegretStore, makeSumStore, PRECISION_BYTES } from './index.ts';
+import type { Precision, SpotConfig } from './index.ts';
 import { buildShowdownTable } from './showdown.ts';
 import type { WorkerSetup } from './parallel.ts';
 import { COMMAND, CONTROL } from './parallel.ts';
 
 const setup = workerData as WorkerSetup;
-const { config, dcfr } = setup.payload as { config: SpotConfig; dcfr: boolean };
+const { config, dcfr, precision } = setup.payload as { config: SpotConfig; dcfr: boolean; precision: Precision };
 
 const spot = defineSpot(config);
 const relevant = new Uint8Array(COMBOS);
@@ -40,7 +40,7 @@ for (const combo of spot.players[0].combos) relevant[combo] = 1;
 for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 const weights = runoutWeights(spot.runouts);
-const layout = buildLayout(spot.tree, spot.runouts, spot.players, setup.float64 ? 8 : 4);
+const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
 
 const ctx: Context = {
 	tree: spot.tree,
@@ -48,10 +48,10 @@ const ctx: Context = {
 	players: spot.players,
 	layout,
 	showdown: buildShowdownTable(spot.runouts, relevant),
-	regret: setup.float64 ? new Float64Array(setup.regret) : new Float32Array(setup.regret),
-	strategySum: setup.float64
-		? new Float64Array(setup.strategySum)
-		: new Float32Array(setup.strategySum),
+	regret: makeRegretStore(precision, setup.regret),
+	strategySum: makeSumStore(precision, setup.strategySum),
+	regretScale: setup.regretScale ? new Float64Array(setup.regretScale) : null,
+	sumScale: setup.sumScale ? new Float64Array(setup.sumScale) : null,
 	scratch: makeTerminalScratch(),
 	chipScale: spot.chipScale,
 	active: buildActiveLists(spot.runouts, spot.players),
