@@ -544,6 +544,19 @@ export interface Solver {
 	expectedValue(): [number, number];
 	exploitability(): number;
 	averageStrategyAt(node: number, board: number): { actions: number; probs: Float64Array };
+	/**
+	 * Counterfactual values under the average strategy from any node, for
+	 * reach vectors the caller supplies. Returns a fresh copy.
+	 */
+	valuesAt(
+		node: number,
+		board: number,
+		traverser: 0 | 1,
+		reachMe: Float64Array,
+		reachOpp: Float64Array,
+		live: Uint16Array,
+		liveCount: number,
+	): Float64Array;
 }
 
 /** Create a solver over prepared structures. */
@@ -618,6 +631,12 @@ export function makeSolver(ctx: Context): Solver {
 			const br0 = total(run(Mode.BestResponse, 0, 0), 0);
 			const br1 = total(run(Mode.BestResponse, 1, 0), 1);
 			return (br0 + br1) / 2;
+		},
+		valuesAt(node, board, traverser, reachMe, reachOpp, live, liveCount) {
+			const value = traverse(
+				ctx, buffers, Mode.Average, traverser, 0, node, board, reachMe, reachOpp, live, liveCount, 0,
+			);
+			return Float64Array.from(value.subarray(0, COMBOS));
 		},
 		averageStrategyAt(node, board) {
 			const owner = ctx.tree.player[node] as 0 | 1;
