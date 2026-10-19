@@ -87,6 +87,22 @@ defineSpot({ ..., betSizes: [[0.5]], raiseSizes: [{ times: 3 }], maxRaises: 2 })
 // bet 40 into 80, raise to 120
 ```
 
+## Betting per round
+
+`raiseSizes`, `maxRaises` and `allowAllIn` can each be given once for every round, or one
+per round like `betSizes`. A shove can also be a round's only bet size:
+
+```ts
+// Flop: one size, no raise. Turn: two sizes, one raise. River: shove or check.
+defineSpot({ ..., board: 'Qs Jh 4d',
+  betSizes: [[0.33], [0.5, 1], ['allin']],
+  maxRaises: [1, 2, 1],
+  raiseSizes: [{ times: 3 }],
+});
+```
+
+A subgame keeps the rounds from its own onwards.
+
 ## Reading a solved spot
 
 `createRun` returns the solver itself as `run.solver`, for analysis after (or between)

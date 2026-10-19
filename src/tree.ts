@@ -22,6 +22,31 @@ import type { Runouts } from './runouts.ts';
  */
 export type BetSize = number | { chips: number } | { times: number } | 'allin';
 
+/** Sizes offered when facing a bet: one row for every round, or a row per round. */
+export type RaiseSizes = readonly BetSize[] | readonly (readonly BetSize[])[];
+
+/** Whether raise sizes are given per round rather than once for all of them. */
+export function raisesPerRound(sizes: RaiseSizes): sizes is readonly (readonly BetSize[])[] {
+	return sizes.length > 0 && Array.isArray(sizes[0]);
+}
+
+/**
+ * A setting given once or per round, expanded to one entry per round.
+ * @throws if a per-round list has the wrong length
+ */
+export function perRound<T>(value: T | readonly T[], listed: boolean, rounds: number, name: string): T[] {
+	if (!listed) return Array.from({ length: rounds }, () => value as T);
+	const list = value as readonly T[];
+	if (list.length === 1) return Array.from({ length: rounds }, () => list[0]);
+	if (list.length !== rounds) {
+		throw new Error(
+			`${name} has ${list.length} entries but this board has ${rounds} betting rounds; ` +
+				'give one per round, or a single value for all of them',
+		);
+	}
+	return [...list];
+}
+
 export const NodeKind = {
 	Decision: 0,
 	Chance: 1,
@@ -49,14 +74,14 @@ export interface TreeConfig {
 	/** Bet sizes offered on each betting round. */
 	readonly betSizes: readonly (readonly BetSize[])[];
 	/**
-	 * Sizes offered when facing a bet, on every round. Unset, raises use the
-	 * round's bet sizes.
+	 * Sizes offered when facing a bet, on every round or per round. Unset,
+	 * raises use the round's bet sizes.
 	 */
-	readonly raiseSizes?: readonly BetSize[];
-	/** Maximum aggressive actions per round; the opening bet is the first. */
-	readonly maxRaises: number;
-	/** Offer a shove alongside the configured sizes. */
-	readonly allowAllIn: boolean;
+	readonly raiseSizes?: RaiseSizes;
+	/** Maximum aggressive actions per round, the opening bet the first; once or per round. */
+	readonly maxRaises: number | readonly number[];
+	/** Offer a shove alongside the configured sizes; once or per round. */
+	readonly allowAllIn: boolean | readonly boolean[];
 	readonly chipScale: number;
 	/** Smallest legal raise increment, in units. */
 	readonly minRaiseUnits: number;
@@ -115,7 +140,13 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 	const edgeTarget: number[] = [];
 	const edgeChild: number[] = [];
 
-	const { potUnits, stackUnits, maxRaises, chipScale, minRaiseUnits } = config;
+	const { potUnits, stackUnits, chipScale, minRaiseUnits } = config;
+	const rounds = runouts.rounds;
+	const maxRaises = perRound(config.maxRaises, Array.isArray(config.maxRaises), rounds, 'maxRaises');
+	const allowAllIn = perRound(config.allowAllIn, Array.isArray(config.allowAllIn), rounds, 'allowAllIn');
+	const raiseSizes = config.raiseSizes
+		? perRound<readonly BetSize[]>(config.raiseSizes, raisesPerRound(config.raiseSizes), rounds, 'raiseSizes')
+		: null;
 	const half = Math.round(potUnits / 2);
 
 	const addNode = (
@@ -216,13 +247,13 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 
 		// Nobody can put in more than the opponent is able to match.
 		const cap = Math.min(stackUnits, theirs + (stackUnits - theirs));
-		if (state.aggressions < maxRaises && myRemaining > owed) {
+		if (state.aggressions < maxRaises[state.round] && myRemaining > owed) {
 			const seen = new Set<number>();
 			const sizes: BetSize[] =
-				owed > 0 && config.raiseSizes
-					? [...config.raiseSizes]
+				owed > 0 && raiseSizes
+					? [...raiseSizes[state.round]]
 					: [...(config.betSizes[state.round] ?? [])].filter((size) => !(typeof size === 'object' && 'times' in size));
-			if (config.allowAllIn) sizes.push('allin');
+			if (allowAllIn[state.round]) sizes.push('allin');
 
 			for (const size of sizes) {
 				const target = resolveTarget(size, state, cap);
