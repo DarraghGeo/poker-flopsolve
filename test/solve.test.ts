@@ -268,8 +268,8 @@ describe('worker parallelism', () => {
 		});
 
 	it('agrees with a single-threaded solve to the last bit', () => {
-		const single = solve(spot(), { iterations: 60, workers: 1 });
-		const shared = solve(spot(), { iterations: 60, workers: 4 });
+		const single = solve(spot(), { iterations: 60, workers: 1, algorithm: 'cfr+' });
+		const shared = solve(spot(), { iterations: 60, workers: 4, algorithm: 'cfr+' });
 
 		expect(shared.ev(0)).toBeCloseTo(single.ev(0), 10);
 		expect(shared.ev(1)).toBeCloseTo(single.ev(1), 10);

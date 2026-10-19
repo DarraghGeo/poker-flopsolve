@@ -52,7 +52,7 @@ const timed = Number(args.timed ?? 5);
 const options: SolveOptions = {
 	workers,
 	precision: args.precision === 'f64' ? 'f64' : args.precision === 'f32' ? 'f32' : undefined,
-	algorithm: args.algorithm === 'dcfr' ? 'dcfr' : 'cfr+',
+	algorithm: args.algorithm === 'cfr+' ? 'cfr+' : 'dcfr',
 };
 
 console.log(`algorithm ${options.algorithm}`);

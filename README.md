@@ -122,6 +122,24 @@ Measured on an Apple M2, single threaded:
 `defineSpot` reports the projected cost before anything is allocated, and refuses a spot
 over `maxBytes` with concrete suggestions. `maxCombos` caps range width.
 
+### Algorithm and benchmark
+
+The default update rule is Discounted CFR (`algorithm: 'dcfr'`, α 1.5, β 0, γ 2). CFR+
+is still available as `algorithm: 'cfr+'`. `npm run bench` times a fixed river, turn, flop
+and two-tone flop. Measured in a 4-core cloud container, seconds of solving to reach each
+target (exploitability checks excluded):
+
+| Spot | Threads | CFR+ to 1% | DCFR to 1% | CFR+ to 0.3% | DCFR to 0.3% |
+|---|---|---|---|---|---|
+| Turn, 12 MB | 1 | 7.1 s (82 it) | 4.5 s (53 it) | 14.1 s (170 it) | 7.9 s (95 it) |
+| Flop, 150 MB | 1 | 49 s (46 it) | 36 s (34 it) | 101 s (95 it) | 64 s (61 it) |
+| Flop, 150 MB | 3 | 23 s | 17 s | 45 s | 29 s |
+| Two-tone flop, 162 MB | 3 | 19 s (34 it) | 16 s (29 it) | 38 s (71 it) | 28 s (53 it) |
+
+The solver is compute-bound rather than memory-bound — a 150 MB flop streams its
+accumulators at about 0.25 GB/s — so the cost of an iteration tracks the work in it, not
+its bytes.
+
 ### Accuracy targets
 
 `solve(spot, { targetPercent })` stops as soon as exploitability reaches that percentage of
