@@ -23,6 +23,7 @@ import type { Runouts } from './runouts.ts';
 import type { ShowdownTable, TerminalScratch } from './showdown.ts';
 import { foldValues, makeTerminalScratch, showdownValues } from './showdown.ts';
 import type { Tree } from './tree.ts';
+import { pairValues } from './pairs.ts';
 import { NodeKind } from './tree.ts';
 
 /** Which combinations a player holds, and where each sits in storage. */
@@ -304,7 +305,7 @@ function regretMatch(
 }
 
 /** Average strategy from accumulated sums. */
-function averageStrategy(
+export function averageStrategy(
 	strategySum: Float64Array | Float32Array,
 	base: number,
 	actions: number,
@@ -557,6 +558,21 @@ export interface Solver {
 		live: Uint16Array,
 		liveCount: number,
 	): Float64Array;
+	/**
+	 * Counterfactual values under the average strategy from any node against
+	 * each of `hands` alone, at the reach given for it: the same as `valuesAt`
+	 * with a one-hot opponent reach, for many opposing hands in one walk.
+	 * Returns `hands.length * COMBOS` values, one row per opposing hand.
+	 */
+	pairValuesAt(
+		node: number,
+		board: number,
+		traverser: 0 | 1,
+		hands: Uint16Array,
+		handReach: Float64Array,
+		live: Uint16Array,
+		liveCount: number,
+	): Float64Array;
 }
 
 /** Create a solver over prepared structures. */
@@ -637,6 +653,9 @@ export function makeSolver(ctx: Context): Solver {
 				ctx, buffers, Mode.Average, traverser, 0, node, board, reachMe, reachOpp, live, liveCount, 0,
 			);
 			return Float64Array.from(value.subarray(0, COMBOS));
+		},
+		pairValuesAt(node, board, traverser, hands, handReach, live, liveCount) {
+			return pairValues(ctx, node, board, traverser, hands, handReach, live, liveCount);
 		},
 		averageStrategyAt(node, board) {
 			const owner = ctx.tree.player[node] as 0 | 1;

@@ -84,3 +84,62 @@ describe('analysisOnly', () => {
 		expect(loaded.exploitabilityPercent()).toBeCloseTo(solved.exploitabilityPercent(), 4);
 	});
 });
+
+describe('pairValuesAt', () => {
+	const spot = defineSpot({
+		board: 'Ks7d2c3h', pot: 100, stack: 200,
+		oop: '99+,A9s+,KTs+,QJs,AJo+', ip: '77+,A5s+,K9s+,QTs+,JTs,ATo+,KQo',
+		betSizes: [[0.5, 1]], raiseSizes: [{ times: 3 }], maxRaises: 2,
+	});
+	const run = createRun(spot);
+	run.step(40);
+	const { solver } = run;
+	const live = solver.rootLive.subarray(0, solver.rootCount);
+	const oop = solver.ctx.players[0];
+	const ip = solver.ctx.players[1];
+	// After OOP bets, IP values against each OOP hand that bets.
+	const bet = spot.tree.edgeChild[spot.tree.firstEdge[0] + 1];
+	const root = solver.averageStrategyAt(0, 0);
+	const hands = Uint16Array.from([...oop.combos].filter((c) => live.includes(c)));
+	const reach = Float64Array.from(hands, (c) => oop.weights[c] * root.probs[oop.slot[c] * root.actions + 1]);
+	const rows = solver.pairValuesAt(bet, 0, 1, hands, reach, live, live.length);
+
+	it('matches valuesAt with a one-hot opponent reach, across chunks and streets', () => {
+		// More hands than one walk takes, so chunking is exercised too.
+		expect(hands.length).toBeGreaterThan(64);
+		for (const k of [0, 1, 63, 64, 65, hands.length - 1]) {
+			const one = new Float64Array(COMBOS);
+			one[hands[k]] = reach[k];
+			const expected = solver.valuesAt(bet, 0, 1, Float64Array.from(ip.weights), one, live, live.length);
+			for (const combo of ip.combos) {
+				if (!live.includes(combo)) continue;
+				expect(rows[k * COMBOS + combo]).toBeCloseTo(expected[combo], 6);
+			}
+		}
+	});
+
+	it('sums back to the whole range', () => {
+		const whole = solver.valuesAt(bet, 0, 1, Float64Array.from(ip.weights), (() => {
+			const r = new Float64Array(COMBOS);
+			hands.forEach((c, k) => (r[c] = reach[k]));
+			return r;
+		})(), live, live.length);
+		for (const combo of ip.combos) {
+			if (!live.includes(combo)) continue;
+			let sum = 0;
+			for (let k = 0; k < hands.length; k++) sum += rows[k * COMBOS + combo];
+			expect(sum).toBeCloseTo(whole[combo], 6);
+		}
+	});
+
+	it('gives nothing against a hand that never reaches the node', () => {
+		const none = solver.pairValuesAt(bet, 0, 1, hands.subarray(0, 3), new Float64Array(3), live, live.length);
+		expect(none.every((v) => v === 0)).toBe(true);
+	});
+
+	it('only reads the strategy', () => {
+		const before = Float64Array.from(solver.ctx.strategySum);
+		solver.pairValuesAt(bet, 0, 1, hands, reach, live, live.length);
+		expect(Float64Array.from(solver.ctx.strategySum)).toEqual(before);
+	});
+});
