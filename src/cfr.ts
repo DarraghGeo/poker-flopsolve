@@ -53,6 +53,14 @@ export function buildPlayerIndex(weights: Float64Array): PlayerIndex {
 /** Slot offsets for every decision node. */
 export interface Layout {
 	readonly offset: Int32Array;
+	/**
+	 * First block of each decision node, else -1. A block is one node on one
+	 * board — `actions * combosOfItsOwner` slots, exactly what one visit
+	 * updates — and block `blockOffset[node] + board` is where 16-bit storage
+	 * keeps its scale.
+	 */
+	readonly blockOffset: Int32Array;
+	readonly blocks: number;
 	readonly totalSlots: number;
 	readonly maxActions: number;
 	readonly bytes: number;
@@ -60,7 +68,8 @@ export interface Layout {
 
 /**
  * Size storage. A node's block is `boards * actions * combosOfItsOwner`.
- * @param bytesPerElement 4 for float32, 8 for float64
+ * @param bytesPerElement 8 for float64, 4 for float32, 2 for 16-bit, which
+ *   also keeps one float64 scale per block for each accumulator
  */
 export function buildLayout(
 	tree: Tree,
@@ -69,7 +78,9 @@ export function buildLayout(
 	bytesPerElement: number,
 ): Layout {
 	const offset = new Int32Array(tree.nodeCount).fill(-1);
+	const blockOffset = new Int32Array(tree.nodeCount).fill(-1);
 	let total = 0;
+	let blocks = 0;
 	let maxActions = 0;
 
 	for (let i = 0; i < tree.decisionNodes.length; i++) {
@@ -77,10 +88,22 @@ export function buildLayout(
 		const actions = tree.numEdges[node];
 		if (actions > maxActions) maxActions = actions;
 		offset[node] = total;
+		blockOffset[node] = blocks;
 		total += runouts.counts[tree.round[node]] * actions * players[tree.player[node]].count;
+		blocks += runouts.counts[tree.round[node]];
 	}
-	return { offset, totalSlots: total, maxActions, bytes: total * bytesPerElement * 2 };
+	const scales = bytesPerElement === 2 ? blocks * 8 * 2 : 0;
+	return { offset, blockOffset, blocks, totalSlots: total, maxActions, bytes: total * bytesPerElement * 2 + scales };
 }
+
+/** Accumulated regrets: float, or 16-bit integers scaled per block. */
+export type RegretStore = Float64Array | Float32Array | Int16Array;
+/** Accumulated strategy sums: float, or 16-bit integers scaled per block. */
+export type SumStore = Float64Array | Float32Array | Uint16Array;
+
+/** Largest magnitudes 16-bit storage encodes. */
+const REGRET_STEPS = 32767;
+const SUM_STEPS = 65535;
 
 /** Everything a traversal needs. */
 export interface Context {
@@ -89,8 +112,17 @@ export interface Context {
 	readonly players: readonly [PlayerIndex, PlayerIndex];
 	readonly layout: Layout;
 	readonly showdown: ShowdownTable;
-	readonly regret: Float64Array | Float32Array;
-	readonly strategySum: Float64Array | Float32Array;
+	readonly regret: RegretStore;
+	readonly strategySum: SumStore;
+	/**
+	 * Per-block scales when the accumulators are 16-bit, else null: a stored
+	 * integer `q` in block `b` means `q * scale[b]`. Only updates need them.
+	 * Everything that reads a strategy divides each hand's values by their own
+	 * total within one block, so the scale cancels and the integers are read
+	 * as they are.
+	 */
+	readonly regretScale: Float64Array | null;
+	readonly sumScale: Float64Array | null;
 	readonly scratch: TerminalScratch;
 	readonly chipScale: number;
 	/** Which combinations each player can hold on each board. */
@@ -103,7 +135,7 @@ export interface Context {
 	readonly runoutWeight: Float64Array;
 	/** Total weighted mass of legal matchups; divides raw values into chips. */
 	readonly totalMass: number;
-	/** Discounted CFR in place of CFR+; see `discountFactors`. */
+	/** Discounted CFR in place of CFR+; see `DCFR_ALPHA`. */
 	readonly dcfr: boolean;
 	/**
 	 * Runout range this traversal is responsible for, as [start, end), at
@@ -299,7 +331,7 @@ export type Mode = (typeof Mode)[keyof typeof Mode];
  * @param slots each active entry's storage slot, beside `active`
  */
 function normalise(
-	source: Float64Array | Float32Array,
+	source: RegretStore | SumStore,
 	base: number,
 	actions: number,
 	stride: number,
@@ -330,7 +362,7 @@ function normalise(
 
 /** Current strategy from positive regrets; uniform where there is none. */
 function regretMatch(
-	regret: Float64Array | Float32Array,
+	regret: RegretStore,
 	base: number,
 	actions: number,
 	stride: number,
@@ -345,7 +377,7 @@ function regretMatch(
 
 /** Average strategy from accumulated sums, which are never negative. */
 export function averageStrategy(
-	strategySum: Float64Array | Float32Array,
+	strategySum: SumStore,
 	base: number,
 	actions: number,
 	stride: number,
@@ -530,7 +562,12 @@ function traverse(
 		}
 	}
 
-	if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.dcfr) {
+	if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.regretScale !== null) {
+		updateQuantised(
+			ctx, ctx.layout.blockOffset[node] + board, slotBase, actions, stride,
+			active, activeSlot, activeFrom, activeCount, iterWeight, reachMe, strategy, actionValues, out,
+		);
+	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.dcfr) {
 		// `iterWeight` is the iteration number, counted from 1.
 		const previous = iterWeight - 1;
 		const grown = previous ** DCFR_ALPHA;
@@ -570,6 +607,117 @@ function traverse(
 	}
 
 	return out;
+}
+
+/**
+ * The regret and strategy-sum update for 16-bit storage, under either rule.
+ *
+ * A block is rescaled whole on every update: decode, update in float, find the
+ * block's largest magnitude, re-encode against it.
+ *
+ * Regrets round to nearest. Strategy sums round up or down at random, with
+ * odds set by the remainder, so each is right on average: rounded to nearest,
+ * a hand whose sum is small beside its block's largest loses most of every
+ * iteration's contribution, and measured, exploitability stalls near 0.04%
+ * of pot where float32 keeps falling. The randomness is a hash of the slot and
+ * the iteration, so a solve stays deterministic at any thread count.
+ *
+ * `actionValues` and `strategy` are not needed once their values are used, so
+ * the new regrets and sums are staged in them rather than in buffers of their
+ * own.
+ */
+function updateQuantised(
+	ctx: Context,
+	block: number,
+	slotBase: number,
+	actions: number,
+	stride: number,
+	active: Uint16Array,
+	activeSlot: Uint16Array,
+	activeFrom: number,
+	activeCount: number,
+	iterWeight: number,
+	reachMe: Float64Array,
+	strategy: Float64Array,
+	actionValues: Float64Array,
+	out: Float64Array,
+): void {
+	const regret = ctx.regret;
+	const strategySum = ctx.strategySum;
+	const regretScale = ctx.regretScale!;
+	const sumScale = ctx.sumScale!;
+	const oldRegret = regretScale[block];
+	const oldSum = sumScale[block];
+
+	// CFR+ is the special case that clamps and keeps everything: a negative
+	// regret is floored at zero, a positive one kept whole, and iteration `t`
+	// is weighted `t` in the sum.
+	let keepPositive = 1;
+	let keepNegative = 0;
+	let keepSum = 1;
+	let weight = iterWeight;
+	const clamp = !ctx.dcfr;
+	if (ctx.dcfr) {
+		const previous = iterWeight - 1;
+		const grown = previous ** DCFR_ALPHA;
+		const shrunk = previous ** DCFR_BETA;
+		keepPositive = grown / (grown + 1);
+		keepNegative = shrunk / (shrunk + 1);
+		keepSum = (previous / iterWeight) ** DCFR_GAMMA;
+		weight = 1;
+	}
+
+	let largestRegret = 0;
+	let largestSum = 0;
+	for (let a = 0; a < actions; a++) {
+		const offset = a * COMBOS;
+		const slotRow = slotBase + a * stride;
+		for (let i = 0; i < activeCount; i++) {
+			const combo = active[activeFrom + i];
+			const at = slotRow + activeSlot[activeFrom + i];
+			const accumulated = regret[at] * oldRegret;
+			let updated =
+				accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[offset + combo] - out[combo];
+			if (clamp && updated < 0) updated = 0;
+			const magnitude = updated < 0 ? -updated : updated;
+			if (magnitude > largestRegret) largestRegret = magnitude;
+			actionValues[offset + combo] = updated;
+
+			const sum = strategySum[at] * oldSum * keepSum + weight * reachMe[combo] * strategy[offset + combo];
+			if (sum > largestSum) largestSum = sum;
+			strategy[offset + combo] = sum;
+		}
+	}
+
+	// Storing into a 16-bit array truncates toward zero, so adding a half away
+	// from zero rounds to nearest, and adding the dither rounds at random. A
+	// value at the very top of the range plus nearly a whole dither would
+	// reach 65536 and wrap to zero, hence the cap.
+	const regretStep = largestRegret > 0 ? REGRET_STEPS / largestRegret : 0;
+	const sumStep = largestSum > 0 ? SUM_STEPS / largestSum : 0;
+	for (let a = 0; a < actions; a++) {
+		const offset = a * COMBOS;
+		const slotRow = slotBase + a * stride;
+		for (let i = 0; i < activeCount; i++) {
+			const combo = active[activeFrom + i];
+			const at = slotRow + activeSlot[activeFrom + i];
+			const r = actionValues[offset + combo] * regretStep;
+			regret[at] = r < 0 ? r - 0.5 : r + 0.5;
+			const s = strategy[offset + combo] * sumStep + dither(at, iterWeight);
+			strategySum[at] = s < SUM_STEPS ? s : SUM_STEPS;
+		}
+	}
+	regretScale[block] = largestRegret / REGRET_STEPS;
+	sumScale[block] = largestSum / SUM_STEPS;
+}
+
+/** A deterministic uniform value in [0, 1) for a slot on an iteration. */
+function dither(slot: number, iteration: number): number {
+	let h = Math.imul(slot ^ Math.imul(iteration, 0x9e3779b1), 0x85ebca6b);
+	h ^= h >>> 13;
+	h = Math.imul(h, 0xc2b2ae35);
+	h ^= h >>> 16;
+	return (h >>> 0) / 4294967296;
 }
 
 /** A whole-tree traversal, returning the root value vector. */

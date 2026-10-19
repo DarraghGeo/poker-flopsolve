@@ -51,7 +51,7 @@ const cap = Number(args.iters ?? 1000);
 const timed = Number(args.timed ?? 5);
 const options: SolveOptions = {
 	workers,
-	precision: args.precision === 'f64' ? 'f64' : args.precision === 'f32' ? 'f32' : undefined,
+	precision: args.precision === 'f64' || args.precision === 'f32' || args.precision === 'i16' ? args.precision : undefined,
 	algorithm: args.algorithm === 'cfr+' ? 'cfr+' : 'dcfr',
 };
 
