@@ -12,7 +12,7 @@ import { COMBO_CARDS, COMBOS, formatCards, parseCards } from './cards.ts';
 import type { BetSize, Tree } from './tree.ts';
 import { ACTION_LABELS, ActionKind, buildTree, NodeKind } from './tree.ts';
 import type { Runouts } from './runouts.ts';
-import { enumerateRunouts } from './runouts.ts';
+import { boardAtRound, enumerateRunouts } from './runouts.ts';
 import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
 import type { Pool } from './parallel.ts';
@@ -52,10 +52,14 @@ export interface SpotConfig {
 	readonly pot: number;
 	/** Effective stack behind, per player, in chips. */
 	readonly stack: number;
-	/** Range notation for the out-of-position player, who acts first. */
-	readonly oop: string;
-	/** Range notation for the in-position player. */
-	readonly ip: string;
+	/**
+	 * The out-of-position player's range, who acts first: range notation, or
+	 * a weight per combination indexed like `COMBO_CARDS`, as
+	 * `Solution.subgameAt` produces.
+	 */
+	readonly oop: string | Float64Array;
+	/** The in-position player's range, in either form. */
+	readonly ip: string | Float64Array;
 	/** Bet sizes per betting round; a single row applies to every round. */
 	readonly betSizes: readonly (readonly BetSize[])[];
 	/** Sizes offered when facing a bet; unset, raises use the bet sizes. */
@@ -161,8 +165,11 @@ export function defineSpot(config: SpotConfig): Spot {
 
 	// Board cards cannot be in anyone's range.
 	const onBoard = new Set(board);
-	const trim = (notation: string, who: string): Float64Array => {
-		const weights = parseRange(notation);
+	const trim = (range: string | Float64Array, who: string): Float64Array => {
+		const weights = typeof range === 'string' ? parseRange(range) : Float64Array.from(range);
+		if (weights.length !== COMBOS) {
+			throw new Error(`The ${who} range has ${weights.length} weights; one per combination is ${COMBOS}`);
+		}
 		for (let combo = 0; combo < COMBOS; combo++) {
 			if (weights[combo] === 0) continue;
 			if (onBoard.has(COMBO_CARDS[combo * 2]) || onBoard.has(COMBO_CARDS[combo * 2 + 1])) {
@@ -351,8 +358,37 @@ export interface Solution {
 	strategyAt(node: number, board: number): StrategyView;
 	/** Readable action path to a node. */
 	path(node: number): string;
+	/**
+	 * How likely each combination is to reach a node on a board, for one
+	 * player: their range weight times the probability of every action they
+	 * took on the way, under the average strategy. Indexed by combination.
+	 * The other player's actions do not enter: this is the player's own range
+	 * at the node, not the joint probability of getting there.
+	 */
+	reachAt(node: number, board: number, player: 0 | 1): Float64Array;
+	/**
+	 * The spot that starts at a node: the board as dealt there, the pot and
+	 * stacks as they stand, and each player's range as `reachAt` gives it.
+	 * Defining and solving it re-solves that part of the game, typically with
+	 * more bet sizes than the whole spot could afford.
+	 *
+	 * This is unsafe re-solving: the subgame is solved for the ranges that
+	 * arrive, so its strategy can be exploited in ways the original solution
+	 * did not allow for. It answers "how should these ranges play from here"
+	 * well; it does not make the earlier streets any more accurate.
+	 *
+	 * @param node a decision that opens a betting round after the first, or the root
+	 * @param board the board index at that node's round
+	 * @param betting overrides; unset, the original spot's betting carries over
+	 */
+	subgameAt(node: number, board: number, betting?: SubgameBetting): SpotConfig;
 	readonly history: readonly Progress[];
 }
+
+/** Betting for a subgame; anything unset keeps the original spot's. */
+export type SubgameBetting = Partial<
+	Pick<SpotConfig, 'betSizes' | 'raiseSizes' | 'maxRaises' | 'allowAllIn' | 'maxCombos' | 'maxBytes'>
+>;
 
 export interface StrategyView {
 	readonly node: number;
@@ -635,6 +671,23 @@ function makeSolution(
 		return kind >= ActionKind.Bet ? `${ACTION_LABELS[kind]} ${amount}` : ACTION_LABELS[kind];
 	};
 
+	const reachAt = (node: number, board: number, player: 0 | 1): Float64Array => {
+		const index = spot.players[player];
+		const reach = new Float64Array(COMBOS);
+		for (let i = 0; i < index.count; i++) reach[index.combos[i]] = index.weights[index.combos[i]];
+		const round = tree.round[node];
+
+		for (let current = node; parent[current] >= 0; current = parent[current]) {
+			const owner = parent[current];
+			if (tree.kind[owner] !== NodeKind.Decision || tree.player[owner] !== player) continue;
+			const at = boardAtRound(spot.runouts.childFactor, board, round, tree.round[owner]);
+			const { actions, probs } = solver.averageStrategyAt(owner, at);
+			const action = viaEdge[current] - tree.firstEdge[owner];
+			for (let i = 0; i < index.count; i++) reach[index.combos[i]] *= probs[i * actions + action];
+		}
+		return reach;
+	};
+
 	let cachedEv: [number, number] | null = null;
 	let cachedExploit: number | null = null;
 
@@ -673,6 +726,41 @@ function makeSolution(
 				current = owner;
 			}
 			return steps.reverse().join(' ') || '(root)';
+		},
+		reachAt,
+		subgameAt(node, board, betting = {}) {
+			const opensRound = node === 0 || (parent[node] >= 0 && tree.kind[parent[node]] === NodeKind.Chance);
+			if (tree.kind[node] !== NodeKind.Decision || !opensRound) {
+				throw new Error(`Node ${node} does not open a betting round; a subgame must start where one does`);
+			}
+			const round = tree.round[node];
+			if (board < 0 || board >= spot.runouts.counts[round]) {
+				throw new Error(`Board ${board} is out of range for round ${round}`);
+			}
+
+			// A round opens with both players level, so what is in the middle
+			// is dead money from here on and the stacks have shrunk equally.
+			const width = spot.runouts.width[round];
+			const cards = spot.runouts.cards[round].subarray(board * width, board * width + width);
+			const invested = (tree.pot[node] - spot.potUnits) / 2;
+			const { source } = spot;
+			const rows =
+				source.betSizes.length === 1 ? source.betSizes : source.betSizes.slice(round);
+
+			return {
+				board: formatCards(cards),
+				pot: tree.pot[node] / spot.chipScale,
+				stack: (spot.stackUnits - invested) / spot.chipScale,
+				oop: reachAt(node, board, 0),
+				ip: reachAt(node, board, 1),
+				betSizes: betting.betSizes ?? rows,
+				raiseSizes: 'raiseSizes' in betting ? betting.raiseSizes : source.raiseSizes,
+				maxRaises: betting.maxRaises ?? source.maxRaises,
+				allowAllIn: betting.allowAllIn ?? source.allowAllIn,
+				maxCombos: 'maxCombos' in betting ? betting.maxCombos : source.maxCombos,
+				maxBytes: 'maxBytes' in betting ? betting.maxBytes : source.maxBytes,
+				chipScale: spot.chipScale,
+			};
 		},
 	};
 }
