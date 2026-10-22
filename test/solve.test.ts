@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createRun, defineSpot, formatCombo, solve, SpotTooLargeError } from '../src/index.ts';
+import { COMBO_CARDS, createRun, defineSpot, formatCombo, solve, SpotTooLargeError } from '../src/index.ts';
 
 /**
  * The clairvoyance game, with real cards.
@@ -229,6 +229,35 @@ describe('spot validation', () => {
 		expect(createRun(roomy).solver.ctx.regret).toBeInstanceOf(Float64Array);
 
 		expect(() => defineSpot({ ...config, maxBytes: roomy.estimate.compressedBytes - 1 })).toThrow(SpotTooLargeError);
+	});
+
+	it('gives hands the board blocks no storage, and reports them as uniform', () => {
+		const spot = defineSpot({
+			board: 'Qs Jh 4d 2c', pot: 40, stack: 60,
+			oop: 'JJ, TT, AQs, KQs, QTs, J9s, 87s, A2s', ip: 'AA, KK, AJs, QJs, JTs, T9s, 65s, A2s',
+			betSizes: [[0.75]], maxRaises: 1,
+		});
+		// Every river card blocks some hand of each range.
+		const { tree, runouts, players } = spot;
+		let full = 0;
+		for (const node of tree.decisionNodes) {
+			full += runouts.counts[tree.round[node]] * tree.numEdges[node] * players[tree.player[node]].count;
+		}
+		expect(spot.estimate.totalSlots).toBeLessThan(full);
+
+		const sol = solve(spot, { iterations: 30 });
+		const river = tree.decisionNodes.find((n) => tree.round[n] === 1)!;
+		for (let board = 0; board < runouts.counts[1]; board++) {
+			const dealt = runouts.cards[1][board * 5 + 4];
+			const { combos, actions, probs } = sol.strategyAt(river, board);
+			for (let i = 0; i < combos.length; i++) {
+				const row = probs.subarray(i * actions.length, (i + 1) * actions.length);
+				expect(row.reduce((x, y) => x + y, 0)).toBeCloseTo(1, 12);
+				if (COMBO_CARDS[combos[i] * 2] === dealt || COMBO_CARDS[combos[i] * 2 + 1] === dealt) {
+					for (const p of row) expect(p).toBe(1 / actions.length);
+				}
+			}
+		}
 	});
 
 	it('rejects a betSizes row count that matches no round', () => {

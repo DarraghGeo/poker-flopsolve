@@ -41,8 +41,9 @@ describe('terminal kernels match brute force', () => {
 		// A spread of final boards rather than all of them.
 		const step = Math.max(1, Math.floor(table.boards / 6));
 		for (let board = 0; board < table.boards; board += step) {
-			const live = table.order.subarray(board * COMBOS, board * COMBOS + table.liveCount[board]);
-			const count = table.liveCount[board];
+			const row = table.row[board];
+			const live = table.order.subarray(row * COMBOS, row * COMBOS + table.liveCount[row]);
+			const count = table.liveCount[row];
 
 			// Weighted, not uniform — a solver range is partial by nature, and a
 			// kernel that only works at weight 1 would pass a uniform test.
@@ -51,8 +52,8 @@ describe('terminal kernels match brute force', () => {
 
 			// Strength rank from the tie groups: same group means an exact chop.
 			const rank = new Int32Array(COMBOS).fill(-1);
-			const groupBase = board * (COMBOS + 1);
-			for (let g = 0; g < table.groupCount[board]; g++) {
+			const groupBase = row * (COMBOS + 1);
+			for (let g = 0; g < table.groupCount[row]; g++) {
 				for (let i = table.groupStart[groupBase + g]; i < table.groupStart[groupBase + g + 1]; i++) {
 					rank[live[i]] = g;
 				}

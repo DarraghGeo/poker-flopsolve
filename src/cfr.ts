@@ -55,7 +55,7 @@ export interface Layout {
 	readonly offset: Int32Array;
 	/**
 	 * First block of each decision node, else -1. A block is one node on one
-	 * board — `actions * combosOfItsOwner` slots, exactly what one visit
+	 * board — `actions * activeCombosOfItsOwner` slots, exactly what one visit
 	 * updates — and block `blockOffset[node] + board` is where 16-bit storage
 	 * keeps its scale.
 	 */
@@ -67,16 +67,14 @@ export interface Layout {
 }
 
 /**
- * Size storage. A node's block is `boards * actions * combosOfItsOwner`.
+ * Size storage. A node holds, for every board of its round, `actions` slots
+ * per combination its owner can hold on that board. Hands the board blocks
+ * get no slots: on a flop solve's rivers that is about one in twelve.
+ * @param active from {@link buildActiveLists}
  * @param bytesPerElement 8 for float64, 4 for float32, 2 for 16-bit, which
- *   also keeps one float64 scale per block for each accumulator
+ *   also keeps one float32 scale per block for each accumulator
  */
-export function buildLayout(
-	tree: Tree,
-	runouts: Runouts,
-	players: readonly [PlayerIndex, PlayerIndex],
-	bytesPerElement: number,
-): Layout {
+export function buildLayout(tree: Tree, runouts: Runouts, active: ActiveLists, bytesPerElement: number): Layout {
 	const offset = new Int32Array(tree.nodeCount).fill(-1);
 	const blockOffset = new Int32Array(tree.nodeCount).fill(-1);
 	let total = 0;
@@ -89,10 +87,10 @@ export function buildLayout(
 		if (actions > maxActions) maxActions = actions;
 		offset[node] = total;
 		blockOffset[node] = blocks;
-		total += runouts.counts[tree.round[node]] * actions * players[tree.player[node]].count;
+		total += actions * active.roundTotal[tree.round[node] * 2 + tree.player[node]];
 		blocks += runouts.counts[tree.round[node]];
 	}
-	const scales = bytesPerElement === 2 ? blocks * 8 * 2 : 0;
+	const scales = bytesPerElement === 2 ? blocks * 4 * 2 : 0;
 	return { offset, blockOffset, blocks, totalSlots: total, maxActions, bytes: total * bytesPerElement * 2 + scales };
 }
 
@@ -121,8 +119,8 @@ export interface Context {
 	 * total within one block, so the scale cancels and the integers are read
 	 * as they are.
 	 */
-	readonly regretScale: Float64Array | null;
-	readonly sumScale: Float64Array | null;
+	readonly regretScale: Float32Array | null;
+	readonly sumScale: Float32Array | null;
 	readonly scratch: TerminalScratch;
 	readonly chipScale: number;
 	/** Which combinations each player can hold on each board. */
@@ -208,16 +206,24 @@ export function matchupMass(a: Float64Array, b: Float64Array): number {
  * rebuilding it at every one of the tens of thousands of node visits per
  * traversal was pure repetition.
  */
-interface ActiveLists {
-	/** Start of each list in `list`, indexed by `slotOf(round, board, player)`. */
+export interface ActiveLists {
+	/**
+	 * Start of each list in `list`, indexed by
+	 * `(roundBase[round] + board) * 2 + player`.
+	 */
 	readonly start: Int32Array;
 	readonly count: Uint16Array;
 	readonly list: Uint16Array;
-	/**
-	 * Each entry's storage slot in its player's index, beside `list`, so the
-	 * hot loops read it in sequence instead of looking it up per combination.
-	 */
+	/** Each entry's position in its player's index, beside `list`. */
 	readonly slot: Uint16Array;
+	/**
+	 * Same indexing as `start`: active entries of that player on the earlier
+	 * boards of the round. A node's block on a board starts `actions` times
+	 * this into the node, and the hand at list position `i` sits at `i`.
+	 */
+	readonly slotStart: Int32Array;
+	/** Active entries per `round * 2 + player`, over every board of the round. */
+	readonly roundTotal: Float64Array;
 	/** First list index of each round. */
 	readonly roundBase: Int32Array;
 }
@@ -234,31 +240,58 @@ function buildActiveLists(
 
 	const start = new Int32Array(slots);
 	const count = new Uint16Array(slots);
-	const entries: number[] = [];
-	const entrySlots: number[] = [];
+	const slotStart = new Int32Array(slots);
+	const roundTotal = new Float64Array(runouts.rounds * 2);
 	const onBoard = new Uint8Array(DECK);
 
-	for (let round = 0; round < runouts.rounds; round++) {
-		const width = runouts.width[round];
-		const cards = runouts.cards[round];
-		for (let board = 0; board < runouts.counts[round]; board++) {
-			onBoard.fill(0);
-			for (let i = 0; i < width; i++) onBoard[cards[board * width + i]] = 1;
-			for (let player = 0; player < 2; player++) {
-				const index = players[player];
-				const slot = (roundBase[round] + board) * 2 + player;
-				start[slot] = entries.length;
-				for (let i = 0; i < index.count; i++) {
-					const combo = index.combos[i];
-					if (onBoard[COMBO_CARDS[combo * 2]] || onBoard[COMBO_CARDS[combo * 2 + 1]]) continue;
-					entries.push(combo);
-					entrySlots.push(i);
+	// Two passes, counting and then filling, so the lists go straight into
+	// typed arrays: a flop's lists hold about a million entries, and growing
+	// plain arrays to that size left tens of megabytes of heap behind in every
+	// thread that built them.
+	let list = new Uint16Array(0);
+	let entrySlots = new Uint16Array(0);
+	for (let pass = 0; pass < 2; pass++) {
+		let entries = 0;
+		for (let round = 0; round < runouts.rounds; round++) {
+			const width = runouts.width[round];
+			const cards = runouts.cards[round];
+			for (let board = 0; board < runouts.counts[round]; board++) {
+				onBoard.fill(0);
+				for (let i = 0; i < width; i++) onBoard[cards[board * width + i]] = 1;
+				for (let player = 0; player < 2; player++) {
+					const index = players[player];
+					const slot = (roundBase[round] + board) * 2 + player;
+					start[slot] = entries;
+					for (let i = 0; i < index.count; i++) {
+						const combo = index.combos[i];
+						if (onBoard[COMBO_CARDS[combo * 2]] || onBoard[COMBO_CARDS[combo * 2 + 1]]) continue;
+						if (pass === 1) {
+							list[entries] = combo;
+							entrySlots[entries] = i;
+						}
+						entries++;
+					}
+					if (pass === 1) {
+						count[slot] = entries - start[slot];
+						slotStart[slot] = roundTotal[round * 2 + player];
+						roundTotal[round * 2 + player] += count[slot];
+					}
 				}
-				count[slot] = entries.length - start[slot];
 			}
 		}
+		if (pass === 0) {
+			list = new Uint16Array(entries);
+			entrySlots = new Uint16Array(entries);
+		}
 	}
-	return { start, count, list: Uint16Array.from(entries), slot: Uint16Array.from(entrySlots), roundBase };
+	return { start, count, list, slot: entrySlots, slotStart, roundTotal, roundBase };
+}
+
+/** Where a decision node's block on one board starts in storage. */
+export function blockBase(ctx: Context, node: number, board: number): number {
+	const lists = ctx.active;
+	const listSlot = (lists.roundBase[ctx.tree.round[node]] + board) * 2 + ctx.tree.player[node];
+	return ctx.layout.offset[node] + ctx.tree.numEdges[node] * lists.slotStart[listSlot];
 }
 
 /** Per-depth buffers, so the hot loop never allocates. */
@@ -274,6 +307,8 @@ interface Buffers {
 	readonly strategy: Float64Array[];
 	readonly actionValues: Float64Array[];
 	readonly live: Uint16Array[];
+	/** One block's new values while 16-bit storage re-encodes it. */
+	readonly staged: Float64Array;
 }
 
 function makeBuffers(tree: Tree, maxActions: number): Buffers {
@@ -286,6 +321,7 @@ function makeBuffers(tree: Tree, maxActions: number): Buffers {
 		strategy: make(() => new Float64Array(maxActions * COMBOS)),
 		actionValues: make(() => new Float64Array(maxActions * COMBOS)),
 		live: make(() => new Uint16Array(COMBOS)),
+		staged: new Float64Array(2 * maxActions * COMBOS),
 	};
 }
 
@@ -328,15 +364,14 @@ export type Mode = (typeof Mode)[keyof typeof Mode];
  * few actions stay in registers rather than round-tripping through a sum array.
  *
  * @param source regrets for the current strategy, strategy sums for the average
- * @param slots each active entry's storage slot, beside `active`
+ * @param base the block's first slot; the hand at list position `i` is at
+ *   `base + i`, each action a further `count` on
  */
 function normalise(
 	source: RegretStore | SumStore,
 	base: number,
 	actions: number,
-	stride: number,
 	active: Uint16Array,
-	slots: Uint16Array,
 	from: number,
 	count: number,
 	strategy: Float64Array,
@@ -344,10 +379,10 @@ function normalise(
 	const uniform = 1 / actions;
 	for (let i = 0; i < count; i++) {
 		const combo = active[from + i];
-		const at = base + slots[from + i];
+		const at = base + i;
 		let total = 0;
 		for (let a = 0; a < actions; a++) {
-			const value = source[at + a * stride];
+			const value = source[at + a * count];
 			const positive = value > 0 ? value : 0;
 			strategy[a * COMBOS + combo] = positive;
 			total += positive;
@@ -365,14 +400,12 @@ function regretMatch(
 	regret: RegretStore,
 	base: number,
 	actions: number,
-	stride: number,
 	active: Uint16Array,
-	slots: Uint16Array,
 	from: number,
 	count: number,
 	strategy: Float64Array,
 ): void {
-	normalise(regret, base, actions, stride, active, slots, from, count, strategy);
+	normalise(regret, base, actions, active, from, count, strategy);
 }
 
 /** Average strategy from accumulated sums, which are never negative. */
@@ -380,14 +413,12 @@ export function averageStrategy(
 	strategySum: SumStore,
 	base: number,
 	actions: number,
-	stride: number,
 	active: Uint16Array,
-	slots: Uint16Array,
 	from: number,
 	count: number,
 	strategy: Float64Array,
 ): void {
-	normalise(strategySum, base, actions, stride, active, slots, from, count, strategy);
+	normalise(strategySum, base, actions, active, from, count, strategy);
 }
 
 function traverse(
@@ -485,9 +516,6 @@ function traverse(
 	const actions = tree.numEdges[node];
 	const edgeBase = tree.firstEdge[node];
 	const owner = tree.player[node] as 0 | 1;
-	const index = ctx.players[owner];
-	const stride = index.count;
-	const slotBase = ctx.layout.offset[node] + board * actions * stride;
 	const isTraverser = owner === traverser;
 
 	// Which hands this player can hold here was settled when the boards were
@@ -495,15 +523,15 @@ function traverse(
 	const lists = ctx.active;
 	const listSlot = (lists.roundBase[tree.round[node]] + board) * 2 + owner;
 	const active = lists.list;
-	const activeSlot = lists.slot;
 	const activeFrom = lists.start[listSlot];
 	const activeCount = lists.count[listSlot];
+	const slotBase = ctx.layout.offset[node] + actions * lists.slotStart[listSlot];
 
 	const strategy = buffers.strategy[depth];
 	if (mode === Mode.Train) {
-		regretMatch(ctx.regret, slotBase, actions, stride, active, activeSlot, activeFrom, activeCount, strategy);
+		regretMatch(ctx.regret, slotBase, actions, active, activeFrom, activeCount, strategy);
 	} else {
-		averageStrategy(ctx.strategySum, slotBase, actions, stride, active, activeSlot, activeFrom, activeCount, strategy);
+		averageStrategy(ctx.strategySum, slotBase, actions, active, activeFrom, activeCount, strategy);
 	}
 
 	for (let i = 0; i < liveCount; i++) out[live[i]] = 0;
@@ -564,8 +592,8 @@ function traverse(
 
 	if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.regretScale !== null) {
 		updateQuantised(
-			ctx, ctx.layout.blockOffset[node] + board, slotBase, actions, stride,
-			active, activeSlot, activeFrom, activeCount, iterWeight, reachMe, strategy, actionValues, out,
+			ctx, ctx.layout.blockOffset[node] + board, slotBase, actions,
+			active, activeFrom, activeCount, iterWeight, reachMe, strategy, actionValues, out, buffers.staged,
 		);
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.dcfr) {
 		// `iterWeight` is the iteration number, counted from 1.
@@ -579,10 +607,10 @@ function traverse(
 		const strategySum = ctx.strategySum;
 		for (let a = 0; a < actions; a++) {
 			const offset = a * COMBOS;
-			const slotRow = slotBase + a * stride;
+			const slotRow = slotBase + a * activeCount;
 			for (let i = 0; i < activeCount; i++) {
 				const combo = active[activeFrom + i];
-				const at = slotRow + activeSlot[activeFrom + i];
+				const at = slotRow + i;
 				const accumulated = regret[at];
 				regret[at] =
 					accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[offset + combo] - out[combo];
@@ -594,10 +622,10 @@ function traverse(
 		const strategySum = ctx.strategySum;
 		for (let a = 0; a < actions; a++) {
 			const offset = a * COMBOS;
-			const slotRow = slotBase + a * stride;
+			const slotRow = slotBase + a * activeCount;
 			for (let i = 0; i < activeCount; i++) {
 				const combo = active[activeFrom + i];
-				const at = slotRow + activeSlot[activeFrom + i];
+				const at = slotRow + i;
 				// CFR+: clamp the accumulated regret at zero in the same pass.
 				const updated = regret[at] + actionValues[offset + combo] - out[combo];
 				regret[at] = updated > 0 ? updated : 0;
@@ -613,27 +641,23 @@ function traverse(
  * The regret and strategy-sum update for 16-bit storage, under either rule.
  *
  * A block is rescaled whole on every update: decode, update in float, find the
- * block's largest magnitude, re-encode against it.
+ * block's largest magnitude, re-encode against it. The block is contiguous, so
+ * the new values are staged in block order and re-encoded in one flat pass.
  *
  * Regrets round to nearest. Strategy sums round up or down at random, with
  * odds set by the remainder, so each is right on average: rounded to nearest,
  * a hand whose sum is small beside its block's largest loses most of every
  * iteration's contribution, and measured, exploitability stalls near 0.04%
- * of pot where float32 keeps falling. The randomness is a hash of the slot and
- * the iteration, so a solve stays deterministic at any thread count.
- *
- * `actionValues` and `strategy` are not needed once their values are used, so
- * the new regrets and sums are staged in them rather than in buffers of their
- * own.
+ * of pot where float32 keeps falling. The randomness is a stream seeded by
+ * the block and the iteration, so a solve stays deterministic at any thread
+ * count: one block is only ever updated by one thread.
  */
 function updateQuantised(
 	ctx: Context,
 	block: number,
 	slotBase: number,
 	actions: number,
-	stride: number,
 	active: Uint16Array,
-	activeSlot: Uint16Array,
 	activeFrom: number,
 	activeCount: number,
 	iterWeight: number,
@@ -641,6 +665,7 @@ function updateQuantised(
 	strategy: Float64Array,
 	actionValues: Float64Array,
 	out: Float64Array,
+	staged: Float64Array,
 ): void {
 	const regret = ctx.regret;
 	const strategySum = ctx.strategySum;
@@ -648,76 +673,75 @@ function updateQuantised(
 	const sumScale = ctx.sumScale!;
 	const oldRegret = regretScale[block];
 	const oldSum = sumScale[block];
+	const size = actions * activeCount;
 
 	// CFR+ is the special case that clamps and keeps everything: a negative
 	// regret is floored at zero, a positive one kept whole, and iteration `t`
 	// is weighted `t` in the sum.
 	let keepPositive = 1;
 	let keepNegative = 0;
-	let keepSum = 1;
+	let keepSum = oldSum;
 	let weight = iterWeight;
-	const clamp = !ctx.dcfr;
+	const floor = ctx.dcfr ? -Infinity : 0;
 	if (ctx.dcfr) {
 		const previous = iterWeight - 1;
 		const grown = previous ** DCFR_ALPHA;
 		const shrunk = previous ** DCFR_BETA;
 		keepPositive = grown / (grown + 1);
 		keepNegative = shrunk / (shrunk + 1);
-		keepSum = (previous / iterWeight) ** DCFR_GAMMA;
+		keepSum = oldSum * (previous / iterWeight) ** DCFR_GAMMA;
 		weight = 1;
 	}
+	const positiveScale = oldRegret * keepPositive;
+	const negativeScale = oldRegret * keepNegative;
 
+	let maxReach = 0;
+	for (let i = 0; i < activeCount; i++) {
+		const r = reachMe[active[activeFrom + i]];
+		if (r > maxReach) maxReach = r;
+	}
+	const bound = SUM_STEPS * keepSum + weight * maxReach;
+	const sumStep = bound > 0 ? SUM_STEPS / bound : 0;
+	let state = seed(slotBase, iterWeight);
 	let largestRegret = 0;
-	let largestSum = 0;
 	for (let a = 0; a < actions; a++) {
 		const offset = a * COMBOS;
-		const slotRow = slotBase + a * stride;
+		const row = a * activeCount;
 		for (let i = 0; i < activeCount; i++) {
 			const combo = active[activeFrom + i];
-			const at = slotRow + activeSlot[activeFrom + i];
-			const accumulated = regret[at] * oldRegret;
-			let updated =
-				accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[offset + combo] - out[combo];
-			if (clamp && updated < 0) updated = 0;
+			const at = slotBase + row + i;
+			const q = regret[at];
+			let updated = q * (q > 0 ? positiveScale : negativeScale) + actionValues[offset + combo] - out[combo];
+			if (updated < floor) updated = 0;
 			const magnitude = updated < 0 ? -updated : updated;
 			if (magnitude > largestRegret) largestRegret = magnitude;
-			actionValues[offset + combo] = updated;
-
-			const sum = strategySum[at] * oldSum * keepSum + weight * reachMe[combo] * strategy[offset + combo];
-			if (sum > largestSum) largestSum = sum;
-			strategy[offset + combo] = sum;
+			staged[row + i] = updated;
+			state ^= state << 13;
+			state ^= state >>> 17;
+			state ^= state << 5;
+			const sum = (strategySum[at] * keepSum + weight * reachMe[combo] * strategy[offset + combo]) * sumStep + (state >>> 0) * DITHER_UNIT;
+			strategySum[at] = sum < SUM_STEPS ? sum : SUM_STEPS;
 		}
 	}
-
-	// Storing into a 16-bit array truncates toward zero, so adding a half away
-	// from zero rounds to nearest, and adding the dither rounds at random. A
-	// value at the very top of the range plus nearly a whole dither would
-	// reach 65536 and wrap to zero, hence the cap.
 	const regretStep = largestRegret > 0 ? REGRET_STEPS / largestRegret : 0;
-	const sumStep = largestSum > 0 ? SUM_STEPS / largestSum : 0;
-	for (let a = 0; a < actions; a++) {
-		const offset = a * COMBOS;
-		const slotRow = slotBase + a * stride;
-		for (let i = 0; i < activeCount; i++) {
-			const combo = active[activeFrom + i];
-			const at = slotRow + activeSlot[activeFrom + i];
-			const r = actionValues[offset + combo] * regretStep;
-			regret[at] = r < 0 ? r - 0.5 : r + 0.5;
-			const s = strategy[offset + combo] * sumStep + dither(at, iterWeight);
-			strategySum[at] = s < SUM_STEPS ? s : SUM_STEPS;
-		}
+	for (let k = 0; k < size; k++) {
+		const r = staged[k] * regretStep;
+		regret[slotBase + k] = r < 0 ? r - 0.5 : r + 0.5;
 	}
 	regretScale[block] = largestRegret / REGRET_STEPS;
-	sumScale[block] = largestSum / SUM_STEPS;
+	sumScale[block] = bound / SUM_STEPS;
 }
 
-/** A deterministic uniform value in [0, 1) for a slot on an iteration. */
-function dither(slot: number, iteration: number): number {
-	let h = Math.imul(slot ^ Math.imul(iteration, 0x9e3779b1), 0x85ebca6b);
+/** Maps a 32-bit unsigned integer onto [0, 1). */
+const DITHER_UNIT = 1 / 4294967296;
+
+/** A non-zero xorshift state for a block on an iteration. */
+function seed(block: number, iteration: number): number {
+	let h = Math.imul(block ^ Math.imul(iteration, 0x9e3779b1), 0x85ebca6b);
 	h ^= h >>> 13;
 	h = Math.imul(h, 0xc2b2ae35);
 	h ^= h >>> 16;
-	return (h >>> 0) / 4294967296;
+	return h === 0 ? 0x6d2b79f5 : h;
 }
 
 /** A whole-tree traversal, returning the root value vector. */
@@ -874,14 +898,19 @@ export function makeSolver(ctx: Context): Solver {
 			const owner = ctx.tree.player[node] as 0 | 1;
 			const index = ctx.players[owner];
 			const actions = ctx.tree.numEdges[node];
-			const base = ctx.layout.offset[node] + board * actions * index.count;
-			const probs = new Float64Array(index.count * actions);
-			for (let i = 0; i < index.count; i++) {
+			const base = blockBase(ctx, node, board);
+			const lists = ctx.active;
+			const listSlot = (lists.roundBase[ctx.tree.round[node]] + board) * 2 + owner;
+			const from = lists.start[listSlot];
+			const count = lists.count[listSlot];
+			// Hands the board blocks have no storage, and read as uniform.
+			const probs = new Float64Array(index.count * actions).fill(1 / actions);
+			for (let i = 0; i < count; i++) {
+				const at = lists.slot[from + i] * actions;
 				let sum = 0;
-				for (let a = 0; a < actions; a++) sum += ctx.strategySum[base + a * index.count + i];
-				for (let a = 0; a < actions; a++) {
-					probs[i * actions + a] = sum > 0 ? ctx.strategySum[base + a * index.count + i] / sum : 1 / actions;
-				}
+				for (let a = 0; a < actions; a++) sum += ctx.strategySum[base + a * count + i];
+				if (sum <= 0) continue;
+				for (let a = 0; a < actions; a++) probs[at + a] = ctx.strategySum[base + a * count + i] / sum;
 			}
 			return { actions, probs };
 		},

@@ -166,27 +166,33 @@ Measured on an Apple M2, single threaded:
 `defineSpot` reports the projected cost before anything is allocated, and refuses a spot
 over `maxBytes` with concrete suggestions. `maxCombos` caps range width.
 
+Storage only has room for hands a board leaves live: a turn or river card that blocks a hand
+removes that hand's slots on that runout. On a flop that is about 8% of the accumulators. The
+showdown table keeps one row per distinct five-card board, since turn X then river Y and
+turn Y then river X show down the same, which halves it on a flop.
+
 ### 16-bit storage
 
 A spot too big for 32-bit storage under `maxBytes` is solved at 16 bits instead
 (`precision: 'i16'` forces it). Regrets and strategy sums are stored as 16-bit integers with
 one scale per node and board, about halving memory. `estimate.compressedBytes` reports
-that size, and a spot is refused only if even that exceeds `maxBytes`. Measured on AsKh7d:
+that size, and a spot is refused only if even that exceeds `maxBytes`. Projected storage,
+bench ranges (198 vs 165) on AsKh7d:
 
-| Flop | Ranges | 32-bit | 16-bit |
-|---|---|---|---|
-| 1 size, 1 raise | 198 vs 165 | 150 MB | 85 MB |
-| 2 sizes, 1 raise | 198 vs 165 | 824 MB | 425 MB |
-| 2 sizes, 1 raise | 309 vs 424 | 1,645 MB | 836 MB |
-| 2 sizes, 2 raises | 309 vs 424 | 3,344 MB | 1,689 MB |
+| Flop | 32-bit | 16-bit |
+|---|---|---|
+| 1 size, 1 raise | 130 MB | 70 MB |
+| 2 sizes, 1 raise, shove | 432 MB | 222 MB |
 
-The 309 vs 424, two-size flop solved with two threads at a peak RSS of about 1.1 GB, so it
-fits a 2 GB machine. It reaches each accuracy target in the same number of iterations as
-32-bit, but each iteration costs about 15–20% more, because every update re-encodes its
-block. Strategy sums round up or down at random, weighted by the remainder: rounded to
+16-bit reaches each accuracy target in as few iterations as 32-bit, and tracks
+it down to 0.005% of pot on the bench turn. Time to a target is level on a turn and about
+10% longer on a flop, because every update re-encodes its block. Regrets re-encode against
+the block's new largest magnitude. Strategy sums only grow between discounts, so they
+encode in the same pass, against a bound on the new largest sum from the old one and the
+largest reach. They round up or down at random, weighted by the remainder: rounded to
 nearest, small sums lose most of each iteration's contribution and exploitability stalls
-near 0.04% of pot. The randomness is a hash of the slot and iteration, so solves stay
-deterministic at any thread count.
+near 0.04% of pot. The randomness is a stream seeded by the block and iteration, and a
+block is only ever updated by one thread, so solves stay deterministic at any thread count.
 
 ### Algorithm and benchmark
 
@@ -201,6 +207,22 @@ target (exploitability checks excluded):
 | Flop, 150 MB | 1 | 49 s (46 it) | 36 s (34 it) | 101 s (95 it) | 64 s (61 it) |
 | Flop, 150 MB | 3 | 23 s | 17 s | 45 s | 29 s |
 | Two-tone flop, 162 MB | 3 | 19 s (34 it) | 16 s (29 it) | 38 s (71 it) | 28 s (53 it) |
+
+Since then, the compact storage and the showdown table above cut DCFR's time to 0.3% by
+8–10% on a flop, single threaded and at either precision. The same container, before and
+after (`npm run bench`, DCFR, seconds to 0.3%; MB is allocated accumulators):
+
+| Spot | Threads | 32-bit before | 32-bit after | 16-bit before | 16-bit after |
+|---|---|---|---|---|---|
+| Turn | 1 | 8.3 s, 12 MB | 7.9 s, 11 MB | 8.7 s, 6 MB | 7.6 s, 6 MB |
+| Flop | 1 | 68.5 s, 132 MB | 62.8 s, 121 MB | 78.4 s, 67 MB | 71.0 s, 61 MB |
+| Flop | 3 | 31.4 s | 30.4 s | 36.5 s | 33.0 s |
+| Two-tone flop | 1 | 65.8 s | 63.4 s | 77.0 s | 70.3 s |
+
+Building the per-board hand lists into plain arrays used to leave tens of megabytes of heap
+behind in every thread. Built into typed arrays directly, the bench flop's peak RSS from the
+built package went from 409 MB to 182 MB at 16 bits with three threads, and from 466 MB to
+236 MB at 32 bits.
 
 The solver is compute-bound rather than memory-bound — a 150 MB flop streams its
 accumulators at about 0.25 GB/s — so the cost of an iteration tracks the work in it, not

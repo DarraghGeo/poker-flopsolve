@@ -212,11 +212,15 @@ export function defineSpot(config: SpotConfig): Spot {
 		runouts,
 	);
 
-	const layout = buildLayout(tree, runouts, players, 4);
+	const active = buildActiveLists(runouts, players);
+	const layout = buildLayout(tree, runouts, active, 4);
 	const last = runouts.rounds - 1;
-	const showdownBytes = runouts.counts[last] * (2 * COMBOS + COMBOS + 1) * 2;
+	// From a flop the turn and river can arrive in either order, and the
+	// showdown table keeps one row per distinct board.
+	const showdownRows = runouts.rounds === 3 ? runouts.counts[last] / 2 : runouts.counts[last];
+	const showdownBytes = showdownRows * (3 * COMBOS + 1) * 2 + runouts.counts[last] * 4;
 	const bytes = layout.bytes + showdownBytes;
-	const compressedBytes = buildLayout(tree, runouts, players, 2).bytes + showdownBytes;
+	const compressedBytes = buildLayout(tree, runouts, active, 2).bytes + showdownBytes;
 
 	const suggestions: string[] = [];
 	if (compressedBytes > maxBytes) {
@@ -450,7 +454,8 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 	const showdown = buildShowdownTable(spot.runouts, relevant);
-	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
+	const active = buildActiveLists(spot.runouts, spot.players);
+	const layout = buildLayout(spot.tree, spot.runouts, active, PRECISION_BYTES[precision]);
 	const weights = runoutWeights(spot.runouts);
 
 	const requested = options.analysisOnly ? 1 : options.workers === 'auto' ? defaultWorkerCount() : (options.workers ?? 1);
@@ -473,11 +478,11 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			? new Float32Array(0)
 			: makeRegretStore(precision, allocate(layout.totalSlots * width)),
 		strategySum: makeSumStore(precision, allocate(layout.totalSlots * width)),
-		regretScale: quantised ? new Float64Array(allocate(layout.blocks * 8)) : null,
-		sumScale: quantised ? new Float64Array(allocate(layout.blocks * 8)) : null,
+		regretScale: quantised ? new Float32Array(allocate(layout.blocks * 4)) : null,
+		sumScale: quantised ? new Float32Array(allocate(layout.blocks * 4)) : null,
 		scratch: makeTerminalScratch(),
 		chipScale: spot.chipScale,
-		active: buildActiveLists(spot.runouts, spot.players),
+		active,
 		runoutWeight: weights,
 		shardStart: 0,
 		shardEnd: plan ? plan.boards : 0,

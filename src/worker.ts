@@ -40,7 +40,8 @@ for (const combo of spot.players[0].combos) relevant[combo] = 1;
 for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 const weights = runoutWeights(spot.runouts);
-const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
+const active = buildActiveLists(spot.runouts, spot.players);
+const layout = buildLayout(spot.tree, spot.runouts, active, PRECISION_BYTES[precision]);
 
 const ctx: Context = {
 	tree: spot.tree,
@@ -50,11 +51,11 @@ const ctx: Context = {
 	showdown: buildShowdownTable(spot.runouts, relevant),
 	regret: makeRegretStore(precision, setup.regret),
 	strategySum: makeSumStore(precision, setup.strategySum),
-	regretScale: setup.regretScale ? new Float64Array(setup.regretScale) : null,
-	sumScale: setup.sumScale ? new Float64Array(setup.sumScale) : null,
+	regretScale: setup.regretScale ? new Float32Array(setup.regretScale) : null,
+	sumScale: setup.sumScale ? new Float32Array(setup.sumScale) : null,
 	scratch: makeTerminalScratch(),
 	chipScale: spot.chipScale,
-	active: buildActiveLists(spot.runouts, spot.players),
+	active,
 	runoutWeight: weights,
 	totalMass: matchupMass(spot.players[0].weights, spot.players[1].weights) * weights[0],
 	dcfr,

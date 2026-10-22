@@ -28,19 +28,35 @@ import type { Runouts } from './runouts.ts';
 /** Single-card sums occupy 0..51; the pair sum for combo c sits at 52 + c. */
 const SUBSET_SPACE = DECK + COMBOS;
 
-/** Strength ordering, for one final board, of the combinations that matter. */
+/**
+ * Strength ordering, for each final board, of the combinations that matter.
+ *
+ * Runouts are ordered, but a showdown only sees the five cards: from a flop,
+ * turn X then river Y and turn Y then river X are one board. Each distinct
+ * board gets one row, and `row` maps every runout onto it, which halves the
+ * table and the hand evaluations that build it.
+ */
 export interface ShowdownTable {
-	/** Final-round boards this covers. */
+	/** Final-round runouts this covers. */
 	readonly boards: number;
-	/** Entries reserved per board: the size of the two ranges' union. */
+	/** Distinct final boards. */
+	readonly rows: number;
+	/** Row of each final-round runout. */
+	readonly row: Int32Array;
+	/** Entries reserved per row: the size of the two ranges' union. */
 	readonly stride: number;
-	/** `boards * stride`: live combinations, ascending by strength. */
+	/** `rows * stride`: live combinations, ascending by strength. */
 	readonly order: Uint16Array;
-	/** Live combinations per board. */
+	/**
+	 * `rows * stride * 2`: the two cards of each entry of `order`, beside it,
+	 * so the kernels read them in sequence rather than through the combination.
+	 */
+	readonly cards: Uint8Array;
+	/** Live combinations per row. */
 	readonly liveCount: Uint16Array;
-	/** `boards * (COMBOS + 1)`: tie-group boundaries into `order`. */
+	/** `rows * (stride + 1)`: tie-group boundaries into `order`. */
 	readonly groupStart: Uint16Array;
-	/** Tie groups per board. */
+	/** Tie groups per row. */
 	readonly groupCount: Uint16Array;
 	readonly bytes: number;
 }
@@ -86,18 +102,44 @@ export function buildShowdownTable(runouts: Runouts, relevant?: Uint8Array): Sho
 	}
 	const stride = Math.max(1, wanted.length);
 
-	const order = new Uint16Array(boards * stride);
-	const liveCount = new Uint16Array(boards);
-	const groupStart = new Uint16Array(boards * (stride + 1));
-	const groupCount = new Uint16Array(boards);
+	// One row per distinct set of five cards, in order of first appearance.
+	const row = new Int32Array(boards);
+	const firstOf = new Map<number, number>();
+	const firsts: number[] = [];
+	for (let board = 0; board < boards; board++) {
+		let mask = 0;
+		// Two 26-bit halves keep the key an exact double.
+		let high = 0;
+		for (let i = 0; i < width; i++) {
+			const card = boardCards[board * width + i];
+			if (card < 26) mask += 2 ** card;
+			else high += 2 ** (card - 26);
+		}
+		const key = high * 2 ** 26 + mask;
+		const seen = firstOf.get(key);
+		if (seen === undefined) {
+			firstOf.set(key, firsts.length);
+			row[board] = firsts.length;
+			firsts.push(board);
+		} else {
+			row[board] = seen;
+		}
+	}
+	const rows = firsts.length;
+
+	const order = new Uint16Array(rows * stride);
+	const cards = new Uint8Array(rows * stride * 2);
+	const liveCount = new Uint16Array(rows);
+	const groupStart = new Uint16Array(rows * (stride + 1));
+	const groupCount = new Uint16Array(rows);
 
 	const lanes = new Int32Array(4);
 	const onBoard = new Uint8Array(DECK);
 	const strength = new Int32Array(COMBOS);
 	const live = new Uint16Array(COMBOS);
 
-	for (let board = 0; board < boards; board++) {
-		const base = board * width;
+	for (let r = 0; r < rows; r++) {
+		const base = firsts[r] * width;
 		onBoard.fill(0);
 		for (let i = 0; i < width; i++) onBoard[boardCards[base + i]] = 1;
 		suitLanes(boardCards.subarray(base, base + width), lanes);
@@ -121,10 +163,14 @@ export function buildShowdownTable(runouts: Runouts, relevant?: Uint8Array): Sho
 
 		const slice = live.subarray(0, count);
 		slice.sort((x, y) => strength[x] - strength[y]);
-		order.set(slice, board * stride);
-		liveCount[board] = count;
+		order.set(slice, r * stride);
+		for (let i = 0; i < count; i++) {
+			cards[(r * stride + i) * 2] = COMBO_CARDS[slice[i] * 2];
+			cards[(r * stride + i) * 2 + 1] = COMBO_CARDS[slice[i] * 2 + 1];
+		}
+		liveCount[r] = count;
 
-		const groupBase = board * (stride + 1);
+		const groupBase = r * (stride + 1);
 		let groups = 0;
 		let i = 0;
 		while (i < count) {
@@ -134,17 +180,22 @@ export function buildShowdownTable(runouts: Runouts, relevant?: Uint8Array): Sho
 			groups++;
 		}
 		groupStart[groupBase + groups] = count;
-		groupCount[board] = groups;
+		groupCount[r] = groups;
 	}
 
 	return {
 		boards,
+		rows,
+		row,
 		stride,
 		order,
+		cards,
 		liveCount,
 		groupStart,
 		groupCount,
-		bytes: order.byteLength + liveCount.byteLength + groupStart.byteLength + groupCount.byteLength,
+		bytes:
+			row.byteLength + order.byteLength + cards.byteLength + liveCount.byteLength +
+			groupStart.byteLength + groupCount.byteLength,
 	};
 }
 
@@ -169,14 +220,15 @@ export function showdownValues(
 	const { weaker, stronger, win } = scratch;
 	// Reading an imported const crosses a module binding on every access, which
 	// in a loop this tight costs more than the arithmetic. Hoist them.
-	const cards = COMBO_CARDS;
 	const deck = DECK;
 	const order = table.order;
+	const cards = table.cards;
 	const starts = table.groupStart;
-	const orderBase = board * table.stride;
-	const groupBase = board * (table.stride + 1);
-	const groups = table.groupCount[board];
-	const live = table.liveCount[board];
+	const row = table.row[board];
+	const orderBase = row * table.stride;
+	const groupBase = row * (table.stride + 1);
+	const groups = table.groupCount[row];
+	const live = table.liveCount[row];
 
 	// Only the live entries are ever read, so clearing all 1326 would be waste
 	// proportional to how narrow the ranges are.
@@ -185,42 +237,39 @@ export function showdownValues(
 
 	let running = 0;
 	for (let g = 0; g < groups; g++) {
-		const from = starts[groupBase + g];
-		const to = starts[groupBase + g + 1];
+		const from = orderBase + starts[groupBase + g];
+		const to = orderBase + starts[groupBase + g + 1];
 		for (let i = from; i < to; i++) {
-			const combo = order[orderBase + i];
-			const a = cards[combo * 2];
-			const b = cards[combo * 2 + 1];
-			win[combo] = running - (weaker[a] + weaker[b] - weaker[deck + combo]);
+			const combo = order[i];
+			win[combo] = running - (weaker[cards[i * 2]] + weaker[cards[i * 2 + 1]] - weaker[deck + combo]);
 		}
 		for (let i = from; i < to; i++) {
-			const combo = order[orderBase + i];
+			const combo = order[i];
 			const value = reach[combo];
 			if (value === 0) continue;
 			running += value;
-			weaker[cards[combo * 2]] += value;
-			weaker[cards[combo * 2 + 1]] += value;
+			weaker[cards[i * 2]] += value;
+			weaker[cards[i * 2 + 1]] += value;
 			weaker[deck + combo] += value;
 		}
 	}
 
 	running = 0;
 	for (let g = groups - 1; g >= 0; g--) {
-		const from = starts[groupBase + g];
-		const to = starts[groupBase + g + 1];
+		const from = orderBase + starts[groupBase + g];
+		const to = orderBase + starts[groupBase + g + 1];
 		for (let i = from; i < to; i++) {
-			const combo = order[orderBase + i];
-			const a = cards[combo * 2];
-			const b = cards[combo * 2 + 1];
-			out[combo] = payoff * (win[combo] - (running - (stronger[a] + stronger[b] - stronger[deck + combo])));
+			const combo = order[i];
+			const lose = running - (stronger[cards[i * 2]] + stronger[cards[i * 2 + 1]] - stronger[deck + combo]);
+			out[combo] = payoff * (win[combo] - lose);
 		}
 		for (let i = from; i < to; i++) {
-			const combo = order[orderBase + i];
+			const combo = order[i];
 			const value = reach[combo];
 			if (value === 0) continue;
 			running += value;
-			stronger[cards[combo * 2]] += value;
-			stronger[cards[combo * 2 + 1]] += value;
+			stronger[cards[i * 2]] += value;
+			stronger[cards[i * 2 + 1]] += value;
 			stronger[deck + combo] += value;
 		}
 	}
@@ -228,14 +277,14 @@ export function showdownValues(
 	// Leave the accumulators as they were found, so the next call needs no
 	// clearing pass of its own. Only hands with reach ever touched them, and
 	// late in a solve most have none.
-	for (let i = 0; i < live; i++) {
-		const combo = order[orderBase + i];
+	for (let i = orderBase; i < orderBase + live; i++) {
+		const combo = order[i];
 		if (reach[combo] === 0) continue;
-		weaker[cards[combo * 2]] = 0;
-		weaker[cards[combo * 2 + 1]] = 0;
+		weaker[cards[i * 2]] = 0;
+		weaker[cards[i * 2 + 1]] = 0;
 		weaker[deck + combo] = 0;
-		stronger[cards[combo * 2]] = 0;
-		stronger[cards[combo * 2 + 1]] = 0;
+		stronger[cards[i * 2]] = 0;
+		stronger[cards[i * 2 + 1]] = 0;
 		stronger[deck + combo] = 0;
 	}
 }

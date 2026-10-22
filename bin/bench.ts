@@ -57,7 +57,7 @@ const options: SolveOptions = {
 
 console.log(`algorithm ${options.algorithm}`);
 console.log(
-	`spot      MB    workers  ms/iter   check ms  ` + TARGETS.map((t) => `iters→${t}%  s→${t}%`.padEnd(20)).join(''),
+	`spot      MB  peak MB  workers  ms/iter   check ms  ` + TARGETS.map((t) => `iters→${t}%  s→${t}%`.padEnd(20)).join(''),
 );
 
 for (const name of names) {
@@ -101,7 +101,8 @@ for (const name of names) {
 			return (hit ? `${String(hit.iterations).padStart(8)}  ${hit.seconds.toFixed(1).padStart(7)}` : `   >${cap}`.padEnd(17)).padEnd(20);
 		});
 		console.log(
-			`${name.padEnd(8)}${(spot.estimate.bytes / 1048576).toFixed(0).padStart(5)}  ${String(run.workers).padStart(7)}` +
+			`${name.padEnd(8)}${(run.solver.ctx.layout.bytes / 1048576).toFixed(0).padStart(5)}` +
+				`${(process.resourceUsage().maxRSS / 1024).toFixed(0).padStart(9)}  ${String(run.workers).padStart(7)}` +
 				`${perIteration.toFixed(1).padStart(10)}${perCheck.toFixed(1).padStart(11)}  ${cells.join('')}`,
 		);
 	} finally {

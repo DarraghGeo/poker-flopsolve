@@ -164,9 +164,10 @@ function walk(
 		// Strength on this final board as a tie-group index.
 		const table = ctx.showdown;
 		const rank = buffers.rank;
-		const orderBase = board * table.stride;
-		const groupBase = board * (table.stride + 1);
-		for (let g = 0; g < table.groupCount[board]; g++) {
+		const tableRow = table.row[board];
+		const orderBase = tableRow * table.stride;
+		const groupBase = tableRow * (table.stride + 1);
+		for (let g = 0; g < table.groupCount[tableRow]; g++) {
 			for (let i = table.groupStart[groupBase + g]; i < table.groupStart[groupBase + g + 1]; i++) {
 				rank[table.order[orderBase + i]] = g;
 			}
@@ -234,16 +235,14 @@ function walk(
 	const actions = tree.numEdges[node];
 	const edgeBase = tree.firstEdge[node];
 	const owner = tree.player[node] as 0 | 1;
-	const index = ctx.players[owner];
-	const stride = index.count;
-	const slotBase = ctx.layout.offset[node] + board * actions * stride;
 	const lists = ctx.active;
 	const listSlot = (lists.roundBase[tree.round[node]] + board) * 2 + owner;
 	const active = lists.list;
 	const activeFrom = lists.start[listSlot];
 	const activeCount = lists.count[listSlot];
+	const slotBase = ctx.layout.offset[node] + actions * lists.slotStart[listSlot];
 	const strategy = buffers.strategy[depth];
-	averageStrategy(ctx.strategySum, slotBase, actions, stride, active, lists.slot, activeFrom, activeCount, strategy);
+	averageStrategy(ctx.strategySum, slotBase, actions, active, activeFrom, activeCount, strategy);
 
 	// The traverser's values are counterfactual: its own reach never enters.
 	if (owner === traverser) {
