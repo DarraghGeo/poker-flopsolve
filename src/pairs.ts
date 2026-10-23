@@ -243,7 +243,7 @@ function walk(
 	const activeFrom = lists.start[listSlot];
 	const activeCount = lists.count[listSlot];
 	const strategy = buffers.strategy[depth];
-	averageStrategy(ctx.strategySum, slotBase, actions, stride, active, lists.slot, activeFrom, activeCount, strategy);
+	averageStrategy(ctx.strategySum, slotBase, actions, stride, active, lists.slot, activeFrom, activeCount, strategy, ctx.regret);
 
 	// The traverser's values are counterfactual: its own reach never enters.
 	if (owner === traverser) {

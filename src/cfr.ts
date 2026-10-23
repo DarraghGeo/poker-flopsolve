@@ -327,7 +327,7 @@ export type Mode = (typeof Mode)[keyof typeof Mode];
  * positive values, uniform where there are none. One hand at a time, so its
  * few actions stay in registers rather than round-tripping through a sum array.
  *
- * @param source regrets for the current strategy, strategy sums for the average
+ * @param source regrets, for the current strategy
  * @param slots each active entry's storage slot, beside `active`
  */
 function normalise(
@@ -375,7 +375,19 @@ function regretMatch(
 	normalise(regret, base, actions, stride, active, slots, from, count, strategy);
 }
 
-/** Average strategy from accumulated sums, which are never negative. */
+/**
+ * Average strategy from accumulated sums, which are never negative.
+ *
+ * A hand whose sum is zero here never reached this node on its own, so the
+ * average says nothing about it. Its regrets are still updated — weighted by
+ * the opponent's reach — so it plays the current strategy: whatever goes on to
+ * continue it from here (a best response, another player's rules, a user
+ * browsing the line) then sees sensible play rather than every action at an
+ * equal share. Uniform only where the regrets are all non-positive too, or
+ * where there are none (an `analysisOnly` run).
+ *
+ * @param regret the regrets beside `strategySum`, or omitted for none
+ */
 export function averageStrategy(
 	strategySum: SumStore,
 	base: number,
@@ -386,8 +398,37 @@ export function averageStrategy(
 	from: number,
 	count: number,
 	strategy: Float64Array,
+	regret?: RegretStore,
 ): void {
-	normalise(strategySum, base, actions, stride, active, slots, from, count, strategy);
+	const fallback = regret !== undefined && regret.length > 0 ? regret : null;
+	const uniform = 1 / actions;
+	for (let i = 0; i < count; i++) {
+		const combo = active[from + i];
+		const at = base + slots[from + i];
+		let total = 0;
+		for (let a = 0; a < actions; a++) {
+			const value = strategySum[at + a * stride];
+			strategy[a * COMBOS + combo] = value;
+			total += value;
+		}
+		if (total > 0) {
+			for (let a = 0; a < actions; a++) strategy[a * COMBOS + combo] /= total;
+			continue;
+		}
+		if (fallback !== null) {
+			for (let a = 0; a < actions; a++) {
+				const value = fallback[at + a * stride];
+				const positive = value > 0 ? value : 0;
+				strategy[a * COMBOS + combo] = positive;
+				total += positive;
+			}
+		}
+		if (total > 0) {
+			for (let a = 0; a < actions; a++) strategy[a * COMBOS + combo] /= total;
+		} else {
+			for (let a = 0; a < actions; a++) strategy[a * COMBOS + combo] = uniform;
+		}
+	}
 }
 
 function traverse(
@@ -503,7 +544,7 @@ function traverse(
 	if (mode === Mode.Train) {
 		regretMatch(ctx.regret, slotBase, actions, stride, active, activeSlot, activeFrom, activeCount, strategy);
 	} else {
-		averageStrategy(ctx.strategySum, slotBase, actions, stride, active, activeSlot, activeFrom, activeCount, strategy);
+		averageStrategy(ctx.strategySum, slotBase, actions, stride, active, activeSlot, activeFrom, activeCount, strategy, ctx.regret);
 	}
 
 	for (let i = 0; i < liveCount; i++) out[live[i]] = 0;
@@ -876,11 +917,22 @@ export function makeSolver(ctx: Context): Solver {
 			const actions = ctx.tree.numEdges[node];
 			const base = ctx.layout.offset[node] + board * actions * index.count;
 			const probs = new Float64Array(index.count * actions);
+			// Where the sum is zero, the current strategy; see `averageStrategy`.
+			const regret = ctx.regret;
 			for (let i = 0; i < index.count; i++) {
 				let sum = 0;
 				for (let a = 0; a < actions; a++) sum += ctx.strategySum[base + a * index.count + i];
+				let source: RegretStore | SumStore = ctx.strategySum;
+				if (!(sum > 0) && regret.length > 0) {
+					for (let a = 0; a < actions; a++) {
+						const value = regret[base + a * index.count + i];
+						if (value > 0) sum += value;
+					}
+					source = regret;
+				}
 				for (let a = 0; a < actions; a++) {
-					probs[i * actions + a] = sum > 0 ? ctx.strategySum[base + a * index.count + i] / sum : 1 / actions;
+					const value = source[base + a * index.count + i];
+					probs[i * actions + a] = sum > 0 ? (value > 0 ? value / sum : 0) : 1 / actions;
 				}
 			}
 			return { actions, probs };
