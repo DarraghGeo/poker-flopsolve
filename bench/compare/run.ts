@@ -50,6 +50,8 @@ function ours(name: string, workers: number): Result {
 		run.step(5);
 		const block = performance.now() - started;
 		solving += block;
+		// The first check compiles the best-response path; time the next one.
+		run.exploitabilityPercent();
 		started = performance.now();
 		run.exploitabilityPercent();
 		const checkMs = performance.now() - started;

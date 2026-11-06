@@ -50,6 +50,8 @@ fn run(name: &str, board: &str, bets: &str, raises: &str) {
     let per_iter = block.elapsed().as_secs_f64() / 5.0;
     solving += block.elapsed().as_secs_f64();
     done = 7;
+    // Timed as the second check, like the poker-flopsolve side.
+    let _ = compute_exploitability(&game);
     let check = Instant::now();
     let _ = compute_exploitability(&game);
     let check_ms = check.elapsed().as_secs_f64() * 1000.0;
