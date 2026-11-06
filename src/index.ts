@@ -791,7 +791,7 @@ function resolveWorkers(options: SolveOptions): number {
 	if (asked > 1 && !THREADS_AVAILABLE) {
 		if (!warnedThreads) {
 			warnedThreads = true;
-			console.warn(`@toysolver/holdem: worker threads are Node-only; solving on one thread (${PLATFORM} build)`);
+			console.warn(`poker-flopsolve: worker threads are Node-only; solving on one thread (${PLATFORM} build)`);
 		}
 		return 1;
 	}

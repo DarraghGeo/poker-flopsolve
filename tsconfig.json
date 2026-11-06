@@ -18,7 +18,7 @@
     "sourceMap": true,
     "outDir": "dist",
     "skipLibCheck": true,
-    "paths": { "@toysolver/holdem": ["./src/index.ts"] },
+    "paths": { "poker-flopsolve": ["./src/index.ts"] },
     "forceConsistentCasingInFileNames": true
   },
   "include": ["src", "test", "bin", "ui", "scripts", "examples", "tsup.config.ts"]

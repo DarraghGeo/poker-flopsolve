@@ -1,4 +1,4 @@
-# @toysolver/holdem
+# poker-flopsolve
 
 A **postflop Texas Hold'em solver**. Give it a board, a pot, stacks, two ranges and a
 betting scheme; it solves to showdown.
@@ -6,8 +6,12 @@ betting scheme; it solves to showdown.
 There is no preflop round. The ranges you supply already encode whatever spot you are in,
 so the solver starts from a dead pot with both players even.
 
+```bash
+npm install poker-flopsolve
+```
+
 ```ts
-import { defineSpot, solve } from '@toysolver/holdem';
+import { defineSpot, solve } from 'poker-flopsolve';
 
 const spot = defineSpot({
   board: 'As Kh 7d 2c',      // 3, 4 or 5 cards
@@ -421,6 +425,18 @@ enumerated and can be canonicalised for a 12× win.
 ```bash
 npm test
 ```
+
+## Releasing
+
+`.github/workflows/publish.yml` publishes to npm from `main`. Every push to `main` is
+type-checked, tested and built; if the `version` in `package.json` is not on npm yet, it
+is published, with provenance. So a release is: bump `version`, merge to `main`. A push
+that leaves the version alone publishes nothing.
+
+It needs one repository secret, `NPM_TOKEN`: an npm granular access token with read and
+write access to `poker-flopsolve` (for the very first publish, before the package exists,
+one with permission to publish new packages). Without it the workflow still tests and
+builds, and says it skipped publishing.
 
 ## License
 

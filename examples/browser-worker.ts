@@ -16,8 +16,8 @@
  * is meant for river and small turn spots; bigger spots belong in Node.
  */
 
-import { createRun, defineSpot } from '@toysolver/holdem';
-import type { SpotConfig } from '@toysolver/holdem';
+import { createRun, defineSpot } from 'poker-flopsolve';
+import type { SpotConfig } from 'poker-flopsolve';
 
 /** The parts of a worker's global scope this uses; no DOM typings needed. */
 declare const self: {
