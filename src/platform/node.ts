@@ -21,6 +21,15 @@ export const THREADS_AVAILABLE = true;
 /** Default ceiling on solver storage. */
 export const DEFAULT_MAX_BYTES = 6 * 1024 * 1024 * 1024;
 
+/**
+ * The parent's Node flags, minus any a worker started from a file rejects:
+ * `--input-type` is for code given as a string (`node -e`), and a worker
+ * inheriting it fails to start.
+ */
+function workerFlags(): string[] {
+	return process.execArgv.filter((flag) => !flag.startsWith('--input-type'));
+}
+
 /** A spawned solver thread. */
 export interface WorkerHandle {
 	terminate(): void;
@@ -50,7 +59,7 @@ export function spawnWorker(setup: WorkerSetup, onError: (error: Error) => void)
 	// From source the worker is TypeScript; from a build it sits beside this
 	// bundle as JavaScript.
 	const url = new URL(import.meta.url.endsWith('.ts') ? '../worker.ts' : './worker.js', import.meta.url);
-	const thread = new Worker(fileURLToPath(url), { workerData: setup });
+	const thread = new Worker(fileURLToPath(url), { workerData: setup, execArgv: workerFlags() });
 	thread.on('error', onError);
 	thread.unref();
 	return {
@@ -63,7 +72,7 @@ export function spawnWorker(setup: WorkerSetup, onError: (error: Error) => void)
 /** Start one WebAssembly engine thread on `engine-worker.ts`. */
 export function spawnEngineWorker(setup: EngineWorkerSetup, onError: (error: Error) => void): WorkerHandle {
 	const url = new URL(import.meta.url.endsWith('.ts') ? '../engine-worker.ts' : './engine-worker.js', import.meta.url);
-	const thread = new Worker(fileURLToPath(url), { workerData: setup });
+	const thread = new Worker(fileURLToPath(url), { workerData: setup, execArgv: workerFlags() });
 	thread.on('error', onError);
 	thread.unref();
 	return {

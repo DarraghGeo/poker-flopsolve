@@ -444,3 +444,22 @@ describe('accuracy targets', () => {
 		expect(predicted.history.length).toBeLessThan(watched.history.length);
 	});
 });
+
+describe('worker threads under node -e', () => {
+	it('start, though the parent was given code as a string', async () => {
+		// Workers inherit the parent's Node flags; --input-type, which comes
+		// with `node -e`, made them fail to start, and the solve hang waiting.
+		const { execFileSync } = await import('node:child_process');
+		const { fileURLToPath } = await import('node:url');
+		const entry = fileURLToPath(new URL('../src/index.ts', import.meta.url));
+		const code = `
+			const m = await import(${JSON.stringify(entry)});
+			const run = m.createRun(m.defineSpot({ board: 'As Kh 7d 2c', pot: 100, stack: 200, oop: 'AA,KK,AKs', ip: 'QQ,JJ,AQs', betSizes: [[0.5]], maxRaises: 1 }), { workers: 4 });
+			run.step(2); console.log(run.workers); run.close();`;
+		const out = execFileSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], {
+			encoding: 'utf8',
+			timeout: 60_000,
+		});
+		expect(out.trim()).toBe('4');
+	});
+});

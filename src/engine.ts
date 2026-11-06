@@ -21,6 +21,7 @@ import type { Tree } from './tree.ts';
 import { ENGINE_WASM } from './wasm/engine.ts';
 import { ENGINE_SHARED_WASM } from './wasm/engine-shared.ts';
 import type { ShardPlan } from './parallel.ts';
+import { WORKER_START_ERROR, WORKER_START_MS } from './parallel.ts';
 
 /** The parts of the WebAssembly API used here, typed locally: the project builds without DOM typings. */
 interface WasmApi {
@@ -247,10 +248,14 @@ export function createEngine(
 				Atomics.notify(control!, ENGINE_CONTROL.ready);
 			}));
 		}
+		// A worker that fails to start reports it by an event, which cannot
+		// be delivered while this thread waits here, so the wait is bounded.
+		const deadline = Date.now() + WORKER_START_MS;
 		for (;;) {
 			const ready = Atomics.load(control, ENGINE_CONTROL.ready);
 			if (ready >= threads - 1 || failure) break;
-			Atomics.wait(control, ENGINE_CONTROL.ready, ready, 20);
+			if (Date.now() > deadline) failure = new Error(WORKER_START_ERROR);
+			else Atomics.wait(control, ENGINE_CONTROL.ready, ready, 20);
 		}
 		if (failure) {
 			for (const worker of workers) worker.terminate();

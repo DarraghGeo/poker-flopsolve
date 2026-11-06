@@ -1,6 +1,6 @@
 {
   "name": "poker-flopsolve",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Postflop Texas Hold'em solver — give it a board, two ranges and a betting scheme, and it solves to showdown.",
   "type": "module",
   "license": "MIT",
