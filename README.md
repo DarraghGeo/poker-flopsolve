@@ -320,8 +320,10 @@ deterministic at any thread count.
 
 ### Algorithm and benchmark
 
-The default update rule is Discounted CFR (`algorithm: 'dcfr'`, α 1.5, β 0, γ 2). CFR+
-is still available as `algorithm: 'cfr+'`. `npm run bench` times a fixed river, turn, flop
+The default update rule is Discounted CFR (`algorithm: 'dcfr'`, α 1.5, β 0, γ 3, with
+positive regret counted from the second iteration so the uniform first iteration is
+forgotten). CFR+ is still available as `algorithm: 'cfr+'`. The table below predates the
+0.2.0 schedule, which needs 10–15% fewer iterations on flop and turn spots. `npm run bench` times a fixed river, turn, flop
 and two-tone flop. Measured in a 4-core cloud container, seconds of solving to reach each
 target (exploitability checks excluded):
 
@@ -335,6 +337,26 @@ target (exploitability checks excluded):
 The solver is compute-bound rather than memory-bound — a 150 MB flop streams its
 accumulators at about 0.25 GB/s — so the cost of an iteration tracks the work in it, not
 its bytes.
+
+### Compared with postflop-solver
+
+`npm run bench:compare` runs the same spots through this solver and
+[b-inary/postflop-solver](https://github.com/b-inary/postflop-solver) (Rust, built
+natively for the machine) at the same 32-bit precision, thread count and checking
+schedule. It needs a Rust toolchain; postflop-solver is fetched at build time and never
+bundled. Measured in a 4-core cloud container, time to 0.3% of pot:
+
+| Spot | Threads | poker-flopsolve | postflop-solver | Ratio |
+|---|---|---|---|---|
+| Turn | 1 | 4.0 s | 0.9 s | 4.2× |
+| Flop | 1 | 81.3 s | 18.5 s | 4.4× |
+| Monotone flop | 1 | 25.1 s | 5.3 s | 4.7× |
+| Flop | 4 | 25.5 s | 5.3 s | 4.8× |
+| Monotone flop | 4 | 8.2 s | 1.4 s | 5.8× |
+
+postflop-solver is roughly four to six times faster: native Rust over dense f32 vectors
+against JavaScript. Closing more of the gap means moving the traversal itself into
+WebAssembly, which is the next piece of work.
 
 ### Accuracy targets
 
