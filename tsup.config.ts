@@ -3,7 +3,7 @@ import { browserPlatform } from './scripts/browser-platform.ts';
 
 export default defineConfig([
 	{
-		entry: { index: 'src/index.ts', worker: 'src/worker.ts' },
+		entry: { index: 'src/index.ts', worker: 'src/worker.ts', 'engine-worker': 'src/engine-worker.ts' },
 		format: ['esm'],
 		dts: true,
 		target: 'es2022',

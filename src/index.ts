@@ -19,11 +19,12 @@ import { suitSymmetries } from './abstraction.ts';
 import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
 import { buildHandSpace } from './hands.ts';
+import { createEngine } from './engine.ts';
 import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
-import { DEFAULT_MAX_BYTES, PLATFORM, THREADS_AVAILABLE } from './platform/node.ts';
+import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, THREADS_AVAILABLE } from './platform/node.ts';
 import type { Context, PlayerIndex, RegretStore, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
@@ -385,8 +386,10 @@ export interface SolveOptions {
 	readonly exploitEvery?: number;
 	readonly onProgress?: (info: Progress) => void;
 	/**
-	 * Accumulator storage. Unset, a small spot uses 'f64', a larger one 'f32',
-	 * and one too big for either under the spot's `maxBytes` uses 'i16'.
+	 * Accumulator storage. Unset, 'f32' — what the WebAssembly engine runs —
+	 * or 'i16' for a spot too big for it under `maxBytes`. 'f64' is there on
+	 * request and runs the JavaScript engine; measured, it buys no accuracy
+	 * an exploitability target can see.
 	 *
 	 * 'i16' stores regrets and strategy sums as 16-bit integers with one scale
 	 * per node and board, about halving memory. It is for fitting a spot, not
@@ -466,6 +469,12 @@ export interface SolveOptions {
 	 * either way, to the bit; this exists to compare the two. Default true.
 	 */
 	readonly simd?: boolean;
+	/**
+	 * Which traversal runs. Unset, the WebAssembly engine wherever it applies
+	 * — one thread, 32-bit storage, WebAssembly SIMD available — and the
+	 * JavaScript one otherwise. 'js' forces JavaScript, to compare the two.
+	 */
+	readonly engine?: 'js';
 }
 
 /** See `SolveOptions.approximations`. */
@@ -593,6 +602,8 @@ export interface SolveRun {
 	readonly completed: number;
 	/** Iterations behind the strategy, counting any a warm start inherited. */
 	readonly totalIterations: number;
+	/** Which traversal runs: the WebAssembly engine or the JavaScript one. */
+	readonly engine: 'wasm' | 'js';
 	/** What a warm start carried over, or null without one. */
 	readonly warmStart: WarmStartReport | null;
 	/** Run `count` more iterations. */
@@ -634,7 +645,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const precision: Precision = options.analysisOnly
 		? 'f32'
 		: options.precision ??
-			(totalSlots < 4_000_000 && bytes * 2 <= maxBytes ? 'f64' : bytes <= maxBytes ? 'f32' : 'i16');
+			(bytes <= maxBytes ? 'f32' : 'i16');
 
 	// Hands neither player holds never carry reach, so they need no ranking.
 	const relevant = new Uint8Array(COMBOS);
@@ -656,22 +667,38 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const quantised = precision === 'i16';
 
 	const active = buildActiveLists(spot.runouts, spot.players, showdown);
+	const hands = buildHandSpace(spot.runouts, spot.players, active);
+	// The WebAssembly engine, where it applies: one thread, 32-bit storage,
+	// a platform with WebAssembly SIMD. It owns the storage; the context sees
+	// it through views.
+	const engine =
+		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false
+			? createEngine(
+					{
+						tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
+						runoutWeight: weights, chipScale: spot.chipScale,
+					},
+					plan ? { plan, threads: requested, spawn: spawnEngineWorker } : undefined,
+				)
+			: null;
 	const ctx: Context = {
 		tree: spot.tree,
 		runouts: spot.runouts,
 		players: spot.players,
 		layout,
 		showdown,
-		regret: options.analysisOnly
-			? new Float32Array(0)
-			: makeRegretStore(precision, allocate(layout.totalSlots * width)),
-		strategySum: makeSumStore(precision, allocate(layout.totalSlots * width)),
+		regret: engine
+			? engine.regret
+			: options.analysisOnly
+				? new Float32Array(0)
+				: makeRegretStore(precision, allocate(layout.totalSlots * width)),
+		strategySum: engine ? engine.strategySum : makeSumStore(precision, allocate(layout.totalSlots * width)),
 		regretScale: quantised ? new Float64Array(allocate(layout.blocks * 8)) : null,
 		sumScale: quantised ? new Float64Array(allocate(layout.blocks * 8)) : null,
 		scratch: makeTerminalScratch(),
 		chipScale: spot.chipScale,
 		active,
-		hands: buildHandSpace(spot.runouts, spot.players, active),
+		hands,
 		runoutWeight: weights,
 		shardStart: 0,
 		shardEnd: plan ? plan.boards : 0,
@@ -700,20 +727,24 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	}
 
 	const solver = makeSolver(ctx);
-	const pool: Pool | null = plan
+	// The engine runs its own threads; the JavaScript pool is for the rest.
+	const pool: Pool | null = plan && !engine
 		? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
 		: null;
 	if (pool) solver.useRoot(pool.traverse);
+	if (engine) solver.useRoot(engine.root(ctx.dcfr));
+	const threadCount = pool ? pool.workers : engine ? engine.threads : 1;
 	let completed = 0;
 
 	return {
 		spot,
 		solver,
-		workers: pool ? pool.workers : 1,
+		workers: threadCount,
 		get completed() {
 			return completed;
 		},
 		warmStart: warm,
+		engine: engine ? 'wasm' : 'js',
 		get totalIterations() {
 			return offset + completed;
 		},
@@ -726,6 +757,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			// Snapshots stay usable afterwards, on this thread alone.
 			solver.useRoot(null);
 			pool?.close();
+			engine?.close();
 		},
 		exploitabilityPercent() {
 			return (100 * solver.exploitability()) / (spot.potUnits / spot.chipScale);
@@ -733,7 +765,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		trueExploitabilityPercent() {
 			if (!spot.runouts.approximate) return this.exploitabilityPercent();
 			const real = createRun(defineSpot({ ...spot.source, runoutBuckets: false }), {
-				workers: pool ? pool.workers : 1,
+				workers: threadCount,
 				precision,
 			});
 			try {
@@ -744,7 +776,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			}
 		},
 		snapshot(history = [], stoppedAt = 'iterations') {
-			return makeSolution(spot, ctx, solver, completed, offset + completed, [...history], stoppedAt, pool ? pool.workers : 1);
+			return makeSolution(spot, ctx, solver, completed, offset + completed, [...history], stoppedAt, threadCount);
 		},
 	};
 }

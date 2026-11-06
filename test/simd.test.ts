@@ -33,15 +33,17 @@ describe('SIMD kernels', () => {
 
 	for (const precision of ['f64', 'f32', 'i16'] as Precision[]) {
 		it(`match JavaScript to the last bit at ${precision}`, () => {
-			const js = outcome(turn, 15, { workers: 1, precision, simd: false });
-			const wasm = outcome(turn, 15, { workers: 1, precision, simd: true });
+			// The JavaScript traversal either way: this tests the kernels.
+			const js = outcome(turn, 15, { workers: 1, precision, simd: false, engine: 'js' });
+			const wasm = outcome(turn, 15, { workers: 1, precision, simd: true, engine: 'js' });
 			for (let i = 0; i < 3; i++) expect(Object.is(js[i], wasm[i]), `${js[i]} vs ${wasm[i]}`).toBe(true);
 		});
 	}
 
 	it('match JavaScript across workers and folded runouts', () => {
-		const js = outcome(flop, 10, { workers: 4, simd: false });
-		const wasm = outcome(flop, 10, { workers: 4, simd: true });
+		// The JavaScript pool either way: this tests the kernels.
+		const js = outcome(flop, 10, { workers: 4, simd: false, engine: 'js' });
+		const wasm = outcome(flop, 10, { workers: 4, simd: true, engine: 'js' });
 		for (let i = 0; i < 3; i++) expect(Object.is(js[i], wasm[i]), `${js[i]} vs ${wasm[i]}`).toBe(true);
 	});
 });

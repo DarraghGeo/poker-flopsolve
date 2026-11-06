@@ -10,6 +10,7 @@
  */
 
 import type { WorkerSetup } from '../parallel.ts';
+import type { EngineWorkerSetup } from '../engine.ts';
 
 /** Which build this is. */
 export const PLATFORM = 'browser';
@@ -36,5 +37,10 @@ export function defaultWorkerCount(): number {
 
 /** Never called: `createRun` resolves to one thread before planning a pool. */
 export function spawnWorker(_setup: WorkerSetup, _onError: (error: Error) => void): WorkerHandle {
+	throw new Error('Worker threads are only available in the Node build; use workers: 1 in the browser');
+}
+
+/** Never called: the browser build is single-threaded. */
+export function spawnEngineWorker(_setup: EngineWorkerSetup, _onError: (error: Error) => void): WorkerHandle {
 	throw new Error('Worker threads are only available in the Node build; use workers: 1 in the browser');
 }
