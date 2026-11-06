@@ -270,7 +270,6 @@ interface Buffers {
 	 * allocation and never need clearing.
 	 */
 	readonly reachFor: readonly [Float64Array[], Float64Array[]];
-	readonly other: Float64Array[];
 	readonly strategy: Float64Array[];
 	readonly actionValues: Float64Array[];
 	readonly live: Uint16Array[];
@@ -282,7 +281,6 @@ function makeBuffers(tree: Tree, maxActions: number): Buffers {
 	return {
 		value: make(() => new Float64Array(COMBOS)),
 		reachFor: [make(() => new Float64Array(COMBOS)), make(() => new Float64Array(COMBOS))],
-		other: make(() => new Float64Array(COMBOS)),
 		strategy: make(() => new Float64Array(maxActions * COMBOS)),
 		actionValues: make(() => new Float64Array(maxActions * COMBOS)),
 		live: make(() => new Uint16Array(COMBOS)),
@@ -489,8 +487,6 @@ function traverse(
 		const width = runouts.width[nextRound];
 		const cards = runouts.cards[nextRound];
 
-		const childMe = buffers.reachFor[traverser][depth];
-		const childOpp = buffers.other[depth];
 		const childLive = buffers.live[depth];
 		const comboCards = COMBO_CARDS;
 
@@ -502,20 +498,21 @@ function traverse(
 			const childBoard = board * factor + local;
 			const dealt = cards[childBoard * width + width - 1];
 
-			// Copying only the live entries beats a whole-array set() by the
-			// ratio of the deck to the range, which for a narrow range is large.
+			// A deal changes which hands are live, not their reach, so the
+			// child gets the parent's reach vectors as they are. Nothing below
+			// reads a hand the dealt card blocks — every loop runs over
+			// `childLive` or the board's own active list — and nothing below
+			// writes to them: each node writes only its own depth's buffers.
 			let childCount = 0;
 			for (let i = 0; i < liveCount; i++) {
 				const combo = live[i];
 				if (comboCards[combo * 2] === dealt || comboCards[combo * 2 + 1] === dealt) continue;
-				childMe[combo] = reachMe[combo];
-				childOpp[combo] = reachOpp[combo];
 				childLive[childCount++] = combo;
 			}
 
 			const value = traverse(
 				ctx, buffers, mode, traverser, iterWeight,
-				child, childBoard, childMe, childOpp, childLive, childCount, depth + 1,
+				child, childBoard, reachMe, reachOpp, childLive, childCount, depth + 1,
 			);
 			for (let i = 0; i < childCount; i++) out[childLive[i]] += value[childLive[i]];
 		}
