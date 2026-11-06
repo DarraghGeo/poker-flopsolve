@@ -128,6 +128,9 @@ Each takes a value per round too. On a turn spot with four sizes, two raises and
 Raise caps per round (`maxRaises: [1, 2, 1]`) and a checked-down river (an empty
 `betSizes` row) were already available and trim the same way.
 
+`minWeight: 0.05` trims the ranges the same way: combinations weighted under 5% are
+dropped from both, which suits imported ranges full of hands at a percent or two.
+
 ## Reading a solved spot
 
 `createRun` returns the solver itself as `run.solver`, for analysis after (or between)

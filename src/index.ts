@@ -102,6 +102,13 @@ export interface SpotConfig {
 	/** Refuse a range wider than this many combinations. */
 	readonly maxCombos?: number;
 	/**
+	 * Drop combinations weighted below this from both ranges. Imported ranges
+	 * are often full of hands at a few percent that barely move the answer
+	 * but cost as much as any other; this removes them. It edits the ranges,
+	 * so it changes the game being solved. Default 0, keep everything.
+	 */
+	readonly minWeight?: number;
+	/**
 	 * Refuse a spot needing more than this much storage. Defaults to 6 GiB in
 	 * the Node build and 512 MiB in the browser build, where a tab has far less
 	 * to give.
@@ -231,9 +238,12 @@ export function defineSpot(config: SpotConfig): Spot {
 		if (weights.length !== COMBOS) {
 			throw new Error(`The ${who} range has ${weights.length} weights; one per combination is ${COMBOS}`);
 		}
+		const floor = config.minWeight ?? 0;
 		for (let combo = 0; combo < COMBOS; combo++) {
 			if (weights[combo] === 0) continue;
 			if (onBoard.has(COMBO_CARDS[combo * 2]) || onBoard.has(COMBO_CARDS[combo * 2 + 1])) {
+				weights[combo] = 0;
+			} else if (weights[combo] < floor) {
 				weights[combo] = 0;
 			}
 		}
@@ -417,6 +427,25 @@ export interface SolveOptions {
 	 * the new spot's own iterations outweigh the old ones sooner.
 	 */
 	readonly warmIteration?: number;
+	/**
+	 * Approximations that keep the game but solve it more cheaply. All off by
+	 * default. Each costs some accuracy, which the exploitability — measured
+	 * exactly, in the full game — shows.
+	 */
+	readonly approximations?: Approximations;
+}
+
+/** See `SolveOptions.approximations`. */
+export interface Approximations {
+	/*
+	 * Threshold pruning — skipping opponent actions taken with negligible
+	 * reach — was built and measured, and is deliberately not offered: a
+	 * threshold on reach mass also skips deep lines that are rare overall but
+	 * matter to the few hands that reach them, their strategy stops training,
+	 * and the best response walks straight into it. On a wide turn spot it
+	 * plateaued near 0.8% of pot where the unpruned solve reached 0.17%, for
+	 * at most 15% less time per iteration.
+	 */
 }
 
 export type Algorithm = 'cfr+' | 'dcfr';
@@ -612,7 +641,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 
 	const solver = makeSolver(ctx);
 	const pool: Pool | null = plan
-		? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision }, requested)
+		? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations }, requested)
 		: null;
 	if (pool) solver.useRoot(pool.traverse);
 	let completed = 0;
@@ -921,6 +950,7 @@ function makeSolution(
 				allInThreshold: 'allInThreshold' in betting ? betting.allInThreshold : source.allInThreshold === undefined ? undefined : later(source.allInThreshold, Array.isArray(source.allInThreshold)),
 				noDonk: 'noDonk' in betting ? betting.noDonk : source.noDonk === undefined ? undefined : later(source.noDonk, Array.isArray(source.noDonk)),
 				mergeSizes: 'mergeSizes' in betting ? betting.mergeSizes : source.mergeSizes,
+				minWeight: source.minWeight,
 				isomorphism: source.isomorphism,
 				maxCombos: 'maxCombos' in betting ? betting.maxCombos : source.maxCombos,
 				maxBytes: 'maxBytes' in betting ? betting.maxBytes : source.maxBytes,

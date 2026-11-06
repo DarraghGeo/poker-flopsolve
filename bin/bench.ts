@@ -7,6 +7,7 @@
  *   npm run bench                        # every spot, single-threaded
  *   npm run bench -- --spots turn,flop --workers 4
  *   npm run bench -- --algorithm dcfr --iters 400
+ *   npm run bench -- --approx '{"pruneBelow":1e-4}'
  *
  * For each spot it reports the cost of one iteration, the cost of one
  * exploitability check, and how many iterations it took to reach 1% and 0.3%
@@ -55,11 +56,13 @@ const options: SolveOptions = {
 	workers,
 	precision: args.precision === 'f64' || args.precision === 'f32' || args.precision === 'i16' ? args.precision : undefined,
 	algorithm: args.algorithm === 'cfr+' ? 'cfr+' : 'dcfr',
+	// e.g. --approx '{"pruneBelow":1e-4}'
+	approximations: args.approx ? JSON.parse(args.approx) : undefined,
 };
 /** `--no-iso` solves every runout, for comparison with folding mirrored ones. */
 const isomorphism = args['no-iso'] !== 'true';
 
-console.log(`algorithm ${options.algorithm}`);
+console.log(`algorithm ${options.algorithm}${args.approx ? `, approximations ${args.approx}` : ''}`);
 console.log(
 	`spot      MB    workers  ms/iter   check ms  ` + TARGETS.map((t) => `iters→${t}%  s→${t}%`.padEnd(20)).join(''),
 );
