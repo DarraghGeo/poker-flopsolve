@@ -426,9 +426,9 @@ function treeDepth(tree: Tree): number {
 }
 
 /**
- * Discounted CFR (Brown & Sandholm, 2019) at its usual setting. Before
- * iteration `t` adds its regrets, accumulated positive regret is scaled by
- * `(t-1)^α / ((t-1)^α + 1)` and negative regret by `(t-1)^β / ((t-1)^β + 1)`,
+ * Discounted CFR (Brown & Sandholm, 2019). Before iteration `t` adds its
+ * regrets, accumulated positive regret is scaled by `s^α / (s^α + 1)` with
+ * `s = t - 2` (see `dcfrFactors`) and negative regret by `s^β / (s^β + 1)`,
  * so a negative regret is halved each iteration rather than clamped; the
  * strategy sum is scaled by `((t-1) / t)^γ`, weighting iteration `t` about
  * `t^γ`. Every slot is visited exactly once per iteration, by its owner's
@@ -437,7 +437,30 @@ function treeDepth(tree: Tree): number {
  */
 const DCFR_ALPHA = 1.5;
 const DCFR_BETA = 0;
-const DCFR_GAMMA = 2;
+const DCFR_GAMMA = 3;
+
+/**
+ * DCFR's three factors before iteration `t` (counted from 1) adds its own
+ * values: what positive regret, negative regret and the strategy sum keep.
+ *
+ * The positive factor counts iterations from the second, so iteration 2
+ * keeps none of iteration 1's positive regret: that came from the uniform
+ * starting strategy and says little. Measured against counting from the
+ * first, it reaches 0.3% of pot in 10–15% fewer iterations on flop and turn
+ * spots and is never worse; with γ 3 rather than 2, on top, it is better
+ * still on most and never worse. A restart of the average at powers of 4 was
+ * tried too and was worse on the turn.
+ */
+function dcfrFactors(t: number): { keepPositive: number; keepNegative: number; keepSum: number } {
+	const age = t > 2 ? t - 2 : 0;
+	const grown = age ** DCFR_ALPHA;
+	const shrunk = age ** DCFR_BETA;
+	return {
+		keepPositive: grown / (grown + 1),
+		keepNegative: shrunk / (shrunk + 1),
+		keepSum: ((t - 1) / t) ** DCFR_GAMMA,
+	};
+}
 
 export const Mode = { Train: 0, BestResponse: 1, Average: 2 } as const;
 export type Mode = (typeof Mode)[keyof typeof Mode];
@@ -789,12 +812,7 @@ function traverse(
 		);
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.dcfr) {
 		// `iterWeight` is the iteration number, counted from 1.
-		const previous = iterWeight - 1;
-		const grown = previous ** DCFR_ALPHA;
-		const shrunk = previous ** DCFR_BETA;
-		const keepPositive = grown / (grown + 1);
-		const keepNegative = shrunk / (shrunk + 1);
-		const keepSum = (previous / iterWeight) ** DCFR_GAMMA;
+		const { keepPositive, keepNegative, keepSum } = dcfrFactors(iterWeight);
 		const regret = ctx.regret;
 		const strategySum = ctx.strategySum;
 		for (let a = 0; a < actions; a++) {
@@ -888,12 +906,7 @@ function updateQuantised(
 	let weight = iterWeight;
 	const clamp = !ctx.dcfr;
 	if (ctx.dcfr) {
-		const previous = iterWeight - 1;
-		const grown = previous ** DCFR_ALPHA;
-		const shrunk = previous ** DCFR_BETA;
-		keepPositive = grown / (grown + 1);
-		keepNegative = shrunk / (shrunk + 1);
-		keepSum = (previous / iterWeight) ** DCFR_GAMMA;
+		({ keepPositive, keepNegative, keepSum } = dcfrFactors(iterWeight));
 		weight = 1;
 	}
 

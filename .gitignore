@@ -3,3 +3,5 @@ dist/
 *.tsbuildinfo
 .DS_Store
 scratch/
+bench/compare/rust/target/
+bench/compare/rust/Cargo.lock
