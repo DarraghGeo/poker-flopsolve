@@ -185,6 +185,25 @@ Measured on an Apple M2, single threaded:
 `defineSpot` reports the projected cost before anything is allocated, and refuses a spot
 over `maxBytes` with concrete suggestions. `maxCombos` caps range width.
 
+### Mirrored runouts
+
+When swapping suits leaves the board and both ranges unchanged, a deal in one of those
+suits is the mirror image of a deal in another, and only one is solved. On a two-tone flop
+the two absent suits are interchangeable; on a monotone flop, all three. This is exact —
+the solver keeps mirrored hands' strategies tied together, so a stored runout stands for
+its mirrors with nothing lost — and it is on by default (`isomorphism: false` turns it off).
+
+| Flop, 4 threads | Runouts stored | To 0.3% of pot |
+|---|---|---|
+| Ts9s4h, two-tone | 1,429 of 2,352 | 16.3 s → 10.3 s |
+| Ks9s4s, monotone | 675 of 2,352 | 16.2 s → 5.6 s |
+| AhKdQc, rainbow | 2,352 of 2,352 | unchanged |
+
+Board indices (`strategyAt`, `reachAt`, `subgameAt`, the UI's runout picker) count stored
+runouts. To read a mirrored one, `spot.resolveBoard('Ts9s4h 7c')` gives the stored board
+and how hands relabel onto it. Ranges that differ between suits anywhere — an exact combo,
+or a partial weight on one suit — have no symmetry to use, and solve as before.
+
 ### 16-bit storage
 
 A spot too big for 32-bit storage under `maxBytes` is solved at 16 bits instead

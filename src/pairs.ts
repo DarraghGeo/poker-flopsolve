@@ -34,6 +34,8 @@ interface PairBuffers {
 	readonly cols: Int32Array[];
 	readonly colReach: Float64Array[];
 	readonly live: Uint16Array[];
+	/** Opposing hands relabelled onto a stored board, per depth. */
+	readonly hands: Uint16Array[];
 	readonly strategy: Float64Array[];
 	readonly rank: Int32Array;
 }
@@ -64,6 +66,7 @@ function makeBuffers(ctx: Context, width: number): PairBuffers {
 		cols: make(() => new Int32Array(width)),
 		colReach: make(() => new Float64Array(width)),
 		live: make(() => new Uint16Array(COMBOS)),
+		hands: make(() => new Uint16Array(width)),
 		strategy: make(() => new Float64Array(actions * COMBOS)),
 		rank: new Int32Array(COMBOS),
 	};
@@ -194,37 +197,49 @@ function walk(
 
 	if (kind === NodeKind.Chance) {
 		const nextRound = tree.round[node] + 1;
-		const factor = runouts.childFactor[nextRound];
 		const child = tree.edgeChild[tree.firstEdge[node]];
 		const width = runouts.width[nextRound];
 		const dealtCards = runouts.cards[nextRound];
+		const orbitStart = runouts.orbitStart[nextRound];
 		const childLive = buffers.live[depth];
 		const childCols = buffers.cols[depth + 1];
+		const mappedHands = buffers.hands[depth];
 
-		for (let local = 0; local < factor; local++) {
-			const childBoard = board * factor + local;
-			const dealt = dealtCards[childBoard * width + width - 1];
+		for (let childBoard = runouts.childStart[nextRound][board]; childBoard < runouts.childStart[nextRound][board + 1]; childBoard++) {
+			// Every deal this board stands for, the stored one first. The
+			// opposing hands are an arbitrary list, not a symmetric range, so a
+			// mirrored deal is walked with every hand relabelled onto the
+			// stored board rather than assumed equal to it.
+			for (let m = orbitStart[childBoard]; m < orbitStart[childBoard + 1]; m++) {
+				const dealt = m === orbitStart[childBoard] ? dealtCards[childBoard * width + width - 1] : runouts.orbitCard[nextRound][m];
+				const map = runouts.maps.combo[runouts.orbitMap[nextRound][m]];
 
-			let childCount = 0;
-			for (let i = 0; i < liveCount; i++) {
-				const combo = live[i];
-				if (cards[combo * 2] === dealt || cards[combo * 2 + 1] === dealt) continue;
-				childLive[childCount++] = combo;
-			}
-			let childColCount = 0;
-			for (let c = 0; c < colCount; c++) {
-				const k = cols[c];
-				if (cards[hands[k] * 2] !== dealt && cards[hands[k] * 2 + 1] !== dealt) childCols[childColCount++] = k;
-			}
-			if (childColCount === 0) continue;
+				let childCount = 0;
+				for (let i = 0; i < liveCount; i++) {
+					const combo = live[i];
+					if (cards[combo * 2] === dealt || cards[combo * 2 + 1] === dealt) continue;
+					childLive[childCount++] = map[combo];
+				}
+				let childColCount = 0;
+				for (let c = 0; c < colCount; c++) {
+					const k = cols[c];
+					if (cards[hands[k] * 2] !== dealt && cards[hands[k] * 2 + 1] !== dealt) childCols[childColCount++] = k;
+				}
+				if (childColCount === 0) continue;
+				for (let k = 0; k < hands.length; k++) mappedHands[k] = map[hands[k]];
 
-			const value = walk(
-				ctx, buffers, traverser, hands, child, childBoard, colReach,
-				childCols, childColCount, childLive, childCount, depth + 1,
-			);
-			for (let c = 0; c < childColCount; c++) {
-				const row = childCols[c] * COMBOS;
-				for (let i = 0; i < childCount; i++) out[row + childLive[i]] += value[row + childLive[i]];
+				const value = walk(
+					ctx, buffers, traverser, mappedHands.subarray(0, hands.length), child, childBoard, colReach,
+					childCols, childColCount, childLive, childCount, depth + 1,
+				);
+				for (let c = 0; c < childColCount; c++) {
+					const row = childCols[c] * COMBOS;
+					for (let i = 0; i < liveCount; i++) {
+						const combo = live[i];
+						if (cards[combo * 2] === dealt || cards[combo * 2 + 1] === dealt) continue;
+						out[row + combo] += value[row + map[combo]];
+					}
+				}
 			}
 		}
 		return out;

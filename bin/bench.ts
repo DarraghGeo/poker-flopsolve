@@ -26,6 +26,8 @@ const SPOTS: Record<string, SpotConfig> = {
 	turn: { board: 'AsKh7d2c', pot: 60, stack: 120, oop: OOP, ip: IP, betSizes: [[0.33, 0.75]], maxRaises: 2 },
 	flop: { board: 'AsKh7d', pot: 60, stack: 120, oop: OOP, ip: IP, betSizes: [[0.66]], maxRaises: 1 },
 	twotone: { board: 'Ts9s4h', pot: 60, stack: 120, oop: OOP, ip: IP, betSizes: [[0.66]], maxRaises: 1 },
+	monotone: { board: 'Ks9s4s', pot: 60, stack: 120, oop: OOP, ip: IP, betSizes: [[0.66]], maxRaises: 1 },
+	dry: { board: 'AhKdQc', pot: 60, stack: 120, oop: OOP, ip: IP, betSizes: [[0.66]], maxRaises: 1 },
 };
 
 /** Targets reported, as a percentage of the pot. */
@@ -54,6 +56,8 @@ const options: SolveOptions = {
 	precision: args.precision === 'f64' || args.precision === 'f32' || args.precision === 'i16' ? args.precision : undefined,
 	algorithm: args.algorithm === 'cfr+' ? 'cfr+' : 'dcfr',
 };
+/** `--no-iso` solves every runout, for comparison with folding mirrored ones. */
+const isomorphism = args['no-iso'] !== 'true';
 
 console.log(`algorithm ${options.algorithm}`);
 console.log(
@@ -63,7 +67,7 @@ console.log(
 for (const name of names) {
 	const config = SPOTS[name];
 	if (!config) throw new Error(`Unknown spot "${name}"; pick from ${Object.keys(SPOTS).join(', ')}`);
-	const spot = defineSpot(config);
+	const spot = defineSpot({ ...config, isomorphism });
 	const run = createRun(spot, options);
 	try {
 		// Per-iteration cost, measured early: a few warm-up iterations first so

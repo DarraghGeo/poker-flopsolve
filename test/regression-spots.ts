@@ -17,7 +17,9 @@ const NARROW_IP = 'JJ,TT,99,AJs,KJs,QJs,JTs,T9s';
 const river: SpotConfig = { board: 'AsKh7d2c9h', pot: 60, stack: 120, oop: OOP, ip: IP, betSizes: [[0.33, 0.75]], maxRaises: 2, allowAllIn: true };
 const turn: SpotConfig = { board: 'AsKh7d2c', pot: 60, stack: 120, oop: OOP, ip: IP, betSizes: [[0.33, 0.75]], maxRaises: 2 };
 const flop: SpotConfig = { board: 'AsKh7d', pot: 60, stack: 100, oop: NARROW_OOP, ip: NARROW_IP, betSizes: [[0.66]], maxRaises: 1 };
-const twotone: SpotConfig = { board: 'Ts9s4h', pot: 60, stack: 100, oop: NARROW_OOP, ip: NARROW_IP, betSizes: [[0.66]], maxRaises: 1 };
+// Isomorphism off: this pins the full enumeration, which folding mirrored
+// runouts reorders additions in.
+const twotone: SpotConfig = { board: 'Ts9s4h', pot: 60, stack: 100, oop: NARROW_OOP, ip: NARROW_IP, betSizes: [[0.66]], maxRaises: 1, isomorphism: false };
 
 export const SPOTS: Record<string, { config: SpotConfig; iterations: number; precision: Precision; options?: SolveOptions }> = {
 	'river f64': { config: river, iterations: 200, precision: 'f64' },

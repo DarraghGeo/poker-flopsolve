@@ -12,7 +12,9 @@ import { COMBO_CARDS, COMBOS, formatCards, parseCards } from './cards.ts';
 import type { BetSize, RaiseSizes, Tree } from './tree.ts';
 import { ACTION_LABELS, ActionKind, buildTree, NodeKind, raisesPerRound } from './tree.ts';
 import type { Runouts } from './runouts.ts';
-import { boardAtRound, enumerateRunouts } from './runouts.ts';
+import type { ResolvedBoard } from './runouts.ts';
+import { boardAtRound, enumerateRunouts, resolveBoard } from './runouts.ts';
+import { suitSymmetries } from './abstraction.ts';
 import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
 import type { Pool } from './parallel.ts';
@@ -32,6 +34,7 @@ import {
 export * from './cards.ts';
 export * from './eval7.ts';
 export { activeCombos, parseRange, rangeWeight } from './range.ts';
+export type { ResolvedBoard } from './runouts.ts';
 export type { BetSize } from './tree.ts';
 export type { Solver } from './cfr.ts';
 export { ACTION_LABELS, ActionKind, NodeKind } from './tree.ts';
@@ -83,11 +86,25 @@ export interface SpotConfig {
 	 */
 	readonly maxBytes?: number;
 	readonly chipScale?: number;
+	/**
+	 * Fold mirror-image runouts together. When the board and both ranges are
+	 * unchanged by swapping some suits — two suits absent from a two-tone flop,
+	 * three from a monotone one — a deal in one of those suits is the mirror
+	 * image of a deal in another, so only one is solved and it stands for both.
+	 * Exact, not an approximation: strategies on a mirrored runout are the
+	 * stored ones relabelled. Default true; ranges that differ between suits
+	 * anywhere simply have no symmetry to use.
+	 */
+	readonly isomorphism?: boolean;
 }
 
 /** Projected cost of solving a spot. */
 export interface Estimate {
 	readonly rounds: number;
+	/**
+	 * Final boards stored. With `isomorphism` a mirrored runout is not
+	 * stored, so this can be well under the number of real runouts.
+	 */
 	readonly runouts: number;
 	readonly combos: readonly [number, number];
 	readonly decisionNodes: number;
@@ -147,6 +164,15 @@ export interface Spot {
 	readonly stackUnits: number;
 	/** The configuration this was built from, so a worker can rebuild it. */
 	readonly source: SpotConfig;
+	/**
+	 * Find the stored board standing for a real one, and how hands relabel
+	 * onto it. Board indices everywhere else — `strategyAt`, `reachAt`,
+	 * `subgameAt` — index stored boards; with `isomorphism` a mirrored runout
+	 * is not stored, and this is how to read it.
+	 *
+	 * @param board the spot's board followed by the cards dealt, in order
+	 */
+	resolveBoard(board: string | readonly number[]): ResolvedBoard;
 }
 
 /**
@@ -157,18 +183,21 @@ export function defineSpot(config: SpotConfig): Spot {
 	const chipScale = config.chipScale ?? DEFAULT_CHIP_SCALE;
 	const maxBytes = config.maxBytes ?? DEFAULT_MAX_BYTES;
 	const board = parseCards(config.board);
-	const runouts = enumerateRunouts(board);
+	if (board.length < 3 || board.length > 5) {
+		throw new Error(`A postflop board has 3, 4 or 5 cards; got ${board.length} (${formatCards(board)})`);
+	}
+	const rounds = 6 - board.length;
 
 	if (config.pot <= 0) throw new Error('pot must be positive');
 	if (config.stack <= 0) throw new Error('stack must be positive');
 
 	const rows =
 		config.betSizes.length === 1
-			? Array.from({ length: runouts.rounds }, () => config.betSizes[0])
+			? Array.from({ length: rounds }, () => config.betSizes[0])
 			: config.betSizes;
-	if (rows.length !== runouts.rounds) {
+	if (rows.length !== rounds) {
 		throw new Error(
-			`betSizes has ${config.betSizes.length} rows but this board has ${runouts.rounds} ` +
+			`betSizes has ${config.betSizes.length} rows but this board has ${rounds} ` +
 				'betting rounds; give one row per round, or a single row for all of them',
 		);
 	}
@@ -201,6 +230,13 @@ export function defineSpot(config: SpotConfig): Spot {
 		buildPlayerIndex(trim(config.oop, 'out-of-position')),
 		buildPlayerIndex(trim(config.ip, 'in-position')),
 	];
+
+	// Symmetry needs the ranges, so the runouts come after them.
+	const symmetries =
+		config.isomorphism === false || board.length === 5
+			? undefined
+			: suitSymmetries(board, [players[0].weights, players[1].weights]);
+	const runouts = enumerateRunouts(board, symmetries);
 
 	const tree = buildTree(
 		{
@@ -255,6 +291,9 @@ export function defineSpot(config: SpotConfig): Spot {
 		potUnits: Math.round(config.pot * chipScale),
 		stackUnits: Math.round(config.stack * chipScale),
 		source: config,
+		resolveBoard(cards) {
+			return resolveBoard(runouts, typeof cards === 'string' ? parseCards(cards) : cards);
+		},
 	};
 }
 
@@ -492,6 +531,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		chanceCollect: null,
 		chanceOverride: null,
 		entryIndexOf: plan ? plan.entryIndexOf : null,
+		expandOrbits: false,
 		// The traversal sums over every runout, so the denominator has to count
 		// them too: a hand pair is dealt once per compatible completion, not
 		// once. With a river board that factor is 1, which is exactly why this
@@ -711,7 +751,7 @@ function makeSolution(
 		for (let current = node; parent[current] >= 0; current = parent[current]) {
 			const owner = parent[current];
 			if (tree.kind[owner] !== NodeKind.Decision || tree.player[owner] !== player) continue;
-			const at = boardAtRound(spot.runouts.childFactor, board, round, tree.round[owner]);
+			const at = boardAtRound(spot.runouts, board, round, tree.round[owner]);
 			const { actions, probs } = solver.averageStrategyAt(owner, at);
 			const action = viaEdge[current] - tree.firstEdge[owner];
 			for (let i = 0; i < index.count; i++) reach[index.combos[i]] *= probs[i * actions + action];

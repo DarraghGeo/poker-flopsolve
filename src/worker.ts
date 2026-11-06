@@ -65,6 +65,7 @@ const ctx: Context = {
 	chanceCollect: null,
 	chanceOverride: null,
 	entryIndexOf: null,
+	expandOrbits: false,
 };
 
 const solver = makeSolver(ctx);

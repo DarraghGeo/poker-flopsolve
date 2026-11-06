@@ -154,6 +154,14 @@ export interface Context {
 	chanceOverride: Float64Array | null;
 	/** Node index to entry index for shard-round chance nodes, else -1. */
 	entryIndexOf: Int32Array | null;
+	/**
+	 * How a stored board stands for the deals it represents. False: add its
+	 * values relabelled, which is exact when reach is symmetric under the
+	 * spot's symmetries — always so from the root, since the ranges are. True:
+	 * walk it once per represented deal with that deal's reach relabelled
+	 * onto it, exact for any reach, at the cost of the walks saved.
+	 */
+	expandOrbits: boolean;
 }
 
 /**
@@ -220,6 +228,14 @@ interface ActiveLists {
 	readonly slot: Uint16Array;
 	/** First list index of each round. */
 	readonly roundBase: Int32Array;
+	/**
+	 * Hands that mirror each other on a board with symmetry left, whose
+	 * accumulators are kept equal, indexed by the same slot as `start`:
+	 * `ties[tieStart[slot]..tieStart[slot + 1]]` is a run of classes, each its
+	 * size then that many storage slots. Empty almost everywhere.
+	 */
+	readonly tieStart: Int32Array;
+	readonly ties: Int32Array;
 }
 
 function buildActiveLists(
@@ -258,7 +274,76 @@ function buildActiveLists(
 			}
 		}
 	}
-	return { start, count, list: Uint16Array.from(entries), slot: Uint16Array.from(entrySlots), roundBase };
+	// Tie classes. A board's stabiliser fixes it, so it permutes the hands
+	// live on it; a player's range is unchanged by it, so the image of one of
+	// their hands is theirs too.
+	const tieStart = new Int32Array(slots + 1);
+	const ties: number[] = [];
+	for (let round = 0; round < runouts.rounds; round++) {
+		const stabStart = runouts.stabiliserStart[round];
+		const stabMap = runouts.stabiliserMap[round];
+		for (let board = 0; board < runouts.counts[round]; board++) {
+			for (let player = 0; player < 2; player++) {
+				const slot = (roundBase[round] + board) * 2 + player;
+				tieStart[slot] = ties.length;
+				if (stabStart[board + 1] - stabStart[board] < 2) continue;
+				const index = players[player];
+				const seen = new Uint8Array(index.count);
+				for (let e = start[slot]; e < start[slot] + count[slot]; e++) {
+					const first = entrySlots[e];
+					if (seen[first]) continue;
+					const members: number[] = [];
+					for (let k = stabStart[board]; k < stabStart[board + 1]; k++) {
+						const image = index.slot[runouts.maps.combo[stabMap[k]][entries[e]]];
+						if (image < 0 || seen[image]) continue;
+						seen[image] = 1;
+						members.push(image);
+					}
+					if (members.length > 1) ties.push(members.length, ...members);
+				}
+			}
+		}
+	}
+	tieStart[slots] = ties.length;
+
+	return {
+		start, count, list: Uint16Array.from(entries), slot: Uint16Array.from(entrySlots), roundBase,
+		tieStart, ties: Int32Array.from(ties),
+	};
+}
+
+/**
+ * Make mirrored hands' accumulators equal, by averaging each tie class.
+ *
+ * Their updates are equal in exact arithmetic but not in floating point, and
+ * regret matching is discontinuous at zero, so left alone the copies drift to
+ * genuinely different strategies — and the reach that flows from them stops
+ * being symmetric, which is what lets a stored board stand for its mirror
+ * images. Averaging restores exact equality after every update. It is CFR on
+ * the folded game, where the mirrored hands are one information set.
+ */
+function tieMirrors(
+	store: RegretStore | SumStore,
+	slotBase: number,
+	actions: number,
+	stride: number,
+	ties: Int32Array,
+	from: number,
+	to: number,
+	integer: boolean,
+): void {
+	for (let a = 0; a < actions; a++) {
+		const row = slotBase + a * stride;
+		for (let k = from; k < to; ) {
+			const size = ties[k];
+			let sum = 0;
+			for (let j = 1; j <= size; j++) sum += store[row + ties[k + j]];
+			let mean = sum / size;
+			if (integer) mean = Math.round(mean);
+			for (let j = 1; j <= size; j++) store[row + ties[k + j]] = mean;
+			k += size + 1;
+		}
+	}
 }
 
 /** Per-depth buffers, so the hot loop never allocates. */
@@ -273,6 +358,10 @@ interface Buffers {
 	readonly strategy: Float64Array[];
 	readonly actionValues: Float64Array[];
 	readonly live: Uint16Array[];
+	/** Reach and live hands relabelled onto a stored board, for `expandOrbits`. */
+	readonly mappedMe: Float64Array[];
+	readonly mappedOpp: Float64Array[];
+	readonly mappedLive: Uint16Array[];
 }
 
 function makeBuffers(tree: Tree, maxActions: number): Buffers {
@@ -284,6 +373,9 @@ function makeBuffers(tree: Tree, maxActions: number): Buffers {
 		strategy: make(() => new Float64Array(maxActions * COMBOS)),
 		actionValues: make(() => new Float64Array(maxActions * COMBOS)),
 		live: make(() => new Uint16Array(COMBOS)),
+		mappedMe: make(() => new Float64Array(COMBOS)),
+		mappedOpp: make(() => new Float64Array(COMBOS)),
+		mappedLive: make(() => new Uint16Array(COMBOS)),
 	};
 }
 
@@ -482,20 +574,25 @@ function traverse(
 			}
 		}
 
-		const factor = runouts.childFactor[nextRound];
 		const child = tree.edgeChild[tree.firstEdge[node]];
 		const width = runouts.width[nextRound];
 		const cards = runouts.cards[nextRound];
+		const orbitStart = runouts.orbitStart[nextRound];
+		const orbitMap = runouts.orbitMap[nextRound];
+		const orbitCard = runouts.orbitCard[nextRound];
+		const comboMaps = runouts.maps.combo;
 
 		const childLive = buffers.live[depth];
 		const comboCards = COMBO_CARDS;
 
+		// Workers own contiguous slices of the boards at the shard round.
 		const sharded = nextRound === ctx.shardRound;
-		const from = sharded ? ctx.shardStart : 0;
-		const to = sharded ? ctx.shardEnd : factor;
+		const first = runouts.childStart[nextRound][board];
+		const last = runouts.childStart[nextRound][board + 1];
+		const from = sharded && ctx.shardStart > first ? ctx.shardStart : first;
+		const to = sharded && ctx.shardEnd < last ? ctx.shardEnd : last;
 
-		for (let local = from; local < to; local++) {
-			const childBoard = board * factor + local;
+		for (let childBoard = from; childBoard < to; childBoard++) {
 			const dealt = cards[childBoard * width + width - 1];
 
 			// A deal changes which hands are live, not their reach, so the
@@ -515,6 +612,47 @@ function traverse(
 				child, childBoard, reachMe, reachOpp, childLive, childCount, depth + 1,
 			);
 			for (let i = 0; i < childCount; i++) out[childLive[i]] += value[childLive[i]];
+
+			// The other deals this board stands for. Hand `h` after the real
+			// card plays as `map[h]` after the stored one.
+			const membersEnd = orbitStart[childBoard + 1];
+			for (let m = orbitStart[childBoard] + 1; m < membersEnd; m++) {
+				const map = comboMaps[orbitMap[m]];
+				const real = orbitCard[m];
+				if (!ctx.expandOrbits) {
+					// Reach is symmetric under the map, so the stored subtree's
+					// values ARE the mirrored subtree's, relabelled.
+					for (let i = 0; i < liveCount; i++) {
+						const combo = live[i];
+						if (comboCards[combo * 2] === real || comboCards[combo * 2 + 1] === real) continue;
+						out[combo] += value[map[combo]];
+					}
+					continue;
+				}
+				// Any reach: walk the stored subtree again with the real deal's
+				// reach relabelled onto it.
+				const mappedMe = buffers.mappedMe[depth];
+				const mappedOpp = buffers.mappedOpp[depth];
+				const mappedLive = buffers.mappedLive[depth];
+				let mappedCount = 0;
+				for (let i = 0; i < liveCount; i++) {
+					const combo = live[i];
+					if (comboCards[combo * 2] === real || comboCards[combo * 2 + 1] === real) continue;
+					const image = map[combo];
+					mappedMe[image] = reachMe[combo];
+					mappedOpp[image] = reachOpp[combo];
+					mappedLive[mappedCount++] = image;
+				}
+				const mirrored = traverse(
+					ctx, buffers, mode, traverser, iterWeight,
+					child, childBoard, mappedMe, mappedOpp, mappedLive, mappedCount, depth + 1,
+				);
+				for (let i = 0; i < liveCount; i++) {
+					const combo = live[i];
+					if (comboCards[combo * 2] === real || comboCards[combo * 2 + 1] === real) continue;
+					out[combo] += mirrored[map[combo]];
+				}
+			}
 		}
 		return out;
 	}
@@ -641,6 +779,16 @@ function traverse(
 				regret[at] = updated > 0 ? updated : 0;
 				strategySum[at] += iterWeight * reachMe[combo] * strategy[offset + combo];
 			}
+		}
+	}
+
+	if (isTraverser && mode === Mode.Train && ctx.applyUpdates) {
+		const tieFrom = lists.tieStart[listSlot];
+		const tieTo = lists.tieStart[listSlot + 1];
+		if (tieFrom < tieTo) {
+			const integer = ctx.regretScale !== null;
+			tieMirrors(ctx.regret, slotBase, actions, stride, lists.ties, tieFrom, tieTo, integer);
+			tieMirrors(ctx.strategySum, slotBase, actions, stride, lists.ties, tieFrom, tieTo, integer);
 		}
 	}
 
@@ -900,10 +1048,18 @@ export function makeSolver(ctx: Context): Solver {
 			return (br0 + br1) / 2;
 		},
 		valuesAt(node, board, traverser, reachMe, reachOpp, live, liveCount) {
-			const value = traverse(
-				ctx, buffers, Mode.Average, traverser, 0, node, board, reachMe, reachOpp, live, liveCount, 0,
-			);
-			return Float64Array.from(value.subarray(0, COMBOS));
+			// The caller's reach need not be symmetric, so mirrored deals are
+			// walked rather than assumed.
+			const expanded = ctx.expandOrbits;
+			ctx.expandOrbits = true;
+			try {
+				const value = traverse(
+					ctx, buffers, Mode.Average, traverser, 0, node, board, reachMe, reachOpp, live, liveCount, 0,
+				);
+				return Float64Array.from(value.subarray(0, COMBOS));
+			} finally {
+				ctx.expandOrbits = expanded;
+			}
 		},
 		pairValuesAt(node, board, traverser, hands, handReach, live, liveCount) {
 			return pairValues(ctx, node, board, traverser, hands, handReach, live, liveCount);
