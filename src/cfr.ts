@@ -21,7 +21,9 @@
 import { COMBO_CARDS, COMBOS, DECK } from './cards.ts';
 import type { Runouts } from './runouts.ts';
 import type { ShowdownTable, TerminalScratch } from './showdown.ts';
-import { foldValues, makeTerminalScratch, showdownValues } from './showdown.ts';
+import { makeTerminalScratch } from './showdown.ts';
+import type { HandSpace } from './hands.ts';
+import { foldValuesHands, showdownValuesHands } from './hands.ts';
 import type { Tree } from './tree.ts';
 import { pairValues } from './pairs.ts';
 import type { Kernels } from './kernels.ts';
@@ -129,6 +131,8 @@ export interface Context {
 	readonly chipScale: number;
 	/** Which combinations each player can hold on each board. */
 	readonly active: ActiveLists;
+	/** How hand-space vectors move between boards and meet at terminals. */
+	readonly hands: HandSpace;
 	/**
 	 * Board completions still to come after each round, with four cards already
 	 * removed for the two hands. A hand that ends early would otherwise be
@@ -240,11 +244,20 @@ interface ActiveLists {
 	 */
 	readonly tieStart: Int32Array;
 	readonly ties: Int32Array;
+	/** Each entry's two cards, beside `list`. */
+	readonly cardA: Uint8Array;
+	readonly cardB: Uint8Array;
+	/**
+	 * Each entry's strength on its final board, beside `list`; final-board
+	 * lists are sorted by it. Zero elsewhere.
+	 */
+	readonly strength: Int32Array;
 }
 
 function buildActiveLists(
 	runouts: Runouts,
 	players: readonly [PlayerIndex, PlayerIndex],
+	showdown: ShowdownTable | null = null,
 ): ActiveLists {
 	const roundBase = new Int32Array(runouts.rounds + 1);
 	for (let round = 0; round < runouts.rounds; round++) {
@@ -268,10 +281,20 @@ function buildActiveLists(
 				const index = players[player];
 				const slot = (roundBase[round] + board) * 2 + player;
 				start[slot] = entries.length;
+				const here: number[] = [];
 				for (let i = 0; i < index.count; i++) {
 					const combo = index.combos[i];
 					if (onBoard[COMBO_CARDS[combo * 2]] || onBoard[COMBO_CARDS[combo * 2 + 1]]) continue;
-					entries.push(combo);
+					here.push(i);
+				}
+				// On a final board, hands in order of strength: a showdown is
+				// then one contiguous sweep. Order is free everywhere else.
+				if (showdown !== null && round === runouts.rounds - 1) {
+					const group = strengthOn(showdown, board);
+					here.sort((x, y) => group[index.combos[x]] - group[index.combos[y]] || x - y);
+				}
+				for (const i of here) {
+					entries.push(index.combos[i]);
 					entrySlots.push(i);
 				}
 				count[slot] = entries.length - start[slot];
@@ -310,10 +333,43 @@ function buildActiveLists(
 	}
 	tieStart[slots] = ties.length;
 
+	const list = Uint16Array.from(entries);
+	const cardA = new Uint8Array(list.length);
+	const cardB = new Uint8Array(list.length);
+	for (let e = 0; e < list.length; e++) {
+		cardA[e] = COMBO_CARDS[list[e] * 2];
+		cardB[e] = COMBO_CARDS[list[e] * 2 + 1];
+	}
+	// Each entry's strength on its final board, for the showdown sweep.
+	const strength = new Int32Array(list.length);
+	if (showdown !== null) {
+		const last = runouts.rounds - 1;
+		for (let board = 0; board < runouts.counts[last]; board++) {
+			const group = strengthOn(showdown, board);
+			for (let player = 0; player < 2; player++) {
+				const slot = (roundBase[last] + board) * 2 + player;
+				for (let e = start[slot]; e < start[slot] + count[slot]; e++) strength[e] = group[list[e]];
+			}
+		}
+	}
 	return {
-		start, count, list: Uint16Array.from(entries), slot: Uint16Array.from(entrySlots), roundBase,
-		tieStart, ties: Int32Array.from(ties),
+		start, count, list, slot: Uint16Array.from(entrySlots), roundBase,
+		tieStart, ties: Int32Array.from(ties), cardA, cardB, strength,
 	};
+}
+
+const strengthScratch = new Int32Array(COMBOS);
+
+/** Each combination's tie-group index on a final board: higher is stronger. Shared scratch. */
+function strengthOn(table: ShowdownTable, board: number): Int32Array {
+	const orderBase = board * table.stride;
+	const groupBase = board * (table.stride + 1);
+	for (let g = 0; g < table.groupCount[board]; g++) {
+		for (let i = table.groupStart[groupBase + g]; i < table.groupStart[groupBase + g + 1]; i++) {
+			strengthScratch[table.order[orderBase + i]] = g;
+		}
+	}
+	return strengthScratch;
 }
 
 /**
@@ -388,6 +444,8 @@ interface Buffers {
 	readonly mappedLive: Uint16Array[];
 	/** This thread's SIMD kernels, whose memory holds `strategy`; null for JavaScript. */
 	readonly kernels: Kernels | null;
+	/** 52 doubles for the terminal kernels' per-card sums, kept zero between uses. */
+	readonly cardSums: Float64Array;
 }
 
 function makeBuffers(tree: Tree, maxActions: number, simd: boolean): Buffers {
@@ -396,6 +454,7 @@ function makeBuffers(tree: Tree, maxActions: number, simd: boolean): Buffers {
 	const kernels = simd ? loadKernels(depth, maxActions * COMBOS) : null;
 	return {
 		kernels,
+		cardSums: new Float64Array(DECK),
 		value: make(() => new Float64Array(COMBOS)),
 		reachFor: [make(() => new Float64Array(COMBOS)), make(() => new Float64Array(COMBOS))],
 		strategy: kernels
@@ -575,6 +634,15 @@ export function averageStrategy(
 	}
 }
 
+/**
+ * One walk of the subtree below `node`, for `traverser`, returning their
+ * counterfactual values.
+ *
+ * Vectors are in hand space: `reachMe`, the result and every buffer for the
+ * traverser hold one entry per hand of theirs live on `board` — entry `i` of
+ * their active list there — and `reachOpp` likewise for the opponent. The
+ * result is valid for the traverser's `count` hands on this board.
+ */
 function traverse(
 	ctx: Context,
 	buffers: Buffers,
@@ -585,30 +653,44 @@ function traverse(
 	board: number,
 	reachMe: Float64Array,
 	reachOpp: Float64Array,
-	live: Uint16Array,
-	liveCount: number,
 	depth: number,
 ): Float64Array {
 	const { tree, runouts } = ctx;
 	const out = buffers.value[depth];
 	const kind = tree.kind[node];
+	const round = tree.round[node];
+	const lists = ctx.active;
+	const opponent = (1 - traverser) as 0 | 1;
+	const mySlot = (lists.roundBase[round] + board) * 2 + traverser;
+	const oppSlot = (lists.roundBase[round] + board) * 2 + opponent;
+	const myFrom = lists.start[mySlot];
+	const myCount = lists.count[mySlot];
+	const oppFrom = lists.start[oppSlot];
+	const oppCount = lists.count[oppSlot];
 
 	if (kind === NodeKind.TerminalFold) {
 		const signed = traverser === 0 ? tree.payoff[node] : -tree.payoff[node];
-		const weight = ctx.runoutWeight[tree.round[node]] / ctx.chipScale;
-		foldValues(reachOpp, live, liveCount, signed * weight, ctx.scratch, out);
+		const weight = ctx.runoutWeight[round] / ctx.chipScale;
+		const hands = ctx.hands;
+		foldValuesHands(
+			reachOpp, lists.cardA, lists.cardB, oppFrom, oppCount, myFrom, myCount,
+			hands.same, hands.sameStart[mySlot], signed * weight, buffers.cardSums, out,
+		);
 		return out;
 	}
 
 	if (kind === NodeKind.TerminalShowdown) {
-		const weight = ctx.runoutWeight[tree.round[node]] / ctx.chipScale;
-		showdownValues(reachOpp, ctx.showdown, board, tree.payoff[node] * weight, ctx.scratch, out);
+		const weight = ctx.runoutWeight[round] / ctx.chipScale;
+		showdownValuesHands(
+			reachOpp, lists.cardA, lists.cardB, lists.strength, oppFrom, oppCount, myFrom, myCount,
+			tree.payoff[node] * weight, buffers.cardSums, out,
+		);
 		return out;
 	}
 
 	if (kind === NodeKind.Chance) {
-		for (let i = 0; i < liveCount; i++) out[live[i]] = 0;
-		const nextRound = tree.round[node] + 1;
+		for (let i = 0; i < myCount; i++) out[i] = 0;
+		const nextRound = round + 1;
 
 		// At the shard boundary the subtree below belongs to the workers: the
 		// collect pass records what they need, and the apply pass reads back
@@ -622,22 +704,18 @@ function traverse(
 				}
 				if (ctx.chanceOverride !== null) {
 					const base = entry * COMBOS;
-					for (let i = 0; i < liveCount; i++) out[live[i]] = ctx.chanceOverride[base + live[i]];
+					for (let i = 0; i < myCount; i++) out[i] = ctx.chanceOverride[base + i];
 					return out;
 				}
 			}
 		}
 
 		const child = tree.edgeChild[tree.firstEdge[node]];
-		const width = runouts.width[nextRound];
-		const cards = runouts.cards[nextRound];
 		const orbitStart = runouts.orbitStart[nextRound];
-		const orbitMap = runouts.orbitMap[nextRound];
-		const orbitCard = runouts.orbitCard[nextRound];
-		const comboMaps = runouts.maps.combo;
-
-		const childLive = buffers.live[depth];
-		const comboCards = COMBO_CARDS;
+		const upStart = ctx.hands.upStart[nextRound];
+		const up = ctx.hands.up;
+		const childMe = buffers.reachFor[traverser][depth];
+		const childOpp = buffers.reachFor[opponent][depth];
 
 		// Workers own contiguous slices of the boards at the shard round.
 		const sharded = nextRound === ctx.shardRound;
@@ -647,65 +725,27 @@ function traverse(
 		const to = sharded && ctx.shardEnd < last ? ctx.shardEnd : last;
 
 		for (let childBoard = from; childBoard < to; childBoard++) {
-			const dealt = cards[childBoard * width + width - 1];
-
-			// A deal changes which hands are live, not their reach, so the
-			// child gets the parent's reach vectors as they are. Nothing below
-			// reads a hand the dealt card blocks — every loop runs over
-			// `childLive` or the board's own active list — and nothing below
-			// writes to them: each node writes only its own depth's buffers.
-			let childCount = 0;
-			for (let i = 0; i < liveCount; i++) {
-				const combo = live[i];
-				if (comboCards[combo * 2] === dealt || comboCards[combo * 2 + 1] === dealt) continue;
-				childLive[childCount++] = combo;
-			}
-
-			const value = traverse(
-				ctx, buffers, mode, traverser, iterWeight,
-				child, childBoard, reachMe, reachOpp, childLive, childCount, depth + 1,
-			);
-			for (let i = 0; i < childCount; i++) out[childLive[i]] += value[childLive[i]];
-
-			// The other deals this board stands for. Hand `h` after the real
-			// card plays as `map[h]` after the stored one.
+			const childMySlot = (lists.roundBase[nextRound] + childBoard) * 2 + traverser;
+			const childOppSlot = (lists.roundBase[nextRound] + childBoard) * 2 + opponent;
+			const nMe = lists.count[childMySlot];
+			const nOpp = lists.count[childOppSlot];
+			const firstMember = orbitStart[childBoard];
 			const membersEnd = orbitStart[childBoard + 1];
-			for (let m = orbitStart[childBoard] + 1; m < membersEnd; m++) {
-				const map = comboMaps[orbitMap[m]];
-				const real = orbitCard[m];
-				if (!ctx.expandOrbits) {
-					// Reach is symmetric under the map, so the stored subtree's
-					// values ARE the mirrored subtree's, relabelled.
-					for (let i = 0; i < liveCount; i++) {
-						const combo = live[i];
-						if (comboCards[combo * 2] === real || comboCards[combo * 2 + 1] === real) continue;
-						out[combo] += value[map[combo]];
-					}
-					continue;
+
+			// Every real deal this board stands for, the stored one first. A
+			// child hand's parent is `up`, through the deal's relabelling.
+			// Without `expandOrbits`, reach is symmetric under the relabelling,
+			// so one walk serves every member and only the values are spread.
+			let value: Float64Array | null = null;
+			for (let m = firstMember; m < membersEnd; m++) {
+				const upMe = upStart[m * 2 + traverser];
+				if (value === null || ctx.expandOrbits) {
+					const upOpp = upStart[m * 2 + opponent];
+					for (let k = 0; k < nMe; k++) childMe[k] = reachMe[up[upMe + k]];
+					for (let k = 0; k < nOpp; k++) childOpp[k] = reachOpp[up[upOpp + k]];
+					value = traverse(ctx, buffers, mode, traverser, iterWeight, child, childBoard, childMe, childOpp, depth + 1);
 				}
-				// Any reach: walk the stored subtree again with the real deal's
-				// reach relabelled onto it.
-				const mappedMe = buffers.mappedMe[depth];
-				const mappedOpp = buffers.mappedOpp[depth];
-				const mappedLive = buffers.mappedLive[depth];
-				let mappedCount = 0;
-				for (let i = 0; i < liveCount; i++) {
-					const combo = live[i];
-					if (comboCards[combo * 2] === real || comboCards[combo * 2 + 1] === real) continue;
-					const image = map[combo];
-					mappedMe[image] = reachMe[combo];
-					mappedOpp[image] = reachOpp[combo];
-					mappedLive[mappedCount++] = image;
-				}
-				const mirrored = traverse(
-					ctx, buffers, mode, traverser, iterWeight,
-					child, childBoard, mappedMe, mappedOpp, mappedLive, mappedCount, depth + 1,
-				);
-				for (let i = 0; i < liveCount; i++) {
-					const combo = live[i];
-					if (comboCards[combo * 2] === real || comboCards[combo * 2 + 1] === real) continue;
-					out[combo] += mirrored[map[combo]];
-				}
+				for (let k = 0; k < nMe; k++) out[up[upMe + k]] += value[k];
 			}
 		}
 		return out;
@@ -720,10 +760,8 @@ function traverse(
 	const slotBase = ctx.layout.offset[node] + board * actions * stride;
 	const isTraverser = owner === traverser;
 
-	// Which hands this player can hold here was settled when the boards were
-	// enumerated; it does not depend on the node.
-	const lists = ctx.active;
-	const listSlot = (lists.roundBase[tree.round[node]] + board) * 2 + owner;
+	// The acting player's hands here: their active list on this board.
+	const listSlot = isTraverser ? mySlot : oppSlot;
 	const active = lists.list;
 	const activeSlot = lists.slot;
 	const activeFrom = lists.start[listSlot];
@@ -748,67 +786,55 @@ function traverse(
 		averageStrategy(ctx.strategySum, slotBase, actions, stride, active, activeSlot, activeFrom, activeCount, strategy, ctx.regret);
 	}
 
-	for (let i = 0; i < liveCount; i++) out[live[i]] = 0;
-
 	if (isTraverser && mode === Mode.BestResponse) {
-		let first = true;
 		for (let a = 0; a < actions; a++) {
 			const value = traverse(
 				ctx, buffers, mode, traverser, iterWeight,
-				tree.edgeChild[edgeBase + a], board, reachMe, reachOpp, live, liveCount, depth + 1,
+				tree.edgeChild[edgeBase + a], board, reachMe, reachOpp, depth + 1,
 			);
-			if (first) {
-				for (let i = 0; i < activeCount; i++) out[active[activeFrom + i]] = value[active[activeFrom + i]];
-				first = false;
+			if (a === 0) {
+				for (let i = 0; i < myCount; i++) out[i] = value[i];
 			} else {
-				for (let i = 0; i < activeCount; i++) {
-					const combo = active[activeFrom + i];
-					if (value[combo] > out[combo]) out[combo] = value[combo];
-				}
+				for (let i = 0; i < myCount; i++) if (value[i] > out[i]) out[i] = value[i];
 			}
 		}
 		return out;
 	}
 
-	// Owned by whoever is acting, so hands they cannot hold are already zero
-	// and only their own need writing.
+	for (let i = 0; i < myCount; i++) out[i] = 0;
 	const childReach = buffers.reachFor[owner][depth];
 	const actionValues = buffers.actionValues[depth];
 
 	for (let a = 0; a < actions; a++) {
-		const offset = a * COMBOS;
 		const row = a * stride;
 		const source = isTraverser ? reachMe : reachOpp;
-		for (let i = 0; i < activeCount; i++) {
-			const combo = active[activeFrom + i];
-			childReach[combo] = source[combo] * strategy[row + activeSlot[activeFrom + i]];
-		}
+		for (let i = 0; i < activeCount; i++) childReach[i] = source[i] * strategy[row + activeSlot[activeFrom + i]];
 
 		const value = traverse(
 			ctx, buffers, mode, traverser, iterWeight,
 			tree.edgeChild[edgeBase + a], board,
 			isTraverser ? childReach : reachMe,
 			isTraverser ? reachOpp : childReach,
-			live, liveCount, depth + 1,
+			depth + 1,
 		);
 
 		if (isTraverser) {
-			for (let i = 0; i < activeCount; i++) {
-				const combo = active[activeFrom + i];
-				actionValues[offset + combo] = value[combo];
-				out[combo] += strategy[row + activeSlot[activeFrom + i]] * value[combo];
+			const offset = a * myCount;
+			for (let i = 0; i < myCount; i++) {
+				actionValues[offset + i] = value[i];
+				out[i] += strategy[row + activeSlot[activeFrom + i]] * value[i];
 			}
 		} else {
 			// The opponent's strategy already sits inside their reach, so the
 			// counterfactual value is the plain sum over their actions.
-			for (let i = 0; i < liveCount; i++) out[live[i]] += value[live[i]];
+			for (let i = 0; i < myCount; i++) out[i] += value[i];
 		}
 	}
 
 	if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.regretScale !== null) {
 		updateQuantised(
 			ctx, ctx.layout.blockOffset[node] + board, slotBase, actions, stride,
-			active, activeSlot, activeFrom, activeCount, iterWeight, reachMe, strategy, actionValues, out,
+			activeSlot, activeFrom, activeCount, iterWeight, reachMe, strategy, actionValues, out,
 		);
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.dcfr) {
 		// `iterWeight` is the iteration number, counted from 1.
@@ -816,30 +842,31 @@ function traverse(
 		const regret = ctx.regret;
 		const strategySum = ctx.strategySum;
 		for (let a = 0; a < actions; a++) {
-			const offset = a * COMBOS;
+			const offset = a * activeCount;
 			const slotRow = slotBase + a * stride;
+			const row = a * stride;
 			for (let i = 0; i < activeCount; i++) {
-				const combo = active[activeFrom + i];
-				const at = slotRow + activeSlot[activeFrom + i];
+				const slot = activeSlot[activeFrom + i];
+				const at = slotRow + slot;
 				const accumulated = regret[at];
-				regret[at] =
-					accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[offset + combo] - out[combo];
-				strategySum[at] = strategySum[at] * keepSum + reachMe[combo] * strategy[a * stride + activeSlot[activeFrom + i]];
+				regret[at] = accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[offset + i] - out[i];
+				strategySum[at] = strategySum[at] * keepSum + reachMe[i] * strategy[row + slot];
 			}
 		}
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates) {
 		const regret = ctx.regret;
 		const strategySum = ctx.strategySum;
 		for (let a = 0; a < actions; a++) {
-			const offset = a * COMBOS;
+			const offset = a * activeCount;
 			const slotRow = slotBase + a * stride;
+			const row = a * stride;
 			for (let i = 0; i < activeCount; i++) {
-				const combo = active[activeFrom + i];
-				const at = slotRow + activeSlot[activeFrom + i];
+				const slot = activeSlot[activeFrom + i];
+				const at = slotRow + slot;
 				// CFR+: clamp the accumulated regret at zero in the same pass.
-				const updated = regret[at] + actionValues[offset + combo] - out[combo];
+				const updated = regret[at] + actionValues[offset + i] - out[i];
 				regret[at] = updated > 0 ? updated : 0;
-				strategySum[at] += iterWeight * reachMe[combo] * strategy[a * stride + activeSlot[activeFrom + i]];
+				strategySum[at] += iterWeight * reachMe[i] * strategy[row + slot];
 			}
 		}
 	}
@@ -880,7 +907,6 @@ function updateQuantised(
 	slotBase: number,
 	actions: number,
 	stride: number,
-	active: Uint16Array,
 	activeSlot: Uint16Array,
 	activeFrom: number,
 	activeCount: number,
@@ -913,20 +939,19 @@ function updateQuantised(
 	let largestRegret = 0;
 	let largestSum = 0;
 	for (let a = 0; a < actions; a++) {
-		const offset = a * COMBOS;
+		const offset = a * activeCount;
 		const slotRow = slotBase + a * stride;
 		for (let i = 0; i < activeCount; i++) {
-			const combo = active[activeFrom + i];
 			const at = slotRow + activeSlot[activeFrom + i];
 			const accumulated = regret[at] * oldRegret;
 			let updated =
-				accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[offset + combo] - out[combo];
+				accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[offset + i] - out[i];
 			if (clamp && updated < 0) updated = 0;
 			const magnitude = updated < 0 ? -updated : updated;
 			if (magnitude > largestRegret) largestRegret = magnitude;
-			actionValues[offset + combo] = updated;
+			actionValues[offset + i] = updated;
 
-			const sum = strategySum[at] * oldSum * keepSum + weight * reachMe[combo] * strategy[a * stride + activeSlot[activeFrom + i]];
+			const sum = strategySum[at] * oldSum * keepSum + weight * reachMe[i] * strategy[a * stride + activeSlot[activeFrom + i]];
 			if (sum > largestSum) largestSum = sum;
 			strategy[a * stride + activeSlot[activeFrom + i]] = sum;
 		}
@@ -939,12 +964,11 @@ function updateQuantised(
 	const regretStep = largestRegret > 0 ? REGRET_STEPS / largestRegret : 0;
 	const sumStep = largestSum > 0 ? SUM_STEPS / largestSum : 0;
 	for (let a = 0; a < actions; a++) {
-		const offset = a * COMBOS;
+		const offset = a * activeCount;
 		const slotRow = slotBase + a * stride;
 		for (let i = 0; i < activeCount; i++) {
-			const combo = active[activeFrom + i];
 			const at = slotRow + activeSlot[activeFrom + i];
-			const r = actionValues[offset + combo] * regretStep;
+			const r = actionValues[offset + i] * regretStep;
 			regret[at] = r < 0 ? r - 0.5 : r + 0.5;
 			const s = strategy[a * stride + activeSlot[activeFrom + i]] * sumStep + dither(at, iterWeight);
 			strategySum[at] = s < SUM_STEPS ? s : SUM_STEPS;
@@ -1047,17 +1071,24 @@ export function makeSolver(ctx: Context): Solver {
 		}
 	}
 
+	// Hand-space vectors for a round and board, from combination-indexed
+	// arrays, and back.
+	const lists = ctx.active;
+	const listOf = (round: number, board: number, player: 0 | 1): [number, number] => {
+		const slot = (lists.roundBase[round] + board) * 2 + player;
+		return [lists.start[slot], lists.count[slot]];
+	};
+	const gather = (source: Float64Array, round: number, board: number, player: 0 | 1, into: Float64Array): void => {
+		const [from, count] = listOf(round, board, player);
+		for (let i = 0; i < count; i++) into[i] = source[lists.list[from + i]];
+	};
+
 	const run = (mode: Mode, traverser: 0 | 1, iterWeight: number): Float64Array => {
-		reach0.set(ctx.players[0].weights);
-		reach1.set(ctx.players[1].weights);
-		for (let i = 0; i < COMBOS; i++) {
-			// Anything the board holds cannot be in either range.
-			if (ctx.players[0].slot[i] < 0) reach0[i] = 0;
-			if (ctx.players[1].slot[i] < 0) reach1[i] = 0;
-		}
+		gather(ctx.players[0].weights, 0, 0, 0, reach0);
+		gather(ctx.players[1].weights, 0, 0, 1, reach1);
 		const me = traverser === 0 ? reach0 : reach1;
 		const opp = traverser === 0 ? reach1 : reach0;
-		return traverse(ctx, buffers, mode, traverser, iterWeight, 0, 0, me, opp, rootLive, rootCount, 0);
+		return traverse(ctx, buffers, mode, traverser, iterWeight, 0, 0, me, opp, 0);
 	};
 
 	let root: RootTraversal = run;
@@ -1066,11 +1097,9 @@ export function makeSolver(ctx: Context): Solver {
 		// Values are counterfactual, so weighting by this player's own reach
 		// turns them into the value of the spot.
 		const weights = ctx.players[traverser].weights;
+		const [from, count] = listOf(0, 0, traverser);
 		let sum = 0;
-		for (let i = 0; i < rootCount; i++) {
-			const combo = rootLive[i];
-			sum += weights[combo] * values[combo];
-		}
+		for (let i = 0; i < count; i++) sum += weights[lists.list[from + i]] * values[i];
 		return sum / ctx.totalMass;
 	};
 
@@ -1085,9 +1114,9 @@ export function makeSolver(ctx: Context): Solver {
 			root = next ?? run;
 		},
 		traverseChance(mode, traverser, iterWeight, node, me, opp) {
-			return traverse(
-				ctx, buffers, mode, traverser, iterWeight, node, 0, me, opp, rootLive, rootCount, 0,
-			);
+			// Hand-space vectors for the chance node's own board, which at the
+			// shard boundary is always board 0 of its round.
+			return traverse(ctx, buffers, mode, traverser, iterWeight, node, 0, me, opp, 0);
 		},
 		iterate(count, from) {
 			for (let i = 0; i < count; i++) {
@@ -1110,10 +1139,19 @@ export function makeSolver(ctx: Context): Solver {
 			const expanded = ctx.expandOrbits;
 			ctx.expandOrbits = true;
 			try {
-				const value = traverse(
-					ctx, buffers, Mode.Average, traverser, 0, node, board, reachMe, reachOpp, live, liveCount, 0,
-				);
-				return Float64Array.from(value.subarray(0, COMBOS));
+				const round = ctx.tree.round[node];
+				const opponent = (1 - traverser) as 0 | 1;
+				const me = new Float64Array(COMBOS);
+				const opp = new Float64Array(COMBOS);
+				gather(reachMe, round, board, traverser, me);
+				gather(reachOpp, round, board, opponent, opp);
+				const value = traverse(ctx, buffers, Mode.Average, traverser, 0, node, board, me, opp, 0);
+				const result = new Float64Array(COMBOS);
+				const [from, count] = listOf(round, board, traverser);
+				for (let i = 0; i < count; i++) result[lists.list[from + i]] = value[i];
+				void live;
+				void liveCount;
+				return result;
 			} finally {
 				ctx.expandOrbits = expanded;
 			}

@@ -18,6 +18,7 @@ import { boardAtRound, enumerateRunouts, rankSwap, resolveBoard } from './runout
 import { suitSymmetries } from './abstraction.ts';
 import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
+import { buildHandSpace } from './hands.ts';
 import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
 import type { Pool } from './parallel.ts';
@@ -654,6 +655,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const width = PRECISION_BYTES[precision];
 	const quantised = precision === 'i16';
 
+	const active = buildActiveLists(spot.runouts, spot.players, showdown);
 	const ctx: Context = {
 		tree: spot.tree,
 		runouts: spot.runouts,
@@ -668,7 +670,8 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		sumScale: quantised ? new Float64Array(allocate(layout.blocks * 8)) : null,
 		scratch: makeTerminalScratch(),
 		chipScale: spot.chipScale,
-		active: buildActiveLists(spot.runouts, spot.players),
+		active,
+		hands: buildHandSpace(spot.runouts, spot.players, active),
 		runoutWeight: weights,
 		shardStart: 0,
 		shardEnd: plan ? plan.boards : 0,

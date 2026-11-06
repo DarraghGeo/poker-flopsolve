@@ -88,6 +88,8 @@ for (const name of names) {
 		const perIteration = block / timed;
 		solving += block;
 
+		// The first check compiles the best-response path; time the next one.
+		run.exploitabilityPercent();
 		started = performance.now();
 		run.exploitabilityPercent();
 		const perCheck = performance.now() - started;

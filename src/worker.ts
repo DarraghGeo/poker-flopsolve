@@ -28,6 +28,7 @@ import {
 import { defineSpot, makeRegretStore, makeSumStore, PRECISION_BYTES } from './index.ts';
 import type { Precision, SpotConfig } from './index.ts';
 import { buildShowdownTable } from './showdown.ts';
+import { buildHandSpace } from './hands.ts';
 import type { WorkerSetup } from './parallel.ts';
 import { COMMAND, CONTROL } from './parallel.ts';
 
@@ -47,19 +48,22 @@ for (const combo of spot.players[1].combos) relevant[combo] = 1;
 const weights = runoutWeights(spot.runouts);
 const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
 
+const showdown = buildShowdownTable(spot.runouts, relevant);
+const active = buildActiveLists(spot.runouts, spot.players, showdown);
 const ctx: Context = {
 	tree: spot.tree,
 	runouts: spot.runouts,
 	players: spot.players,
 	layout,
-	showdown: buildShowdownTable(spot.runouts, relevant),
+	showdown,
 	regret: makeRegretStore(precision, setup.regret),
 	strategySum: makeSumStore(precision, setup.strategySum),
 	regretScale: setup.regretScale ? new Float64Array(setup.regretScale) : null,
 	sumScale: setup.sumScale ? new Float64Array(setup.sumScale) : null,
 	scratch: makeTerminalScratch(),
 	chipScale: spot.chipScale,
-	active: buildActiveLists(spot.runouts, spot.players),
+	active,
+	hands: buildHandSpace(spot.runouts, spot.players, active),
 	runoutWeight: weights,
 	totalMass: matchupMass(spot.players[0].weights, spot.players[1].weights) * weights[0],
 	dcfr,
