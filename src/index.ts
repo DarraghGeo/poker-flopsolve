@@ -416,6 +416,12 @@ export interface SolveOptions {
 	 * reaches 0.3% of pot in 35–45% fewer iterations than 'cfr+' on river,
 	 * turn and flop spots alike. 'cfr+' clamps regrets at zero and weights
 	 * iteration `t` by `t` in the average.
+	 *
+	 * Predictive Discounted CFR+ (Xu et al., 2024) was implemented and measured
+	 * against 'dcfr' and is not offered: at the paper's parameters (α 2.3,
+	 * γ 5) it took 165 iterations to 0.3% of pot on the bench turn spot where
+	 * 'dcfr' takes 85, and 120 to 65 on the river; no α, γ tried (1 to 2.3, 2
+	 * to 5) came close, with or without the prediction.
 	 */
 	readonly algorithm?: Algorithm;
 	/**
@@ -479,6 +485,14 @@ export interface Approximations {
 	 * iterations, while the lost blocker detail put a floor under accuracy:
 	 * 105 iterations to 0.3% of pot on a turn spot instead of 85, and a
 	 * plateau near 0.15% where the exact solve went on to 0.1%.
+	 *
+	 * Chance sampling — walking each river deal in training with probability
+	 * p and weighting it by 1/p, with DCFR discounts caught up for deals left
+	 * out — was built and measured as well. Iterations got cheaper, but the
+	 * sampling noise, which DCFR's weighting of recent iterations amplifies,
+	 * cost more iterations than it saved: a flop spot on 4 threads reached
+	 * 0.3% of pot in 14.1 s exact, 23.1 s at p = 0.5, and not within 400
+	 * iterations at p = 0.25; at best it broke even to 1%.
 	 */
 }
 
