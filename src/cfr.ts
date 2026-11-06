@@ -56,7 +56,17 @@ export function buildPlayerIndex(weights: Float64Array): PlayerIndex {
 
 /** Slot offsets for every decision node. */
 export interface Layout {
+	/**
+	 * Where each decision node's storage starts. Its block on a board is
+	 * `actions` rows of the owner's hands live there, in hand-list order —
+	 * entry `i` of their active list — so a row is as long as that list and
+	 * blocked hands take no room. See `blockBase`.
+	 */
 	readonly offset: Int32Array;
+	/** For each list slot `(roundBase[r] + board) * 2 + p`: rows before this board's. */
+	readonly rowStart: Int32Array;
+	/** First list index of each round, as `ActiveLists.roundBase`. */
+	readonly roundBase: Int32Array;
 	/**
 	 * First block of each decision node, else -1. A block is one node on one
 	 * board — `actions * combosOfItsOwner` slots, exactly what one visit
@@ -81,23 +91,59 @@ export function buildLayout(
 	players: readonly [PlayerIndex, PlayerIndex],
 	bytesPerElement: number,
 ): Layout {
+	// How many of each player's hands each board leaves live: a block's rows.
+	const roundBase = new Int32Array(runouts.rounds + 1);
+	for (let round = 0; round < runouts.rounds; round++) roundBase[round + 1] = roundBase[round] + runouts.counts[round];
+	const rowStart = new Int32Array(roundBase[runouts.rounds] * 2);
+	const totals = new Int32Array(runouts.rounds * 2);
+	const onBoard = new Uint8Array(DECK);
+	for (let round = 0; round < runouts.rounds; round++) {
+		const width = runouts.width[round];
+		const cards = runouts.cards[round];
+		for (let board = 0; board < runouts.counts[round]; board++) {
+			onBoard.fill(0);
+			for (let i = 0; i < width; i++) onBoard[cards[board * width + i]] = 1;
+			for (let player = 0; player < 2; player++) {
+				const index = players[player];
+				let live = 0;
+				for (let i = 0; i < index.count; i++) {
+					const combo = index.combos[i];
+					if (!onBoard[COMBO_CARDS[combo * 2]] && !onBoard[COMBO_CARDS[combo * 2 + 1]]) live++;
+				}
+				rowStart[(roundBase[round] + board) * 2 + player] = totals[round * 2 + player];
+				totals[round * 2 + player] += live;
+			}
+		}
+	}
+
 	const offset = new Int32Array(tree.nodeCount).fill(-1);
 	const blockOffset = new Int32Array(tree.nodeCount).fill(-1);
 	let total = 0;
 	let blocks = 0;
 	let maxActions = 0;
-
 	for (let i = 0; i < tree.decisionNodes.length; i++) {
 		const node = tree.decisionNodes[i];
 		const actions = tree.numEdges[node];
 		if (actions > maxActions) maxActions = actions;
 		offset[node] = total;
 		blockOffset[node] = blocks;
-		total += runouts.counts[tree.round[node]] * actions * players[tree.player[node]].count;
+		total += actions * totals[tree.round[node] * 2 + tree.player[node]];
 		blocks += runouts.counts[tree.round[node]];
 	}
 	const scales = bytesPerElement === 2 ? blocks * 8 * 2 : 0;
-	return { offset, blockOffset, blocks, totalSlots: total, maxActions, bytes: total * bytesPerElement * 2 + scales };
+	return {
+		offset, blockOffset, blocks, totalSlots: total, maxActions, rowStart, roundBase,
+		bytes: total * bytesPerElement * 2 + scales,
+	};
+}
+
+/**
+ * Where a node's block on a board starts: `actions` rows of the owner's hands
+ * live on that board, in their hand-list order.
+ */
+export function blockBase(layout: Layout, tree: Tree, node: number, board: number): number {
+	const slot = (layout.roundBase[tree.round[node]] + board) * 2 + tree.player[node];
+	return layout.offset[node] + tree.numEdges[node] * layout.rowStart[slot];
 }
 
 /** Accumulated regrets: float, or 16-bit integers scaled per block. */
@@ -240,7 +286,8 @@ interface ActiveLists {
 	 * Hands that mirror each other on a board with symmetry left, whose
 	 * accumulators are kept equal, indexed by the same slot as `start`:
 	 * `ties[tieStart[slot]..tieStart[slot + 1]]` is a run of classes, each its
-	 * size then that many storage slots. Empty almost everywhere.
+	 * size then that many positions in the board's hand list. Empty almost
+	 * everywhere.
 	 */
 	readonly tieStart: Int32Array;
 	readonly ties: Int32Array;
@@ -314,15 +361,17 @@ function buildActiveLists(
 				const slot = (roundBase[round] + board) * 2 + player;
 				tieStart[slot] = ties.length;
 				if (stabStart[board + 1] - stabStart[board] < 2) continue;
-				const index = players[player];
-				const seen = new Uint8Array(index.count);
+				// Members are positions in this board's hand list, which is
+				// how storage is laid out.
+				const position = new Map<number, number>();
+				for (let e = start[slot]; e < start[slot] + count[slot]; e++) position.set(entries[e], e - start[slot]);
+				const seen = new Uint8Array(count[slot]);
 				for (let e = start[slot]; e < start[slot] + count[slot]; e++) {
-					const first = entrySlots[e];
-					if (seen[first]) continue;
+					if (seen[e - start[slot]]) continue;
 					const members: number[] = [];
 					for (let k = stabStart[board]; k < stabStart[board + 1]; k++) {
-						const image = index.slot[runouts.maps.combo[stabMap[k]][entries[e]]];
-						if (image < 0 || seen[image]) continue;
+						const image = position.get(runouts.maps.combo[stabMap[k]][entries[e]]);
+						if (image === undefined || seen[image]) continue;
 						seen[image] = 1;
 						members.push(image);
 					}
@@ -419,11 +468,11 @@ export function tieBlock(ctx: Context, node: number, board: number): void {
 	const to = lists.tieStart[listSlot + 1];
 	if (from === to) return;
 	const actions = tree.numEdges[node];
-	const stride = ctx.players[owner].count;
-	const base = ctx.layout.offset[node] + board * actions * stride;
+	const count = lists.count[listSlot];
+	const base = ctx.layout.offset[node] + actions * ctx.layout.rowStart[listSlot];
 	const integer = ctx.regretScale !== null;
-	if (ctx.regret.length > 0) tieMirrors(ctx.regret, base, actions, stride, lists.ties, from, to, integer);
-	tieMirrors(ctx.strategySum, base, actions, stride, lists.ties, from, to, integer);
+	if (ctx.regret.length > 0) tieMirrors(ctx.regret, base, actions, count, lists.ties, from, to, integer);
+	tieMirrors(ctx.strategySum, base, actions, count, lists.ties, from, to, integer);
 }
 
 /** Per-depth buffers, so the hot loop never allocates. */
@@ -529,53 +578,38 @@ export type Mode = (typeof Mode)[keyof typeof Mode];
  * positive values, uniform where there are none. One hand at a time, so its
  * few actions stay in registers rather than round-tripping through a sum array.
  *
+ * Storage and strategy share a layout: `actions` rows of `count` hands.
+ *
  * @param source regrets, for the current strategy
- * @param slots each active entry's storage slot, beside `active`
- * @param strategy written as storage is laid out: `strategy[a * stride + slot]`
  */
 function normalise(
 	source: RegretStore | SumStore,
 	base: number,
 	actions: number,
-	stride: number,
-	active: Uint16Array,
-	slots: Uint16Array,
-	from: number,
 	count: number,
 	strategy: Float64Array,
 ): void {
 	const uniform = 1 / actions;
 	for (let i = 0; i < count; i++) {
-		const slot = slots[from + i];
-		const at = base + slot;
+		const at = base + i;
 		let total = 0;
 		for (let a = 0; a < actions; a++) {
-			const value = source[at + a * stride];
+			const value = source[at + a * count];
 			const positive = value > 0 ? value : 0;
-			strategy[a * stride + slot] = positive;
+			strategy[a * count + i] = positive;
 			total += positive;
 		}
 		if (total > 0) {
-			for (let a = 0; a < actions; a++) strategy[a * stride + slot] /= total;
+			for (let a = 0; a < actions; a++) strategy[a * count + i] /= total;
 		} else {
-			for (let a = 0; a < actions; a++) strategy[a * stride + slot] = uniform;
+			for (let a = 0; a < actions; a++) strategy[a * count + i] = uniform;
 		}
 	}
 }
 
 /** Current strategy from positive regrets; uniform where there is none. */
-function regretMatch(
-	regret: RegretStore,
-	base: number,
-	actions: number,
-	stride: number,
-	active: Uint16Array,
-	slots: Uint16Array,
-	from: number,
-	count: number,
-	strategy: Float64Array,
-): void {
-	normalise(regret, base, actions, stride, active, slots, from, count, strategy);
+function regretMatch(regret: RegretStore, base: number, actions: number, count: number, strategy: Float64Array): void {
+	normalise(regret, base, actions, count, strategy);
 }
 
 /**
@@ -595,10 +629,6 @@ export function averageStrategy(
 	strategySum: SumStore,
 	base: number,
 	actions: number,
-	stride: number,
-	active: Uint16Array,
-	slots: Uint16Array,
-	from: number,
 	count: number,
 	strategy: Float64Array,
 	regret?: RegretStore,
@@ -606,30 +636,29 @@ export function averageStrategy(
 	const fallback = regret !== undefined && regret.length > 0 ? regret : null;
 	const uniform = 1 / actions;
 	for (let i = 0; i < count; i++) {
-		const slot = slots[from + i];
-		const at = base + slot;
+		const at = base + i;
 		let total = 0;
 		for (let a = 0; a < actions; a++) {
-			const value = strategySum[at + a * stride];
-			strategy[a * stride + slot] = value;
+			const value = strategySum[at + a * count];
+			strategy[a * count + i] = value;
 			total += value;
 		}
 		if (total > 0) {
-			for (let a = 0; a < actions; a++) strategy[a * stride + slot] /= total;
+			for (let a = 0; a < actions; a++) strategy[a * count + i] /= total;
 			continue;
 		}
 		if (fallback !== null) {
 			for (let a = 0; a < actions; a++) {
-				const value = fallback[at + a * stride];
+				const value = fallback[at + a * count];
 				const positive = value > 0 ? value : 0;
-				strategy[a * stride + slot] = positive;
+				strategy[a * count + i] = positive;
 				total += positive;
 			}
 		}
 		if (total > 0) {
-			for (let a = 0; a < actions; a++) strategy[a * stride + slot] /= total;
+			for (let a = 0; a < actions; a++) strategy[a * count + i] /= total;
 		} else {
-			for (let a = 0; a < actions; a++) strategy[a * stride + slot] = uniform;
+			for (let a = 0; a < actions; a++) strategy[a * count + i] = uniform;
 		}
 	}
 }
@@ -755,35 +784,33 @@ function traverse(
 	const actions = tree.numEdges[node];
 	const edgeBase = tree.firstEdge[node];
 	const owner = tree.player[node] as 0 | 1;
-	const index = ctx.players[owner];
-	const stride = index.count;
-	const slotBase = ctx.layout.offset[node] + board * actions * stride;
 	const isTraverser = owner === traverser;
 
-	// The acting player's hands here: their active list on this board.
+	// The acting player's hands here: their active list on this board, which
+	// is also how their storage block is laid out — `actions` rows of
+	// `activeCount` hands from `slotBase`.
 	const listSlot = isTraverser ? mySlot : oppSlot;
-	const active = lists.list;
-	const activeSlot = lists.slot;
-	const activeFrom = lists.start[listSlot];
 	const activeCount = lists.count[listSlot];
+	const stride = activeCount;
+	const slotBase = ctx.layout.offset[node] + actions * ctx.layout.rowStart[listSlot];
 
-	// Laid out as storage is: `strategy[a * stride + slot]`.
+	// Laid out as storage is: `strategy[a * stride + i]`.
 	const strategy = buffers.strategy[depth];
+	const length = actions * stride;
 	if (mode === Mode.Train && buffers.kernels !== null) {
 		const kernels = buffers.kernels;
-		kernels.input.set(ctx.regret.subarray(slotBase, slotBase + actions * stride));
+		kernels.input.set(ctx.regret.subarray(slotBase, slotBase + length));
 		kernels.regretMatch(strategy, actions, stride);
 	} else if (mode === Mode.Train) {
-		regretMatch(ctx.regret, slotBase, actions, stride, active, activeSlot, activeFrom, activeCount, strategy);
+		regretMatch(ctx.regret, slotBase, actions, stride, strategy);
 	} else if (buffers.kernels !== null) {
 		const kernels = buffers.kernels;
-		const length = actions * stride;
 		kernels.input.set(ctx.strategySum.subarray(slotBase, slotBase + length));
 		const hasRegret = ctx.regret.length > 0;
 		if (hasRegret) kernels.second.set(ctx.regret.subarray(slotBase, slotBase + length));
 		kernels.averageMatch(strategy, actions, stride, hasRegret);
 	} else {
-		averageStrategy(ctx.strategySum, slotBase, actions, stride, active, activeSlot, activeFrom, activeCount, strategy, ctx.regret);
+		averageStrategy(ctx.strategySum, slotBase, actions, stride, strategy, ctx.regret);
 	}
 
 	if (isTraverser && mode === Mode.BestResponse) {
@@ -808,7 +835,7 @@ function traverse(
 	for (let a = 0; a < actions; a++) {
 		const row = a * stride;
 		const source = isTraverser ? reachMe : reachOpp;
-		for (let i = 0; i < activeCount; i++) childReach[i] = source[i] * strategy[row + activeSlot[activeFrom + i]];
+		for (let i = 0; i < activeCount; i++) childReach[i] = source[i] * strategy[row + i];
 
 		const value = traverse(
 			ctx, buffers, mode, traverser, iterWeight,
@@ -822,7 +849,7 @@ function traverse(
 			const offset = a * myCount;
 			for (let i = 0; i < myCount; i++) {
 				actionValues[offset + i] = value[i];
-				out[i] += strategy[row + activeSlot[activeFrom + i]] * value[i];
+				out[i] += strategy[row + i] * value[i];
 			}
 		} else {
 			// The opponent's strategy already sits inside their reach, so the
@@ -834,7 +861,7 @@ function traverse(
 	if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.regretScale !== null) {
 		updateQuantised(
 			ctx, ctx.layout.blockOffset[node] + board, slotBase, actions, stride,
-			activeSlot, activeFrom, activeCount, iterWeight, reachMe, strategy, actionValues, out,
+			iterWeight, reachMe, strategy, actionValues, out,
 		);
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.dcfr) {
 		// `iterWeight` is the iteration number, counted from 1.
@@ -846,11 +873,10 @@ function traverse(
 			const slotRow = slotBase + a * stride;
 			const row = a * stride;
 			for (let i = 0; i < activeCount; i++) {
-				const slot = activeSlot[activeFrom + i];
-				const at = slotRow + slot;
+				const at = slotRow + i;
 				const accumulated = regret[at];
 				regret[at] = accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[offset + i] - out[i];
-				strategySum[at] = strategySum[at] * keepSum + reachMe[i] * strategy[row + slot];
+				strategySum[at] = strategySum[at] * keepSum + reachMe[i] * strategy[row + i];
 			}
 		}
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates) {
@@ -861,12 +887,11 @@ function traverse(
 			const slotRow = slotBase + a * stride;
 			const row = a * stride;
 			for (let i = 0; i < activeCount; i++) {
-				const slot = activeSlot[activeFrom + i];
-				const at = slotRow + slot;
+				const at = slotRow + i;
 				// CFR+: clamp the accumulated regret at zero in the same pass.
 				const updated = regret[at] + actionValues[offset + i] - out[i];
 				regret[at] = updated > 0 ? updated : 0;
-				strategySum[at] += iterWeight * reachMe[i] * strategy[row + slot];
+				strategySum[at] += iterWeight * reachMe[i] * strategy[row + i];
 			}
 		}
 	}
@@ -906,10 +931,7 @@ function updateQuantised(
 	block: number,
 	slotBase: number,
 	actions: number,
-	stride: number,
-	activeSlot: Uint16Array,
-	activeFrom: number,
-	activeCount: number,
+	count: number,
 	iterWeight: number,
 	reachMe: Float64Array,
 	strategy: Float64Array,
@@ -939,10 +961,10 @@ function updateQuantised(
 	let largestRegret = 0;
 	let largestSum = 0;
 	for (let a = 0; a < actions; a++) {
-		const offset = a * activeCount;
-		const slotRow = slotBase + a * stride;
-		for (let i = 0; i < activeCount; i++) {
-			const at = slotRow + activeSlot[activeFrom + i];
+		const offset = a * count;
+		const slotRow = slotBase + a * count;
+		for (let i = 0; i < count; i++) {
+			const at = slotRow + i;
 			const accumulated = regret[at] * oldRegret;
 			let updated =
 				accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[offset + i] - out[i];
@@ -951,9 +973,9 @@ function updateQuantised(
 			if (magnitude > largestRegret) largestRegret = magnitude;
 			actionValues[offset + i] = updated;
 
-			const sum = strategySum[at] * oldSum * keepSum + weight * reachMe[i] * strategy[a * stride + activeSlot[activeFrom + i]];
+			const sum = strategySum[at] * oldSum * keepSum + weight * reachMe[i] * strategy[a * count + i];
 			if (sum > largestSum) largestSum = sum;
-			strategy[a * stride + activeSlot[activeFrom + i]] = sum;
+			strategy[a * count + i] = sum;
 		}
 	}
 
@@ -964,13 +986,13 @@ function updateQuantised(
 	const regretStep = largestRegret > 0 ? REGRET_STEPS / largestRegret : 0;
 	const sumStep = largestSum > 0 ? SUM_STEPS / largestSum : 0;
 	for (let a = 0; a < actions; a++) {
-		const offset = a * activeCount;
-		const slotRow = slotBase + a * stride;
-		for (let i = 0; i < activeCount; i++) {
-			const at = slotRow + activeSlot[activeFrom + i];
+		const offset = a * count;
+		const slotRow = slotBase + a * count;
+		for (let i = 0; i < count; i++) {
+			const at = slotRow + i;
 			const r = actionValues[offset + i] * regretStep;
 			regret[at] = r < 0 ? r - 0.5 : r + 0.5;
-			const s = strategy[a * stride + activeSlot[activeFrom + i]] * sumStep + dither(at, iterWeight);
+			const s = strategy[a * count + i] * sumStep + dither(at, iterWeight);
 			strategySum[at] = s < SUM_STEPS ? s : SUM_STEPS;
 		}
 	}
@@ -1160,28 +1182,21 @@ export function makeSolver(ctx: Context): Solver {
 			return pairValues(ctx, node, board, traverser, hands, handReach, live, liveCount);
 		},
 		averageStrategyAt(node, board) {
+			// In range order, as callers read it: hands the board blocks play
+			// uniformly, as they always have.
 			const owner = ctx.tree.player[node] as 0 | 1;
 			const index = ctx.players[owner];
 			const actions = ctx.tree.numEdges[node];
-			const base = ctx.layout.offset[node] + board * actions * index.count;
-			const probs = new Float64Array(index.count * actions);
-			// Where the sum is zero, the current strategy; see `averageStrategy`.
-			const regret = ctx.regret;
-			for (let i = 0; i < index.count; i++) {
-				let sum = 0;
-				for (let a = 0; a < actions; a++) sum += ctx.strategySum[base + a * index.count + i];
-				let source: RegretStore | SumStore = ctx.strategySum;
-				if (!(sum > 0) && regret.length > 0) {
-					for (let a = 0; a < actions; a++) {
-						const value = regret[base + a * index.count + i];
-						if (value > 0) sum += value;
-					}
-					source = regret;
-				}
-				for (let a = 0; a < actions; a++) {
-					const value = source[base + a * index.count + i];
-					probs[i * actions + a] = sum > 0 ? (value > 0 ? value / sum : 0) : 1 / actions;
-				}
+			const slot = (lists.roundBase[ctx.tree.round[node]] + board) * 2 + owner;
+			const from = lists.start[slot];
+			const count = lists.count[slot];
+			const base = ctx.layout.offset[node] + actions * ctx.layout.rowStart[slot];
+			const strategy = new Float64Array(actions * count);
+			averageStrategy(ctx.strategySum, base, actions, count, strategy, ctx.regret);
+			const probs = new Float64Array(index.count * actions).fill(1 / actions);
+			for (let i = 0; i < count; i++) {
+				const at = lists.slot[from + i];
+				for (let a = 0; a < actions; a++) probs[at * actions + a] = strategy[a * count + i];
 			}
 			return { actions, probs };
 		},

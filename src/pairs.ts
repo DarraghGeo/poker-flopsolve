@@ -38,6 +38,8 @@ interface PairBuffers {
 	readonly hands: Uint16Array[];
 	readonly strategy: Float64Array[];
 	readonly rank: Int32Array;
+	/** A combination's position in the current decision's hand list. */
+	readonly position: Int32Array;
 }
 
 function treeDepth(ctx: Context): number {
@@ -69,6 +71,7 @@ function makeBuffers(ctx: Context, width: number): PairBuffers {
 		hands: make(() => new Uint16Array(width)),
 		strategy: make(() => new Float64Array(actions * COMBOS)),
 		rank: new Int32Array(COMBOS),
+		position: new Int32Array(COMBOS),
 	};
 }
 
@@ -249,16 +252,16 @@ function walk(
 	const actions = tree.numEdges[node];
 	const edgeBase = tree.firstEdge[node];
 	const owner = tree.player[node] as 0 | 1;
-	const index = ctx.players[owner];
-	const stride = index.count;
-	const slotBase = ctx.layout.offset[node] + board * actions * stride;
 	const lists = ctx.active;
 	const listSlot = (lists.roundBase[tree.round[node]] + board) * 2 + owner;
 	const active = lists.list;
 	const activeFrom = lists.start[listSlot];
 	const activeCount = lists.count[listSlot];
+	// Storage, and so the strategy, is laid out by position in this list.
+	const stride = activeCount;
+	const slotBase = ctx.layout.offset[node] + actions * ctx.layout.rowStart[listSlot];
 	const strategy = buffers.strategy[depth];
-	averageStrategy(ctx.strategySum, slotBase, actions, stride, active, lists.slot, activeFrom, activeCount, strategy, ctx.regret);
+	averageStrategy(ctx.strategySum, slotBase, actions, stride, strategy, ctx.regret);
 
 	// The traverser's values are counterfactual: its own reach never enters.
 	if (owner === traverser) {
@@ -272,7 +275,7 @@ function walk(
 				const row = cols[c] * COMBOS;
 				for (let i = 0; i < activeCount; i++) {
 					const combo = active[activeFrom + i];
-					out[row + combo] += strategy[a * stride + lists.slot[activeFrom + i]] * value[row + combo];
+					out[row + combo] += strategy[a * stride + i] * value[row + combo];
 				}
 			}
 		}
@@ -282,13 +285,15 @@ function walk(
 	// The opposing hands act: each column follows its own hand's strategy.
 	const childReach = buffers.colReach[depth + 1];
 	const childCols = buffers.cols[depth + 1];
+	// Each opposing hand's position in the acting player's list here.
+	const position = buffers.position;
+	for (let i = 0; i < activeCount; i++) position[active[activeFrom + i]] = i;
 	for (let a = 0; a < actions; a++) {
 		const offset = a * COMBOS;
 		let childCount = 0;
 		for (let c = 0; c < colCount; c++) {
 			const k = cols[c];
-			// Strategies are laid out by storage slot.
-			const r = colReach[k] * strategy[a * stride + index.slot[hands[k]]];
+			const r = colReach[k] * strategy[a * stride + position[hands[k]]];
 			childReach[k] = r;
 			if (r !== 0) childCols[childCount++] = k;
 		}

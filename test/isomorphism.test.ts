@@ -16,6 +16,7 @@ import { createRun, defineSpot } from '../src/index.ts';
 import type { SolveRun, SpotConfig } from '../src/index.ts';
 import { suitSymmetries } from '../src/abstraction.ts';
 import { enumerateRunouts } from '../src/runouts.ts';
+import { warmStart } from '../src/warm.ts';
 
 const NARROW_OOP = 'AA,KK,QQ,AKs,AQs,KQs,76s,65s';
 const NARROW_IP = 'JJ,TT,99,AJs,KJs,QJs,JTs,T9s';
@@ -27,32 +28,12 @@ const spot = (board: string, extra: Partial<SpotConfig> = {}): SpotConfig => ({
 const symmetric = (text: string): number =>
 	suitSymmetries(parseCards(text), [new Float64Array(COMBOS).fill(1)]).length;
 
-/** Copy a folded run's accumulators onto every real runout of an unfolded one. */
+/**
+ * Copy a folded run's accumulators onto every real runout of an unfolded one:
+ * the warm start's mapping, by real cards and by combination, averages too.
+ */
 function unfold(folded: SolveRun, full: SolveRun): void {
-	const from = folded.solver.ctx;
-	const to = full.solver.ctx;
-	const { tree, runouts } = to;
-	for (const node of tree.decisionNodes) {
-		const round = tree.round[node];
-		const actions = tree.numEdges[node];
-		const index = to.players[tree.player[node]];
-		const width = runouts.width[round];
-		for (let board = 0; board < runouts.counts[round]; board++) {
-			const cards = Array.from(runouts.cards[round].subarray(board * width, (board + 1) * width));
-			const { board: stored, combos } = folded.spot.resolveBoard(cards);
-			for (let a = 0; a < actions; a++) {
-				for (let i = 0; i < index.count; i++) {
-					const combo = index.combos[i];
-					const image = from.players[tree.player[node]].slot[combos[combo]];
-					if (image < 0) continue;
-					const target = to.layout.offset[node] + (board * actions + a) * index.count + i;
-					const source = from.layout.offset[node] + (stored * actions + a) * index.count + image;
-					to.strategySum[target] = from.strategySum[source];
-					to.regret[target] = from.regret[source];
-				}
-			}
-		}
-	}
+	warmStart(full.solver.ctx, folded.solver.ctx, true);
 }
 
 describe('suit symmetry', () => {

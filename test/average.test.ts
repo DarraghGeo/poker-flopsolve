@@ -33,30 +33,31 @@ describe('average strategy where a hand never reached the node', () => {
 			const actions = spot.tree.numEdges[node];
 			const round = spot.tree.round[node];
 			for (let board = 0; board < spot.runouts.counts[round]; board++) {
-				const base = ctx.layout.offset[node] + board * actions * index.count;
 				const lists = ctx.active;
 				const listSlot = (lists.roundBase[round] + board) * 2 + owner;
 				const from = lists.start[listSlot];
 				const count = lists.count[listSlot];
+				// Storage is laid out by position in the board's hand list.
+				const base = ctx.layout.offset[node] + actions * ctx.layout.rowStart[listSlot];
 				const { probs } = solver.averageStrategyAt(node, board);
-				averageStrategy(ctx.strategySum, base, actions, index.count, lists.list, lists.slot, from, count, strategy, ctx.regret);
+				averageStrategy(ctx.strategySum, base, actions, count, strategy, ctx.regret);
 				for (let k = 0; k < count; k++) {
+					// Queries answer in range order.
 					const i = lists.slot[from + k];
 					let sum = 0;
 					let positive = 0;
 					for (let a = 0; a < actions; a++) {
-						sum += ctx.strategySum[base + a * index.count + i];
-						positive += Math.max(0, ctx.regret[base + a * index.count + i]);
+						sum += ctx.strategySum[base + a * count + k];
+						positive += Math.max(0, ctx.regret[base + a * count + k]);
 					}
 					for (let a = 0; a < actions; a++) {
-						const s = ctx.strategySum[base + a * index.count + i];
-						const r = Math.max(0, ctx.regret[base + a * index.count + i]);
+						const s = ctx.strategySum[base + a * count + k];
+						const r = Math.max(0, ctx.regret[base + a * count + k]);
 						const expected = sum > 0 ? s / sum : positive > 0 ? r / positive : 1 / actions;
 						expect(probs[i * actions + a]).toBeCloseTo(expected, 12);
-						// Laid out as storage is: by action, then storage slot.
-						expect(strategy[a * index.count + i]).toBeCloseTo(expected, 12);
+						expect(strategy[a * count + k]).toBeCloseTo(expected, 12);
 					}
-					if (sum > 0) reached++;
+				if (sum > 0) reached++;
 					else if (positive > 0) {
 						zero++;
 						if (Array.from(probs.subarray(i * actions, (i + 1) * actions)).some((p) => Math.abs(p - 1 / actions) > 0.01)) notUniform++;
