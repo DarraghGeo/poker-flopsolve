@@ -103,6 +103,31 @@ defineSpot({ ..., board: 'Qs Jh 4d',
 
 A subgame keeps the rounds from its own onwards.
 
+### Trimming the tree
+
+Tree size multiplies everything else, so three switches cut the lines that cost the most
+for the least strategic difference. They change the game being solved — a trimmed tree
+is a smaller game, solved exactly — so its exploitability is measured within that game.
+
+- `allInThreshold: 0.67` — a bet committing two thirds or more of the remaining stack
+  becomes all-in.
+- `noDonk: true` — out of position only checks into the previous street's aggressor.
+- `mergeSizes: 0.1` — pot-fraction sizes closer than 0.1 collapse to their mean.
+
+Each takes a value per round too. On a turn spot with four sizes, two raises and a shove
+(`AsKh7d2c`, the bench ranges):
+
+| | Decisions | Storage |
+|---|---|---|
+| As given | 244 | 34.9 MB |
+| `allInThreshold: 0.67` | 152 | 20.6 MB |
+| `noDonk: true` | 212 | 28.8 MB |
+| `mergeSizes: 0.1` | 104 | 13.4 MB |
+| All three | 66 | 7.9 MB |
+
+Raise caps per round (`maxRaises: [1, 2, 1]`) and a checked-down river (an empty
+`betSizes` row) were already available and trim the same way.
+
 ## Reading a solved spot
 
 `createRun` returns the solver itself as `run.solver`, for analysis after (or between)

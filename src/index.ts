@@ -80,6 +80,25 @@ export interface SpotConfig {
 	readonly maxRaises?: number | readonly number[];
 	/** Offer a shove alongside the configured sizes; once, or per round. Default false. */
 	readonly allowAllIn?: boolean | readonly boolean[];
+	/**
+	 * Turn a bet or raise into a shove when it would commit at least this
+	 * fraction of the actor's remaining stack — 0.67 makes any bet of two
+	 * thirds of what is left an all-in. Trims the near-all-in lines that
+	 * multiply a tree for little strategic difference. Once, or per round.
+	 * Unset, never.
+	 */
+	readonly allInThreshold?: number | readonly number[];
+	/**
+	 * Forbid donk bets: out of position may only check when opening a round
+	 * into the player who made the last bet or raise of the round before.
+	 * Once, or per round. Default false.
+	 */
+	readonly noDonk?: boolean | readonly boolean[];
+	/**
+	 * Collapse pot-fraction sizes closer together than this into their mean:
+	 * with 0.1, sizes 0.33 and 0.4 become one 0.365. Default 0, none.
+	 */
+	readonly mergeSizes?: number;
 	/** Refuse a range wider than this many combinations. */
 	readonly maxCombos?: number;
 	/**
@@ -249,6 +268,9 @@ export function defineSpot(config: SpotConfig): Spot {
 			raiseSizes: config.raiseSizes,
 			maxRaises: config.maxRaises ?? 1,
 			allowAllIn: config.allowAllIn ?? false,
+			allInThreshold: config.allInThreshold,
+			noDonk: config.noDonk,
+			mergeSizes: config.mergeSizes,
 			chipScale,
 			minRaiseUnits: chipScale,
 		},
@@ -470,7 +492,10 @@ export interface Solution {
 
 /** Betting for a subgame; anything unset keeps the original spot's. */
 export type SubgameBetting = Partial<
-	Pick<SpotConfig, 'betSizes' | 'raiseSizes' | 'maxRaises' | 'allowAllIn' | 'maxCombos' | 'maxBytes'>
+	Pick<
+		SpotConfig,
+		'betSizes' | 'raiseSizes' | 'maxRaises' | 'allowAllIn' | 'allInThreshold' | 'noDonk' | 'mergeSizes' | 'maxCombos' | 'maxBytes'
+	>
 >;
 
 export interface StrategyView {
@@ -893,6 +918,10 @@ function makeSolution(
 				raiseSizes: 'raiseSizes' in betting ? betting.raiseSizes : raiseRows,
 				maxRaises: betting.maxRaises ?? (source.maxRaises === undefined ? undefined : later(source.maxRaises, Array.isArray(source.maxRaises))),
 				allowAllIn: betting.allowAllIn ?? (source.allowAllIn === undefined ? undefined : later(source.allowAllIn, Array.isArray(source.allowAllIn))),
+				allInThreshold: 'allInThreshold' in betting ? betting.allInThreshold : source.allInThreshold === undefined ? undefined : later(source.allInThreshold, Array.isArray(source.allInThreshold)),
+				noDonk: 'noDonk' in betting ? betting.noDonk : source.noDonk === undefined ? undefined : later(source.noDonk, Array.isArray(source.noDonk)),
+				mergeSizes: 'mergeSizes' in betting ? betting.mergeSizes : source.mergeSizes,
+				isomorphism: source.isomorphism,
 				maxCombos: 'maxCombos' in betting ? betting.maxCombos : source.maxCombos,
 				maxBytes: 'maxBytes' in betting ? betting.maxBytes : source.maxBytes,
 				chipScale: spot.chipScale,
