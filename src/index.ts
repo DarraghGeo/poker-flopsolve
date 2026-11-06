@@ -445,6 +445,14 @@ export interface Approximations {
 	 * and the best response walks straight into it. On a wide turn spot it
 	 * plateaued near 0.8% of pot where the unpruned solve reached 0.17%, for
 	 * at most 15% less time per iteration.
+	 *
+	 * River hand buckets — one strategy per set of hands of equal strength
+	 * and equal ranks, suits told apart only where a flush is possible — were
+	 * built and measured too, and also left out. The solver updates every hand
+	 * in one vector pass, so fewer separate strategies did not mean fewer
+	 * iterations, while the lost blocker detail put a floor under accuracy:
+	 * 105 iterations to 0.3% of pot on a turn spot instead of 85, and a
+	 * plateau near 0.15% where the exact solve went on to 0.1%.
 	 */
 }
 
