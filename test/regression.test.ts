@@ -15,15 +15,19 @@ import { describe, expect, it } from 'vitest';
 import { createRun, defineSpot } from '../src/index.ts';
 import { SPOTS } from './regression-spots.ts';
 
-/** [ev OOP, ev IP, exploitability % of pot], recorded before the speed work. */
+/**
+ * [ev OOP, ev IP, exploitability % of pot]. Re-recorded when DCFR's schedule
+ * changed (positive regret counted from the second iteration, γ 3): a
+ * deliberate change of algorithm, not of arithmetic.
+ */
 const GOLDEN: Record<string, [number, number, number]> = {
-	'river f64': [1.6092067960637912, -1.6092067960637977, 0.0466847563221238],
-	'river i16': [1.6087809692278394, -1.6087809692278339, 0.05154530635164652],
-	'turn f64': [2.2332033377766654, -2.2332033377766765, 1.4056505652600086],
-	'turn i16': [2.21568594406334, -2.2156859440633383, 1.4379470943927124],
-	'flop f64': [23.98900827747199, -23.989008277471985, 1.257594310809654],
-	'flop i16': [23.987200829631334, -23.987200829631345, 1.25583921103081],
-	'two-tone flop f64': [-10.625033897828304, 10.625033897828311, 1.4224754019112746],
+	'river f64': [1.6108255310577921, -1.6108255310578037, 0.04537223276194102],
+	'river i16': [1.6106723949542066, -1.6106723949542106, 0.044907313215739784],
+	'turn f64': [2.26386273279109, -2.263862732791071, 1.1640787843181428],
+	'turn i16': [2.3001187658238424, -2.3001187658238447, 1.1701944415546086],
+	'flop f64': [24.351167580435124, -24.351167580435135, 1.303107378548113],
+	'flop i16': [24.351138388527353, -24.351138388527346, 1.3051824456953536],
+	'two-tone flop f64': [-10.601921236755064, 10.601921236755066, 1.2577309683266218],
 };
 
 describe('bit-for-bit regression', () => {
