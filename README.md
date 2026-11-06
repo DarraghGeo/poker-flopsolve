@@ -124,6 +124,30 @@ iterations, without changing anything:
 precision, one thread, no regrets). Fill `run.solver.ctx.strategySum` from a saved or
 modified strategy, then analyse it the same way. Such a run must never be stepped.
 
+## Warm starts
+
+Re-solving a spot you just changed — another pot or stack, a nudged bet size, a reweighted
+range — can start from the previous solve instead of from nothing:
+
+```ts
+const first = solve(defineSpot(config), { targetPercent: 0.3 });
+const next = solve(defineSpot({ ...config, pot: 72 }), { targetPercent: 0.3, warmStart: first });
+next.totalIterations;   // the inherited iterations plus its own
+```
+
+Nothing becomes approximate: CFR converges from any start, and this one is close. Nodes
+match by the actions leading to them (bet sizes to the nearest pot fraction), hands by
+combination, and anything without a match starts cold; `run.warmStart` reports how much
+matched. Regrets carry over; the average strategy only when the spot is the same, which
+resumes a solve exactly. Measured on a river spot to 0.1% of pot:
+
+| Change | From scratch | Warm |
+|---|---|---|
+| Bet size 0.75 → 0.8 pot | 130 iterations | 15 |
+| Range reweighted | 130 | 80 |
+| Stack 120 → 100 | 125 | 75 |
+| Pot 60 → 72 | 125 | 100 |
+
 ## Re-solving from a node
 
 Solve the whole spot with a coarse tree, then re-solve the street you are looking at

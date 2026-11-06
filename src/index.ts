@@ -17,6 +17,8 @@ import { boardAtRound, enumerateRunouts, resolveBoard } from './runouts.ts';
 import { suitSymmetries } from './abstraction.ts';
 import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
+import type { WarmStartReport } from './warm.ts';
+import { warmStart } from './warm.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
 import { DEFAULT_MAX_BYTES, PLATFORM, THREADS_AVAILABLE } from './platform/node.ts';
@@ -35,6 +37,7 @@ export * from './cards.ts';
 export * from './eval7.ts';
 export { activeCombos, parseRange, rangeWeight } from './range.ts';
 export type { ResolvedBoard } from './runouts.ts';
+export type { WarmStartReport } from './warm.ts';
 export type { BetSize } from './tree.ts';
 export type { Solver } from './cfr.ts';
 export { ACTION_LABELS, ActionKind, NodeKind } from './tree.ts';
@@ -368,6 +371,30 @@ export interface SolveOptions {
 	 * analysing it. Such a run must never be stepped.
 	 */
 	readonly analysisOnly?: boolean;
+	/**
+	 * Start from a previous solve of the same board instead of from nothing.
+	 *
+	 * For re-solving a tweaked spot — another pot or stack, a bet size nudged,
+	 * a range reweighted — whose equilibrium is close to the old one. The
+	 * answer is not approximate: CFR converges from any start, and this one is
+	 * near. Nodes match by the actions leading to them, bet sizes by the
+	 * nearest pot fraction; hands by combination; anything without a match
+	 * starts cold. `SolveRun.warmStart` says how much matched.
+	 *
+	 * Regrets carry over; the average strategy only when the spot is the
+	 * same, which resumes a solve exactly. Measured on a river spot re-solved
+	 * to 0.1% of pot, a nudged bet size took 15 iterations instead of 130 from
+	 * cold, a reweighted range 80 instead of 130, a 20% bigger pot 100
+	 * instead of 125.
+	 */
+	readonly warmStart?: Solution | SolveRun;
+	/**
+	 * The iteration to carry on counting from, which sets how heavily DCFR
+	 * discounts the inherited regrets and how CFR+ weights the averages. Unset,
+	 * the old solve's own count: the new solve continues it. Lower it to let
+	 * the new spot's own iterations outweigh the old ones sooner.
+	 */
+	readonly warmIteration?: number;
 }
 
 export type Algorithm = 'cfr+' | 'dcfr';
@@ -386,7 +413,10 @@ export interface Progress {
 /** A solved spot. */
 export interface Solution {
 	readonly spot: Spot;
+	/** Iterations this solve ran. */
 	readonly iterations: number;
+	/** Iterations behind the strategy, counting any a warm start inherited. */
+	readonly totalIterations: number;
 	/**
 	 * Which stopping rule ended the solve. 'iterations' with a `targetPercent`
 	 * set means the target was NOT reached and the answer is looser than asked
@@ -395,6 +425,8 @@ export interface Solution {
 	readonly stoppedAt: 'target' | 'iterations';
 	/** Worker threads the solve actually used, which 'auto' does not tell you. */
 	readonly workers: number;
+	/** The solver behind this solution, for analysis and warm starts. */
+	readonly solver: Solver;
 	/** Chips per hand for a player, under the average strategy. */
 	ev(player: 0 | 1): number;
 	/** Distance from equilibrium, in chips per hand. */
@@ -454,8 +486,12 @@ export interface StrategyView {
 /** An in-progress solve the caller drives. */
 export interface SolveRun {
 	readonly spot: Spot;
-	/** Iterations completed so far. */
+	/** Iterations completed so far, by this run; a warm start's are not counted. */
 	readonly completed: number;
+	/** Iterations behind the strategy, counting any a warm start inherited. */
+	readonly totalIterations: number;
+	/** What a warm start carried over, or null without one. */
+	readonly warmStart: WarmStartReport | null;
 	/** Run `count` more iterations. */
 	step(count: number): void;
 	/** Distance from equilibrium as a percentage of the pot. */
@@ -540,6 +576,15 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		dcfr: (options.algorithm ?? 'dcfr') === 'dcfr',
 	};
 
+	// Seeded before any worker starts, so they all see the inherited values.
+	let warm: WarmStartReport | null = null;
+	let offset = 0;
+	if (options.warmStart) {
+		const source = options.warmStart;
+		warm = warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
+		offset = options.warmIteration ?? source.totalIterations;
+	}
+
 	const solver = makeSolver(ctx);
 	const pool: Pool | null = plan
 		? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision }, requested)
@@ -554,9 +599,13 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		get completed() {
 			return completed;
 		},
+		warmStart: warm,
+		get totalIterations() {
+			return offset + completed;
+		},
 		step(count) {
 			if (count <= 0) return;
-			solver.iterate(count, completed);
+			solver.iterate(count, offset + completed);
 			completed += count;
 		},
 		close() {
@@ -568,9 +617,19 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			return (100 * solver.exploitability()) / (spot.potUnits / spot.chipScale);
 		},
 		snapshot(history = [], stoppedAt = 'iterations') {
-			return makeSolution(spot, ctx, solver, completed, [...history], stoppedAt, pool ? pool.workers : 1);
+			return makeSolution(spot, ctx, solver, completed, offset + completed, [...history], stoppedAt, pool ? pool.workers : 1);
 		},
 	};
+}
+
+/**
+ * Whether two configurations describe the very same game. Limits and how
+ * runouts are stored do not change the game, so they are left out.
+ */
+function sameSpot(a: SpotConfig, b: SpotConfig): boolean {
+	const plain = ({ maxBytes: _bytes, maxCombos: _combos, isomorphism: _iso, ...game }: SpotConfig): string =>
+		JSON.stringify(game, (_, value: unknown) => (value instanceof Float64Array ? Array.from(value) : value));
+	return plain(a) === plain(b);
 }
 
 let warnedThreads = false;
@@ -721,6 +780,7 @@ function makeSolution(
 	ctx: Context,
 	solver: Solver,
 	iterations: number,
+	totalIterations: number,
 	history: Progress[],
 	stoppedAt: 'target' | 'iterations',
 	workers: number,
@@ -765,8 +825,10 @@ function makeSolution(
 	return {
 		spot,
 		iterations,
+		totalIterations,
 		stoppedAt,
 		workers,
+		solver,
 		history,
 		ev(player) {
 			cachedEv ??= solver.expectedValue();

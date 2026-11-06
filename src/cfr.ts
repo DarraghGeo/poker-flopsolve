@@ -322,7 +322,7 @@ function buildActiveLists(
  * images. Averaging restores exact equality after every update. It is CFR on
  * the folded game, where the mirrored hands are one information set.
  */
-function tieMirrors(
+export function tieMirrors(
 	store: RegretStore | SumStore,
 	slotBase: number,
 	actions: number,
@@ -344,6 +344,26 @@ function tieMirrors(
 			k += size + 1;
 		}
 	}
+}
+
+/**
+ * Tie mirrored hands on one node and board, as every update does; for code
+ * that writes accumulators outside a traversal, such as a warm start.
+ */
+export function tieBlock(ctx: Context, node: number, board: number): void {
+	const { tree } = ctx;
+	const owner = tree.player[node];
+	const lists = ctx.active;
+	const listSlot = (lists.roundBase[tree.round[node]] + board) * 2 + owner;
+	const from = lists.tieStart[listSlot];
+	const to = lists.tieStart[listSlot + 1];
+	if (from === to) return;
+	const actions = tree.numEdges[node];
+	const stride = ctx.players[owner].count;
+	const base = ctx.layout.offset[node] + board * actions * stride;
+	const integer = ctx.regretScale !== null;
+	if (ctx.regret.length > 0) tieMirrors(ctx.regret, base, actions, stride, lists.ties, from, to, integer);
+	tieMirrors(ctx.strategySum, base, actions, stride, lists.ties, from, to, integer);
 }
 
 /** Per-depth buffers, so the hot loop never allocates. */
