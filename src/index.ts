@@ -24,7 +24,7 @@ import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
-import { DEFAULT_MAX_BYTES, PLATFORM, THREADS_AVAILABLE } from './platform/node.ts';
+import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, THREADS_AVAILABLE } from './platform/node.ts';
 import type { Context, PlayerIndex, RegretStore, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
@@ -672,11 +672,14 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// a platform with WebAssembly SIMD. It owns the storage; the context sees
 	// it through views.
 	const engine =
-		options.engine !== 'js' && precision === 'f32' && !plan && !options.analysisOnly && options.simd !== false
-			? createEngine({
-					tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
-					runoutWeight: weights, chipScale: spot.chipScale,
-				})
+		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false
+			? createEngine(
+					{
+						tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
+						runoutWeight: weights, chipScale: spot.chipScale,
+					},
+					plan ? { plan, threads: requested, spawn: spawnEngineWorker } : undefined,
+				)
 			: null;
 	const ctx: Context = {
 		tree: spot.tree,
@@ -724,17 +727,19 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	}
 
 	const solver = makeSolver(ctx);
-	const pool: Pool | null = plan
+	// The engine runs its own threads; the JavaScript pool is for the rest.
+	const pool: Pool | null = plan && !engine
 		? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
 		: null;
 	if (pool) solver.useRoot(pool.traverse);
 	if (engine) solver.useRoot(engine.root(ctx.dcfr));
+	const threadCount = pool ? pool.workers : engine ? engine.threads : 1;
 	let completed = 0;
 
 	return {
 		spot,
 		solver,
-		workers: pool ? pool.workers : 1,
+		workers: threadCount,
 		get completed() {
 			return completed;
 		},
@@ -752,6 +757,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			// Snapshots stay usable afterwards, on this thread alone.
 			solver.useRoot(null);
 			pool?.close();
+			engine?.close();
 		},
 		exploitabilityPercent() {
 			return (100 * solver.exploitability()) / (spot.potUnits / spot.chipScale);
@@ -759,7 +765,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		trueExploitabilityPercent() {
 			if (!spot.runouts.approximate) return this.exploitabilityPercent();
 			const real = createRun(defineSpot({ ...spot.source, runoutBuckets: false }), {
-				workers: pool ? pool.workers : 1,
+				workers: threadCount,
 				precision,
 			});
 			try {
@@ -770,7 +776,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			}
 		},
 		snapshot(history = [], stoppedAt = 'iterations') {
-			return makeSolution(spot, ctx, solver, completed, offset + completed, [...history], stoppedAt, pool ? pool.workers : 1);
+			return makeSolution(spot, ctx, solver, completed, offset + completed, [...history], stoppedAt, threadCount);
 		},
 	};
 }

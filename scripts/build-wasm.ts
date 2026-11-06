@@ -22,14 +22,19 @@ const scratch = mkdtempSync(join(tmpdir(), 'kernels-'));
 const MODULES = [
 	{ source: 'assembly/kernels.ts', out: 'kernels.ts', name: 'KERNELS_WASM', what: 'The SIMD kernels' },
 	{ source: 'assembly/engine.ts', out: 'engine.ts', name: 'ENGINE_WASM', what: 'The traversal engine' },
+	// The same engine over shared memory, for threads.
+	{
+		source: 'assembly/engine.ts', out: 'engine-shared.ts', name: 'ENGINE_SHARED_WASM', what: 'The traversal engine over shared memory',
+		flags: ['--enable', 'threads', '--sharedMemory', '--maximumMemory', '65536'],
+	},
 ];
 
 try {
-	for (const { source, out, name, what } of MODULES) {
+	for (const { source, out, name, what, flags = [] } of MODULES as { source: string; out: string; name: string; what: string; flags?: string[] }[]) {
 		const wasm = join(scratch, `${name}.wasm`);
 		execFileSync(
 			join(root, 'node_modules', '.bin', 'asc'),
-			[source, '--enable', 'simd', '--enable', 'bulk-memory', '-O3', '--runtime', 'stub', '--importMemory', '--noAssert', '-o', wasm],
+			[source, '--enable', 'simd', '--enable', 'bulk-memory', '-O3', '--runtime', 'stub', '--importMemory', '--noAssert', ...flags, '-o', wasm],
 			{ cwd: root, stdio: 'inherit' },
 		);
 		const bytes = readFileSync(wasm);

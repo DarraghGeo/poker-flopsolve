@@ -241,6 +241,18 @@ Measured on an Apple M2, single threaded:
 `defineSpot` reports the projected cost before anything is allocated, and refuses a spot
 over `maxBytes` with concrete suggestions. `maxCombos` caps range width.
 
+### WebAssembly engine
+
+The traversal runs in WebAssembly (`assembly/engine.ts`): 32-bit vectors and storage,
+SIMD on every contiguous row, card sums and showdown sweeps in 64-bit. Its storage lives
+in its own memory and the rest of the solver reads it through views, so every query,
+warm start and analysis works unchanged. With threads (Node), all of them share one
+WebAssembly memory and split the runouts as below. It runs wherever it can — 32-bit
+storage, the default, and WebAssembly SIMD, which current Node and browsers have —
+and `run.engine` says which ran. `engine: 'js'` forces the JavaScript traversal;
+`precision: 'f64'` or `'i16'` use it too. Against the JavaScript traversal it is about
+2.4× faster per iteration, and about 3× in Chromium.
+
 ### SIMD kernels
 
 Regret matching and the average-strategy pass — the per-hand normalisation at every
@@ -348,15 +360,15 @@ bundled. Measured in a 4-core cloud container, time to 0.3% of pot:
 
 | Spot | Threads | poker-flopsolve | postflop-solver | Ratio |
 |---|---|---|---|---|
-| Turn | 1 | 4.0 s | 0.9 s | 4.2× |
-| Flop | 1 | 81.3 s | 18.5 s | 4.4× |
-| Monotone flop | 1 | 25.1 s | 5.3 s | 4.7× |
-| Flop | 4 | 25.5 s | 5.3 s | 4.8× |
-| Monotone flop | 4 | 8.2 s | 1.4 s | 5.8× |
+| Turn | 1 | 1.4 s | 0.9 s | 1.7× |
+| Flop | 1 | 29.4 s | 18.5 s | 1.6× |
+| Monotone flop | 1 | 9.5 s | 5.2 s | 1.8× |
+| Turn | 4 | 0.5 s | 0.3 s | 2.0× |
+| Flop | 4 | 9.1 s | 5.1 s | 1.8× |
+| Monotone flop | 4 | 2.9 s | 1.4 s | 2.1× |
 
-postflop-solver is roughly four to six times faster: native Rust over dense f32 vectors
-against JavaScript. Closing more of the gap means moving the traversal itself into
-WebAssembly, which is the next piece of work.
+0.2.0, still in JavaScript, was 4–6× behind; the WebAssembly engine below is most of
+the difference.
 
 ### Accuracy targets
 

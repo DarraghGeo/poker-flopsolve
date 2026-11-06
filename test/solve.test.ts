@@ -351,8 +351,9 @@ describe('worker parallelism', () => {
 
 	it('measures exploitability and EV across threads as it would on one', () => {
 		// Same accumulators, measured both ways: only the runout sum's
-		// association may differ.
-		const run = createRun(spot(), { workers: 4 });
+		// association may differ. The JavaScript pool against the JavaScript
+		// traversal; test/engine.test.ts does the same for the engine.
+		const run = createRun(spot(), { workers: 4, engine: 'js' });
 		try {
 			expect(run.workers).toBe(4);
 			run.step(30);

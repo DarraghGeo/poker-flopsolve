@@ -41,8 +41,9 @@ describe('SIMD kernels', () => {
 	}
 
 	it('match JavaScript across workers and folded runouts', () => {
-		const js = outcome(flop, 10, { workers: 4, simd: false });
-		const wasm = outcome(flop, 10, { workers: 4, simd: true });
+		// The JavaScript pool either way: this tests the kernels.
+		const js = outcome(flop, 10, { workers: 4, simd: false, engine: 'js' });
+		const wasm = outcome(flop, 10, { workers: 4, simd: true, engine: 'js' });
 		for (let i = 0; i < 3; i++) expect(Object.is(js[i], wasm[i]), `${js[i]} vs ${wasm[i]}`).toBe(true);
 	});
 });

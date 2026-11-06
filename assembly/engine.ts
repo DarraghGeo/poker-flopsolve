@@ -59,6 +59,42 @@ let rowBytes: usize = 0;
 let cardSums: usize = 0;
 let chipScale: f64 = 1;
 
+// Sharding across threads; see src/parallel.ts for the protocol. At the
+// shard round only boards in [shardStart, shardEnd) are walked. In the
+// collect phase, a chance node feeding that round records the reach the
+// workers need in `exchange` and stops; in the override phase it reads back
+// the totals they produced.
+let shardRound: i32 = -1;
+let shardStart: i32 = 0;
+let shardEnd: i32 = 0;
+let phase: i32 = 0;
+let applyUpdates: bool = true;
+let entryIndexOf: usize = 0;
+let exchange: usize = 0;
+let overrides: usize = 0;
+let exchangeStride: usize = 0;
+
+/** Set this thread's slice of the shard round's boards. */
+export function setShard(round: i32, start: i32, end: i32): void {
+	shardRound = round;
+	shardStart = start;
+	shardEnd = end;
+}
+
+/** Where entries are found and exchanged: per node entry index, reach out, values in, in floats per entry vector. */
+export function setExchange(entries: usize, reach: usize, values: usize, stride: i32): void {
+	entryIndexOf = entries;
+	exchange = reach;
+	overrides = values;
+	exchangeStride = <usize>stride << 2;
+}
+
+/** 0 normal, 1 collect, 2 override; and whether updates apply. */
+export function setPhase(value: i32, apply: i32): void {
+	phase = value;
+	applyUpdates = apply !== 0;
+}
+
 // Per-iteration settings, from `run`.
 let mode: i32 = 0;
 let keepPositive: f32 = 1;
@@ -147,6 +183,28 @@ export function run(
 	return traverse(traverser, 0, 0, rootMe, rootOpp, 0);
 }
 
+/** A worker's walk: from a chance node feeding the shard round, on board 0 of its round. */
+export function runChance(
+	runMode: i32,
+	traverser: i32,
+	node: i32,
+	me: usize,
+	opp: usize,
+	positive: f32,
+	negative: f32,
+	sum: f32,
+	iterationWeight: f32,
+	clampRegret: i32,
+): usize {
+	mode = runMode;
+	keepPositive = positive;
+	keepNegative = negative;
+	keepSum = sum;
+	weight = iterationWeight;
+	clamp = clampRegret !== 0;
+	return traverse(traverser, node, 0, me, opp, 0);
+}
+
 function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOpp: usize, depth: i32): usize {
 	const out = valueAt(depth);
 	const nodeKind = load<u8>(kind + <usize>node);
@@ -176,6 +234,19 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 	if (nodeKind === CHANCE) {
 		memory.fill(out, 0, <usize>myCount << 2);
 		const nextRound = r + 1;
+		if (nextRound === shardRound && phase !== 0) {
+			const entry = i32At(entryIndexOf, node);
+			if (entry >= 0) {
+				const slot = exchange + <usize>entry * 2 * exchangeStride;
+				if (phase === 1) {
+					memory.copy(slot, reachMe, <usize>myCount << 2);
+					memory.copy(slot + exchangeStride, reachOpp, <usize>oppCount << 2);
+				} else {
+					memory.copy(out, overrides + <usize>entry * exchangeStride, <usize>myCount << 2);
+				}
+				return out;
+			}
+		}
 		const child = i32At(edgeChild, i32At(firstEdge, node));
 		const children = childStart + (<usize>i32At(childRound, nextRound) << 2);
 		const orbits = orbitStart + (<usize>i32At(orbitRound, nextRound) << 2);
@@ -183,8 +254,13 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 		const childMe = reachAt(depth, traverser);
 		const childOpp = reachAt(depth, opponent);
 		const nextBase = i32At(roundBase, nextRound);
-		const last = i32At(children, board + 1);
-		for (let childBoard = i32At(children, board); childBoard < last; childBoard++) {
+		let first = i32At(children, board);
+		let last = i32At(children, board + 1);
+		if (nextRound === shardRound) {
+			if (shardStart > first) first = shardStart;
+			if (shardEnd < last) last = shardEnd;
+		}
+		for (let childBoard = first; childBoard < last; childBoard++) {
 			const childSlot = (nextBase + childBoard) * 2;
 			const nMe = i32At(listCount, childSlot + traverser);
 			const nOpp = i32At(listCount, childSlot + opponent);
@@ -283,7 +359,7 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 		}
 	}
 
-	if (isTraverser && mode === TRAIN) {
+	if (isTraverser && mode === TRAIN && applyUpdates) {
 		update(base, sumBase, actions, n, reachMe, strategy, actionValues, out);
 		const tieFrom = i32At(tieStart, listSlot);
 		const tieTo = i32At(tieStart, listSlot + 1);

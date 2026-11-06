@@ -55,7 +55,7 @@ describe('WebAssembly engine', () => {
 		}
 	});
 
-	it('runs by default on one thread at 32 bits, and steps aside elsewhere', () => {
+	it('runs by default at 32 bits, on any number of threads, and steps aside elsewhere', () => {
 		const engineOf = (options: SolveOptions): string => {
 			const run = createRun(defineSpot(SPOTS.turn), { workers: 1, precision: 'f32', ...options });
 			try {
@@ -67,8 +67,30 @@ describe('WebAssembly engine', () => {
 		expect(engineOf({})).toBe('wasm');
 		expect(engineOf({ precision: 'f64' })).toBe('js');
 		expect(engineOf({ precision: 'i16' })).toBe('js');
-		expect(engineOf({ workers: 4 })).toBe('js');
+		expect(engineOf({ workers: 4 })).toBe('wasm');
 		expect(engineOf({ engine: 'js' })).toBe('js');
+	});
+
+	it('splits a solve across threads as it runs on one', () => {
+		// After one iteration, before rounding can compound: the same numbers
+		// to float precision. Then the pooled storage measured by one thread.
+		for (const config of [SPOTS.turn, twotone]) {
+			const one = solveWith(config, 1, {});
+			const four = solveWith(config, 1, { workers: 4 });
+			expect(four.ev).toBeCloseTo(one.ev, 4);
+			expect(four.exploitability).toBeCloseTo(one.exploitability, 3);
+		}
+		const run = createRun(defineSpot(twotone), { workers: 4, precision: 'f32' });
+		try {
+			expect(run.engine).toBe('wasm');
+			expect(run.workers).toBe(4);
+			run.step(10);
+			const pooled = run.exploitabilityPercent();
+			run.solver.useRoot(null);
+			expect(run.exploitabilityPercent()).toBeCloseTo(pooled, 3);
+		} finally {
+			run.close();
+		}
 	});
 
 	it('serves strategy queries and warm starts from its own storage', () => {

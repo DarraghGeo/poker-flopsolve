@@ -10,6 +10,7 @@ import { availableParallelism } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import type { WorkerSetup } from '../parallel.ts';
+import type { EngineWorkerSetup } from '../engine.ts';
 
 /** Which build this is. */
 export const PLATFORM = 'node';
@@ -49,6 +50,19 @@ export function spawnWorker(setup: WorkerSetup, onError: (error: Error) => void)
 	// From source the worker is TypeScript; from a build it sits beside this
 	// bundle as JavaScript.
 	const url = new URL(import.meta.url.endsWith('.ts') ? '../worker.ts' : './worker.js', import.meta.url);
+	const thread = new Worker(fileURLToPath(url), { workerData: setup });
+	thread.on('error', onError);
+	thread.unref();
+	return {
+		terminate() {
+			void thread.terminate();
+		},
+	};
+}
+
+/** Start one WebAssembly engine thread on `engine-worker.ts`. */
+export function spawnEngineWorker(setup: EngineWorkerSetup, onError: (error: Error) => void): WorkerHandle {
+	const url = new URL(import.meta.url.endsWith('.ts') ? '../engine-worker.ts' : './engine-worker.js', import.meta.url);
 	const thread = new Worker(fileURLToPath(url), { workerData: setup });
 	thread.on('error', onError);
 	thread.unref();
