@@ -270,7 +270,7 @@ export function matchupMass(a: Float64Array, b: Float64Array): number {
  * rebuilding it at every one of the tens of thousands of node visits per
  * traversal was pure repetition.
  */
-interface ActiveLists {
+export interface ActiveLists {
 	/** Start of each list in `list`, indexed by `slotOf(round, board, player)`. */
 	readonly start: Int32Array;
 	readonly count: Uint16Array;
@@ -517,7 +517,7 @@ function makeBuffers(tree: Tree, maxActions: number, simd: boolean): Buffers {
 	};
 }
 
-function treeDepth(tree: Tree): number {
+export function treeDepth(tree: Tree): number {
 	const depth = new Int32Array(tree.nodeCount).fill(-1);
 	depth[0] = 1;
 	let max = 1;
@@ -559,7 +559,7 @@ const DCFR_GAMMA = 3;
  * still on most and never worse. A restart of the average at powers of 4 was
  * tried too and was worse on the turn.
  */
-function dcfrFactors(t: number): { keepPositive: number; keepNegative: number; keepSum: number } {
+export function dcfrFactors(t: number): { keepPositive: number; keepNegative: number; keepSum: number } {
 	const age = t > 2 ? t - 2 : 0;
 	const grown = age ** DCFR_ALPHA;
 	const shrunk = age ** DCFR_BETA;

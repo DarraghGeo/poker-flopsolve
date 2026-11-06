@@ -226,7 +226,8 @@ describe('spot validation', () => {
 		} finally {
 			run.close();
 		}
-		expect(createRun(roomy).solver.ctx.regret).toBeInstanceOf(Float64Array);
+		// With room, the default: 32-bit storage.
+		expect(createRun(roomy).solver.ctx.regret).toBeInstanceOf(Float32Array);
 
 		expect(() => defineSpot({ ...config, maxBytes: roomy.estimate.compressedBytes - 1 })).toThrow(SpotTooLargeError);
 	});
@@ -307,8 +308,9 @@ describe('worker parallelism', () => {
 		});
 
 	it('agrees with a single-threaded solve to the last bit', () => {
-		const single = solve(spot(), { iterations: 60, workers: 1, algorithm: 'cfr+' });
-		const shared = solve(spot(), { iterations: 60, workers: 4, algorithm: 'cfr+' });
+		// 64-bit on both sides: the JavaScript engine, single and pooled.
+		const single = solve(spot(), { iterations: 60, workers: 1, algorithm: 'cfr+', precision: 'f64' });
+		const shared = solve(spot(), { iterations: 60, workers: 4, algorithm: 'cfr+', precision: 'f64' });
 
 		expect(shared.ev(0)).toBeCloseTo(single.ev(0), 10);
 		expect(shared.ev(1)).toBeCloseTo(single.ev(1), 10);
@@ -326,8 +328,8 @@ describe('worker parallelism', () => {
 		// Unclamped regrets near zero change sign on rounding alone, so the gap
 		// grows faster than under CFR+: ~1e-14 at 20 iterations, ~1e-10 by 60.
 		// A wrong slice or a doubled update shows from the second iteration.
-		const single = solve(spot(), { iterations: 20, workers: 1, algorithm: 'dcfr' });
-		const shared = solve(spot(), { iterations: 20, workers: 4, algorithm: 'dcfr' });
+		const single = solve(spot(), { iterations: 20, workers: 1, algorithm: 'dcfr', precision: 'f64' });
+		const shared = solve(spot(), { iterations: 20, workers: 4, algorithm: 'dcfr', precision: 'f64' });
 
 		expect(shared.ev(0)).toBeCloseTo(single.ev(0), 10);
 		expect(shared.exploitability()).toBeCloseTo(single.exploitability(), 10);
