@@ -1,0 +1,5 @@
+[build]
+# postflop-solver predates a lint newer compilers deny by default
+# (dangerous_implicit_autorefs); cap lints so it builds unchanged. Native CPU
+# features are its best case, so that is what it is measured at.
+rustflags = ["--cap-lints", "warn", "-C", "target-cpu=native"]

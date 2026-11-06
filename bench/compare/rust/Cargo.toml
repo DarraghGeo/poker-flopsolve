@@ -1,0 +1,19 @@
+# Benchmark harness for b-inary/postflop-solver, the reference poker-flopsolve
+# is measured against. Our own code; postflop-solver itself is AGPL-3.0 and is
+# only fetched as a dependency at build time, never vendored or published.
+[package]
+name = "pfs-bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Pinned: the last commit of the archived repository. Serialization is off —
+# not needed here, and its bincode pre-release no longer resolves.
+postflop-solver = { git = "https://github.com/b-inary/postflop-solver", rev = "9d1509fe5077d019825f833eed04b16d342dfda1", default-features = false, features = ["rayon"] }
+rayon = "1.8"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
