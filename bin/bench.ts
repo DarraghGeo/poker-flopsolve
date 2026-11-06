@@ -7,6 +7,7 @@
  *   npm run bench                        # every spot, single-threaded
  *   npm run bench -- --spots turn,flop --workers 4
  *   npm run bench -- --algorithm dcfr --iters 400
+ *   npm run bench -- --spots flop --buckets 1   # also prints true exploitability
  *
  * For each spot it reports the cost of one iteration, the cost of one
  * exploitability check, and how many iterations it took to reach 1% and 0.3%
@@ -26,6 +27,8 @@ const SPOTS: Record<string, SpotConfig> = {
 	turn: { board: 'AsKh7d2c', pot: 60, stack: 120, oop: OOP, ip: IP, betSizes: [[0.33, 0.75]], maxRaises: 2 },
 	flop: { board: 'AsKh7d', pot: 60, stack: 120, oop: OOP, ip: IP, betSizes: [[0.66]], maxRaises: 1 },
 	twotone: { board: 'Ts9s4h', pot: 60, stack: 120, oop: OOP, ip: IP, betSizes: [[0.66]], maxRaises: 1 },
+	monotone: { board: 'Ks9s4s', pot: 60, stack: 120, oop: OOP, ip: IP, betSizes: [[0.66]], maxRaises: 1 },
+	dry: { board: 'AhKdQc', pot: 60, stack: 120, oop: OOP, ip: IP, betSizes: [[0.66]], maxRaises: 1 },
 };
 
 /** Targets reported, as a percentage of the pot. */
@@ -53,9 +56,17 @@ const options: SolveOptions = {
 	workers,
 	precision: args.precision === 'f64' || args.precision === 'f32' || args.precision === 'i16' ? args.precision : undefined,
 	algorithm: args.algorithm === 'cfr+' ? 'cfr+' : 'dcfr',
+	// e.g. --approx '{"pruneBelow":1e-4}'
+	approximations: args.approx ? JSON.parse(args.approx) : undefined,
+	// --no-simd for the JavaScript kernels
+	simd: args['no-simd'] !== 'true',
 };
+/** `--no-iso` solves every runout, for comparison with folding mirrored ones. */
+const isomorphism = args['no-iso'] !== 'true';
+/** `--buckets <gap>` folds similar runouts together; see `SpotConfig.runoutBuckets`. */
+const runoutBuckets = args.buckets ? Number(args.buckets) : undefined;
 
-console.log(`algorithm ${options.algorithm}`);
+console.log(`algorithm ${options.algorithm}${args.approx ? `, approximations ${args.approx}` : ''}`);
 console.log(
 	`spot      MB    workers  ms/iter   check ms  ` + TARGETS.map((t) => `iters→${t}%  s→${t}%`.padEnd(20)).join(''),
 );
@@ -63,7 +74,7 @@ console.log(
 for (const name of names) {
 	const config = SPOTS[name];
 	if (!config) throw new Error(`Unknown spot "${name}"; pick from ${Object.keys(SPOTS).join(', ')}`);
-	const spot = defineSpot(config);
+	const spot = defineSpot({ ...config, isomorphism, runoutBuckets });
 	const run = createRun(spot, options);
 	try {
 		// Per-iteration cost, measured early: a few warm-up iterations first so
@@ -102,7 +113,10 @@ for (const name of names) {
 		});
 		console.log(
 			`${name.padEnd(8)}${(spot.estimate.bytes / 1048576).toFixed(0).padStart(5)}  ${String(run.workers).padStart(7)}` +
-				`${perIteration.toFixed(1).padStart(10)}${perCheck.toFixed(1).padStart(11)}  ${cells.join('')}`,
+				`${perIteration.toFixed(1).padStart(10)}${perCheck.toFixed(1).padStart(11)}  ${cells.join('')}` +
+				(spot.runouts.approximate
+					? `  true ${run.trueExploitabilityPercent().toFixed(3)}% (bucketed ${run.exploitabilityPercent().toFixed(3)}%)`
+					: ''),
 		);
 	} finally {
 		run.close();

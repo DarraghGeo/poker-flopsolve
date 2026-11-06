@@ -103,6 +103,34 @@ defineSpot({ ..., board: 'Qs Jh 4d',
 
 A subgame keeps the rounds from its own onwards.
 
+### Trimming the tree
+
+Tree size multiplies everything else, so three switches cut the lines that cost the most
+for the least strategic difference. They change the game being solved — a trimmed tree
+is a smaller game, solved exactly — so its exploitability is measured within that game.
+
+- `allInThreshold: 0.67` — a bet committing two thirds or more of the remaining stack
+  becomes all-in.
+- `noDonk: true` — out of position only checks into the previous street's aggressor.
+- `mergeSizes: 0.1` — pot-fraction sizes closer than 0.1 collapse to their mean.
+
+Each takes a value per round too. On a turn spot with four sizes, two raises and a shove
+(`AsKh7d2c`, the bench ranges):
+
+| | Decisions | Storage |
+|---|---|---|
+| As given | 244 | 34.9 MB |
+| `allInThreshold: 0.67` | 152 | 20.6 MB |
+| `noDonk: true` | 212 | 28.8 MB |
+| `mergeSizes: 0.1` | 104 | 13.4 MB |
+| All three | 66 | 7.9 MB |
+
+Raise caps per round (`maxRaises: [1, 2, 1]`) and a checked-down river (an empty
+`betSizes` row) were already available and trim the same way.
+
+`minWeight: 0.05` trims the ranges the same way: combinations weighted under 5% are
+dropped from both, which suits imported ranges full of hands at a percent or two.
+
 ## Reading a solved spot
 
 `createRun` returns the solver itself as `run.solver`, for analysis after (or between)
@@ -123,6 +151,30 @@ iterations, without changing anything:
 `createRun(spot, { analysisOnly: true })` allocates only the strategy sums (single
 precision, one thread, no regrets). Fill `run.solver.ctx.strategySum` from a saved or
 modified strategy, then analyse it the same way. Such a run must never be stepped.
+
+## Warm starts
+
+Re-solving a spot you just changed — another pot or stack, a nudged bet size, a reweighted
+range — can start from the previous solve instead of from nothing:
+
+```ts
+const first = solve(defineSpot(config), { targetPercent: 0.3 });
+const next = solve(defineSpot({ ...config, pot: 72 }), { targetPercent: 0.3, warmStart: first });
+next.totalIterations;   // the inherited iterations plus its own
+```
+
+Nothing becomes approximate: CFR converges from any start, and this one is close. Nodes
+match by the actions leading to them (bet sizes to the nearest pot fraction), hands by
+combination, and anything without a match starts cold; `run.warmStart` reports how much
+matched. Regrets carry over; the average strategy only when the spot is the same, which
+resumes a solve exactly. Measured on a river spot to 0.1% of pot:
+
+| Change | From scratch | Warm |
+|---|---|---|
+| Bet size 0.75 → 0.8 pot | 130 iterations | 15 |
+| Range reweighted | 130 | 80 |
+| Stack 120 → 100 | 125 | 75 |
+| Pot 60 → 72 | 125 | 100 |
 
 ## Re-solving from a node
 
@@ -152,6 +204,25 @@ This is *unsafe* re-solving. The subgame is solved for the ranges that arrive, s
 strategy can be exploitable in ways the original allowed for. It also does not make the
 earlier streets any more accurate than their coarse model of the future.
 
+## In a browser
+
+The package also runs in a browser, for the small solves a page wants: river spots and
+narrow turn spots. Bundlers pick the browser build (`dist/browser.js`) automatically
+through the `browser` export condition. It is the same solver, single-threaded:
+
+- no worker threads, so `workers` resolves to 1 (asking for more logs one warning);
+- no `SharedArrayBuffer`, so the page needs no cross-origin isolation headers;
+- `maxBytes` defaults to 512 MiB rather than 6 GiB, so a spot too big for a tab is
+  refused up front by `defineSpot` instead of taking the tab down.
+
+A solve blocks the thread it runs on, so host it in a Web Worker and step it in chunks;
+[`examples/browser-worker.ts`](examples/browser-worker.ts) does that with progress and a
+stop message in about sixty lines. Flop spots and wide turn spots belong in Node, where
+`workers` splits the runouts across cores.
+
+`npm test` checks the browser build in headless Chromium against Node (skipped where
+Playwright is not installed), and `npm run bench:browser` times it beside Node.
+
 ## Performance
 
 Measured on an Apple M2, single threaded:
@@ -165,6 +236,61 @@ Measured on an Apple M2, single threaded:
 
 `defineSpot` reports the projected cost before anything is allocated, and refuses a spot
 over `maxBytes` with concrete suggestions. `maxCombos` caps range width.
+
+### SIMD kernels
+
+Regret matching and the average-strategy pass — the per-hand normalisation at every
+decision, about a third of the solve — run as WebAssembly SIMD kernels, two doubles per
+instruction, in Node and in the browser alike. They are written in AssemblyScript
+(`assembly/kernels.ts`) and embedded in `src/wasm/kernels.ts`, so nothing is fetched at
+run time and only changing a kernel needs `npm run build:wasm`. Results are identical to
+the JavaScript kernels to the last bit; `simd: false` uses those instead, and platforms
+without WebAssembly SIMD fall back to them on their own (`simdAvailable()` says which).
+Measured interleaved on the bench turn spot: iterations ~18% faster in Node and 16% in
+Chromium, exploitability checks ~8%.
+
+### Mirrored runouts
+
+When swapping suits leaves the board and both ranges unchanged, a deal in one of those
+suits is the mirror image of a deal in another, and only one is solved. On a two-tone flop
+the two absent suits are interchangeable; on a monotone flop, all three. This is exact —
+the solver keeps mirrored hands' strategies tied together, so a stored runout stands for
+its mirrors with nothing lost — and it is on by default (`isomorphism: false` turns it off).
+
+| Flop, 4 threads | Runouts stored | To 0.3% of pot |
+|---|---|---|
+| Ts9s4h, two-tone | 1,429 of 2,352 | 16.3 s → 10.3 s |
+| Ks9s4s, monotone | 675 of 2,352 | 16.2 s → 5.6 s |
+| AhKdQc, rainbow | 2,352 of 2,352 | unchanged |
+
+Board indices (`strategyAt`, `reachAt`, `subgameAt`, the UI's runout picker) count stored
+runouts. To read a mirrored one, `spot.resolveBoard('Ts9s4h 7c')` gives the stored board
+and how hands relabel onto it. Ranges that differ between suits anywhere — an exact combo,
+or a partial weight on one suit — have no symmetry to use, and solve as before.
+
+### Runout buckets (approximate)
+
+`runoutBuckets: true` solves one turn or river card for several that play alike: two cards
+of one suit, neither pairing the board, equally connected to its straights, whose rank
+swap maps both ranges onto themselves. The stored card stands for the others with hands
+relabelled by the swap. A number instead of `true` is the widest rank gap allowed in a
+bucket (`true` is 1, the most cautious).
+
+It is an approximation — 55 on a 6 river and 66 on a 5 river sit on opposite sides of the
+board card, and no relabelling fixes that — so `exploitabilityPercent()` (and
+`targetPercent`) measure the bucketed game, and `run.trueExploitabilityPercent()` measures
+the strategy in the real one, every card dealt. How much it saves and costs depends on
+the ranges; suited connectors keep ranks apart, pocket pairs near the merged ranks cost
+accuracy. On AhKdQc, 4 threads, to 0.3% of pot in the bucketed game:
+
+| Ranges | Gap | Runouts | Time | True exploitability |
+|---|---|---|---|---|
+| Bench (wide, connectors) | exact | 2,352 | 13.2 s | 0.271% |
+| | 1 | 1,672 | 10.5 s | 0.278% |
+| | 3 | 1,348 | 8.0 s | 0.302% |
+| Pairs and broadway | exact | 2,352 | 9.3 s | 0.228% |
+| | 1 | 1,396 | 4.9 s | 0.482% |
+| | 3 | 1,088 | 4.2 s | 0.542% |
 
 ### 16-bit storage
 

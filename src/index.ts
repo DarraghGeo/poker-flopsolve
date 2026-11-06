@@ -8,15 +8,21 @@
  * you are in, so the solver starts from a dead pot with both players even.
  */
 
-import { COMBO_CARDS, COMBOS, formatCards, parseCards } from './cards.ts';
+import { COMBO_CARDS, COMBOS, comboIndex, formatCards, parseCards } from './cards.ts';
 import type { BetSize, RaiseSizes, Tree } from './tree.ts';
 import { ACTION_LABELS, ActionKind, buildTree, NodeKind, raisesPerRound } from './tree.ts';
 import type { Runouts } from './runouts.ts';
-import { boardAtRound, enumerateRunouts } from './runouts.ts';
+import type { ResolvedBoard } from './runouts.ts';
+import type { RunoutMerge } from './runouts.ts';
+import { boardAtRound, enumerateRunouts, rankSwap, resolveBoard } from './runouts.ts';
+import { suitSymmetries } from './abstraction.ts';
 import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
+import type { WarmStartReport } from './warm.ts';
+import { warmStart } from './warm.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
+import { DEFAULT_MAX_BYTES, PLATFORM, THREADS_AVAILABLE } from './platform/node.ts';
 import type { Context, PlayerIndex, RegretStore, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
@@ -31,15 +37,17 @@ import {
 export * from './cards.ts';
 export * from './eval7.ts';
 export { activeCombos, parseRange, rangeWeight } from './range.ts';
+export type { ResolvedBoard } from './runouts.ts';
+export type { WarmStartReport } from './warm.ts';
+export { simdAvailable } from './kernels.ts';
 export type { BetSize } from './tree.ts';
 export type { Solver } from './cfr.ts';
 export { ACTION_LABELS, ActionKind, NodeKind } from './tree.ts';
+/** 'node' or 'browser': which build is running. */
+export { PLATFORM } from './platform/node.ts';
 
 /** Sub-chip resolution, so pot-fraction sizing is exact. */
 const DEFAULT_CHIP_SCALE = 100;
-
-/** Default ceiling on solver storage. */
-const DEFAULT_MAX_BYTES = 6 * 1024 * 1024 * 1024;
 
 /** Measured throughput on a warm run, used only to project solve time. */
 const OPS_PER_SECOND = 2e8;
@@ -74,16 +82,72 @@ export interface SpotConfig {
 	readonly maxRaises?: number | readonly number[];
 	/** Offer a shove alongside the configured sizes; once, or per round. Default false. */
 	readonly allowAllIn?: boolean | readonly boolean[];
+	/**
+	 * Turn a bet or raise into a shove when it would commit at least this
+	 * fraction of the actor's remaining stack — 0.67 makes any bet of two
+	 * thirds of what is left an all-in. Trims the near-all-in lines that
+	 * multiply a tree for little strategic difference. Once, or per round.
+	 * Unset, never.
+	 */
+	readonly allInThreshold?: number | readonly number[];
+	/**
+	 * Forbid donk bets: out of position may only check when opening a round
+	 * into the player who made the last bet or raise of the round before.
+	 * Once, or per round. Default false.
+	 */
+	readonly noDonk?: boolean | readonly boolean[];
+	/**
+	 * Collapse pot-fraction sizes closer together than this into their mean:
+	 * with 0.1, sizes 0.33 and 0.4 become one 0.365. Default 0, none.
+	 */
+	readonly mergeSizes?: number;
 	/** Refuse a range wider than this many combinations. */
 	readonly maxCombos?: number;
-	/** Refuse a spot needing more than this much storage. */
+	/**
+	 * Drop combinations weighted below this from both ranges. Imported ranges
+	 * are often full of hands at a few percent that barely move the answer
+	 * but cost as much as any other; this removes them. It edits the ranges,
+	 * so it changes the game being solved. Default 0, keep everything.
+	 */
+	readonly minWeight?: number;
+	/**
+	 * Refuse a spot needing more than this much storage. Defaults to 6 GiB in
+	 * the Node build and 512 MiB in the browser build, where a tab has far less
+	 * to give.
+	 */
 	readonly maxBytes?: number;
 	readonly chipScale?: number;
+	/**
+	 * Fold mirror-image runouts together. When the board and both ranges are
+	 * unchanged by swapping some suits — two suits absent from a two-tone flop,
+	 * three from a monotone one — a deal in one of those suits is the mirror
+	 * image of a deal in another, so only one is solved and it stands for both.
+	 * Exact, not an approximation: strategies on a mirrored runout are the
+	 * stored ones relabelled. Default true; ranges that differ between suits
+	 * anywhere simply have no symmetry to use.
+	 */
+	readonly isomorphism?: boolean;
+	/**
+	 * Solve one turn or river card for several that play alike — an
+	 * approximation. Two cards of one suit are bucketed together when neither
+	 * pairs the board, they connect equally to its straights, and swapping
+	 * their ranks maps each range onto itself (so `98s` in a range keeps an 8
+	 * and a 9 apart). The stored card stands for the others with hands
+	 * relabelled by that swap. How much it saves depends on the ranges: with
+	 * pairs and broadway hands most low cards bucket together; suited
+	 * connectors keep them apart. `trueExploitabilityPercent()` measures the
+	 * strategy in the real game, every card dealt. Default false.
+	 */
+	readonly runoutBuckets?: boolean | number;
 }
 
 /** Projected cost of solving a spot. */
 export interface Estimate {
 	readonly rounds: number;
+	/**
+	 * Final boards stored. With `isomorphism` a mirrored runout is not
+	 * stored, so this can be well under the number of real runouts.
+	 */
 	readonly runouts: number;
 	readonly combos: readonly [number, number];
 	readonly decisionNodes: number;
@@ -143,6 +207,15 @@ export interface Spot {
 	readonly stackUnits: number;
 	/** The configuration this was built from, so a worker can rebuild it. */
 	readonly source: SpotConfig;
+	/**
+	 * Find the stored board standing for a real one, and how hands relabel
+	 * onto it. Board indices everywhere else — `strategyAt`, `reachAt`,
+	 * `subgameAt` — index stored boards; with `isomorphism` a mirrored runout
+	 * is not stored, and this is how to read it.
+	 *
+	 * @param board the spot's board followed by the cards dealt, in order
+	 */
+	resolveBoard(board: string | readonly number[]): ResolvedBoard;
 }
 
 /**
@@ -153,18 +226,21 @@ export function defineSpot(config: SpotConfig): Spot {
 	const chipScale = config.chipScale ?? DEFAULT_CHIP_SCALE;
 	const maxBytes = config.maxBytes ?? DEFAULT_MAX_BYTES;
 	const board = parseCards(config.board);
-	const runouts = enumerateRunouts(board);
+	if (board.length < 3 || board.length > 5) {
+		throw new Error(`A postflop board has 3, 4 or 5 cards; got ${board.length} (${formatCards(board)})`);
+	}
+	const rounds = 6 - board.length;
 
 	if (config.pot <= 0) throw new Error('pot must be positive');
 	if (config.stack <= 0) throw new Error('stack must be positive');
 
 	const rows =
 		config.betSizes.length === 1
-			? Array.from({ length: runouts.rounds }, () => config.betSizes[0])
+			? Array.from({ length: rounds }, () => config.betSizes[0])
 			: config.betSizes;
-	if (rows.length !== runouts.rounds) {
+	if (rows.length !== rounds) {
 		throw new Error(
-			`betSizes has ${config.betSizes.length} rows but this board has ${runouts.rounds} ` +
+			`betSizes has ${config.betSizes.length} rows but this board has ${rounds} ` +
 				'betting rounds; give one row per round, or a single row for all of them',
 		);
 	}
@@ -176,9 +252,12 @@ export function defineSpot(config: SpotConfig): Spot {
 		if (weights.length !== COMBOS) {
 			throw new Error(`The ${who} range has ${weights.length} weights; one per combination is ${COMBOS}`);
 		}
+		const floor = config.minWeight ?? 0;
 		for (let combo = 0; combo < COMBOS; combo++) {
 			if (weights[combo] === 0) continue;
 			if (onBoard.has(COMBO_CARDS[combo * 2]) || onBoard.has(COMBO_CARDS[combo * 2 + 1])) {
+				weights[combo] = 0;
+			} else if (weights[combo] < floor) {
 				weights[combo] = 0;
 			}
 		}
@@ -198,6 +277,19 @@ export function defineSpot(config: SpotConfig): Spot {
 		buildPlayerIndex(trim(config.ip, 'in-position')),
 	];
 
+	// Symmetry needs the ranges, so the runouts come after them.
+	const symmetries =
+		config.isomorphism === false || board.length === 5
+			? undefined
+			: suitSymmetries(board, [players[0].weights, players[1].weights]);
+	const runouts = enumerateRunouts(
+		board,
+		symmetries,
+		config.runoutBuckets && board.length < 5
+			? rangeRankMerge(players, config.runoutBuckets === true ? DEFAULT_BUCKET_GAP : config.runoutBuckets)
+			: undefined,
+	);
+
 	const tree = buildTree(
 		{
 			potUnits: Math.round(config.pot * chipScale),
@@ -206,6 +298,9 @@ export function defineSpot(config: SpotConfig): Spot {
 			raiseSizes: config.raiseSizes,
 			maxRaises: config.maxRaises ?? 1,
 			allowAllIn: config.allowAllIn ?? false,
+			allInThreshold: config.allInThreshold,
+			noDonk: config.noDonk,
+			mergeSizes: config.mergeSizes,
 			chipScale,
 			minRaiseUnits: chipScale,
 		},
@@ -251,6 +346,9 @@ export function defineSpot(config: SpotConfig): Spot {
 		potUnits: Math.round(config.pot * chipScale),
 		stackUnits: Math.round(config.stack * chipScale),
 		source: config,
+		resolveBoard(cards) {
+			return resolveBoard(runouts, typeof cards === 'string' ? parseCards(cards) : cards);
+		},
 	};
 }
 
@@ -308,6 +406,8 @@ export interface SolveOptions {
 	 * reaches 1e-7 by two thousand — always orders of magnitude under the
 	 * exploitability, so never the largest error in the answer, but do not
 	 * expect two worker counts to agree bit for bit.
+	 *
+	 * The browser build is single-threaded: any count resolves to 1 there.
 	 */
 	readonly workers?: number | 'auto';
 	/**
@@ -316,6 +416,12 @@ export interface SolveOptions {
 	 * reaches 0.3% of pot in 35–45% fewer iterations than 'cfr+' on river,
 	 * turn and flop spots alike. 'cfr+' clamps regrets at zero and weights
 	 * iteration `t` by `t` in the average.
+	 *
+	 * Predictive Discounted CFR+ (Xu et al., 2024) was implemented and measured
+	 * against 'dcfr' and is not offered: at the paper's parameters (α 2.3,
+	 * γ 5) it took 165 iterations to 0.3% of pot on the bench turn spot where
+	 * 'dcfr' takes 85, and 120 to 65 on the river; no α, γ tried (1 to 2.3, 2
+	 * to 5) came close, with or without the prediction.
 	 */
 	readonly algorithm?: Algorithm;
 	/**
@@ -323,6 +429,71 @@ export interface SolveOptions {
 	 * analysing it. Such a run must never be stepped.
 	 */
 	readonly analysisOnly?: boolean;
+	/**
+	 * Start from a previous solve of the same board instead of from nothing.
+	 *
+	 * For re-solving a tweaked spot — another pot or stack, a bet size nudged,
+	 * a range reweighted — whose equilibrium is close to the old one. The
+	 * answer is not approximate: CFR converges from any start, and this one is
+	 * near. Nodes match by the actions leading to them, bet sizes by the
+	 * nearest pot fraction; hands by combination; anything without a match
+	 * starts cold. `SolveRun.warmStart` says how much matched.
+	 *
+	 * Regrets carry over; the average strategy only when the spot is the
+	 * same, which resumes a solve exactly. Measured on a river spot re-solved
+	 * to 0.1% of pot, a nudged bet size took 15 iterations instead of 130 from
+	 * cold, a reweighted range 80 instead of 130, a 20% bigger pot 100
+	 * instead of 125.
+	 */
+	readonly warmStart?: Solution | SolveRun;
+	/**
+	 * The iteration to carry on counting from, which sets how heavily DCFR
+	 * discounts the inherited regrets and how CFR+ weights the averages. Unset,
+	 * the old solve's own count: the new solve continues it. Lower it to let
+	 * the new spot's own iterations outweigh the old ones sooner.
+	 */
+	readonly warmIteration?: number;
+	/**
+	 * Approximations that keep the game but solve it more cheaply. All off by
+	 * default. Each costs some accuracy, which the exploitability — measured
+	 * exactly, in the full game — shows.
+	 */
+	readonly approximations?: Approximations;
+	/**
+	 * Use the WebAssembly SIMD kernels where the platform supports them,
+	 * falling back to JavaScript where it does not. Results are identical
+	 * either way, to the bit; this exists to compare the two. Default true.
+	 */
+	readonly simd?: boolean;
+}
+
+/** See `SolveOptions.approximations`. */
+export interface Approximations {
+	/*
+	 * Threshold pruning — skipping opponent actions taken with negligible
+	 * reach — was built and measured, and is deliberately not offered: a
+	 * threshold on reach mass also skips deep lines that are rare overall but
+	 * matter to the few hands that reach them, their strategy stops training,
+	 * and the best response walks straight into it. On a wide turn spot it
+	 * plateaued near 0.8% of pot where the unpruned solve reached 0.17%, for
+	 * at most 15% less time per iteration.
+	 *
+	 * River hand buckets — one strategy per set of hands of equal strength
+	 * and equal ranks, suits told apart only where a flush is possible — were
+	 * built and measured too, and also left out. The solver updates every hand
+	 * in one vector pass, so fewer separate strategies did not mean fewer
+	 * iterations, while the lost blocker detail put a floor under accuracy:
+	 * 105 iterations to 0.3% of pot on a turn spot instead of 85, and a
+	 * plateau near 0.15% where the exact solve went on to 0.1%.
+	 *
+	 * Chance sampling — walking each river deal in training with probability
+	 * p and weighting it by 1/p, with DCFR discounts caught up for deals left
+	 * out — was built and measured as well. Iterations got cheaper, but the
+	 * sampling noise, which DCFR's weighting of recent iterations amplifies,
+	 * cost more iterations than it saved: a flop spot on 4 threads reached
+	 * 0.3% of pot in 14.1 s exact, 23.1 s at p = 0.5, and not within 400
+	 * iterations at p = 0.25; at best it broke even to 1%.
+	 */
 }
 
 export type Algorithm = 'cfr+' | 'dcfr';
@@ -341,7 +512,10 @@ export interface Progress {
 /** A solved spot. */
 export interface Solution {
 	readonly spot: Spot;
+	/** Iterations this solve ran. */
 	readonly iterations: number;
+	/** Iterations behind the strategy, counting any a warm start inherited. */
+	readonly totalIterations: number;
 	/**
 	 * Which stopping rule ended the solve. 'iterations' with a `targetPercent`
 	 * set means the target was NOT reached and the answer is looser than asked
@@ -350,6 +524,8 @@ export interface Solution {
 	readonly stoppedAt: 'target' | 'iterations';
 	/** Worker threads the solve actually used, which 'auto' does not tell you. */
 	readonly workers: number;
+	/** The solver behind this solution, for analysis and warm starts. */
+	readonly solver: Solver;
 	/** Chips per hand for a player, under the average strategy. */
 	ev(player: 0 | 1): number;
 	/** Distance from equilibrium, in chips per hand. */
@@ -393,7 +569,10 @@ export interface Solution {
 
 /** Betting for a subgame; anything unset keeps the original spot's. */
 export type SubgameBetting = Partial<
-	Pick<SpotConfig, 'betSizes' | 'raiseSizes' | 'maxRaises' | 'allowAllIn' | 'maxCombos' | 'maxBytes'>
+	Pick<
+		SpotConfig,
+		'betSizes' | 'raiseSizes' | 'maxRaises' | 'allowAllIn' | 'allInThreshold' | 'noDonk' | 'mergeSizes' | 'maxCombos' | 'maxBytes'
+	>
 >;
 
 export interface StrategyView {
@@ -409,12 +588,24 @@ export interface StrategyView {
 /** An in-progress solve the caller drives. */
 export interface SolveRun {
 	readonly spot: Spot;
-	/** Iterations completed so far. */
+	/** Iterations completed so far, by this run; a warm start's are not counted. */
 	readonly completed: number;
+	/** Iterations behind the strategy, counting any a warm start inherited. */
+	readonly totalIterations: number;
+	/** What a warm start carried over, or null without one. */
+	readonly warmStart: WarmStartReport | null;
 	/** Run `count` more iterations. */
 	step(count: number): void;
 	/** Distance from equilibrium as a percentage of the pot. */
 	exploitabilityPercent(): number;
+	/**
+	 * Exploitability in the real game, every card dealt, as a percentage of
+	 * the pot. The same as `exploitabilityPercent()` unless `runoutBuckets`
+	 * folded cards that are not exact mirror images; then the strategy is
+	 * copied onto every real runout of an unbucketed spot and measured there,
+	 * which costs that spot's memory and one best-response pass over it.
+	 */
+	trueExploitabilityPercent(): number;
 	/** A view of the strategy as it stands; cheap, take a fresh one each time. */
 	snapshot(history?: readonly Progress[], stoppedAt?: 'target' | 'iterations'): Solution;
 	/** Release worker threads. Snapshots taken before this stay usable. */
@@ -453,7 +644,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
 	const weights = runoutWeights(spot.runouts);
 
-	const requested = options.analysisOnly ? 1 : options.workers === 'auto' ? defaultWorkerCount() : (options.workers ?? 1);
+	const requested = resolveWorkers(options);
 	const plan = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
 
 	// Workers need the accumulators in shared memory. Allocating shared for a
@@ -486,6 +677,8 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		chanceCollect: null,
 		chanceOverride: null,
 		entryIndexOf: plan ? plan.entryIndexOf : null,
+		expandOrbits: false,
+		simd: options.simd ?? true,
 		// The traversal sums over every runout, so the denominator has to count
 		// them too: a hand pair is dealt once per compatible completion, not
 		// once. With a river board that factor is 1, which is exactly why this
@@ -494,9 +687,18 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		dcfr: (options.algorithm ?? 'dcfr') === 'dcfr',
 	};
 
+	// Seeded before any worker starts, so they all see the inherited values.
+	let warm: WarmStartReport | null = null;
+	let offset = 0;
+	if (options.warmStart) {
+		const source = options.warmStart;
+		warm = warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
+		offset = options.warmIteration ?? source.totalIterations;
+	}
+
 	const solver = makeSolver(ctx);
 	const pool: Pool | null = plan
-		? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision }, requested)
+		? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
 		: null;
 	if (pool) solver.useRoot(pool.traverse);
 	let completed = 0;
@@ -508,9 +710,13 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		get completed() {
 			return completed;
 		},
+		warmStart: warm,
+		get totalIterations() {
+			return offset + completed;
+		},
 		step(count) {
 			if (count <= 0) return;
-			solver.iterate(count, completed);
+			solver.iterate(count, offset + completed);
 			completed += count;
 		},
 		close() {
@@ -521,10 +727,75 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		exploitabilityPercent() {
 			return (100 * solver.exploitability()) / (spot.potUnits / spot.chipScale);
 		},
+		trueExploitabilityPercent() {
+			if (!spot.runouts.approximate) return this.exploitabilityPercent();
+			const real = createRun(defineSpot({ ...spot.source, runoutBuckets: false }), {
+				workers: pool ? pool.workers : 1,
+				precision,
+			});
+			try {
+				warmStart(real.solver.ctx, ctx, true);
+				return real.exploitabilityPercent();
+			} finally {
+				real.close();
+			}
+		},
 		snapshot(history = [], stoppedAt = 'iterations') {
-			return makeSolution(spot, ctx, solver, completed, [...history], stoppedAt, pool ? pool.workers : 1);
+			return makeSolution(spot, ctx, solver, completed, offset + completed, [...history], stoppedAt, pool ? pool.workers : 1);
 		},
 	};
+}
+
+/**
+ * Whether two configurations describe the very same game. Limits and how
+ * runouts are stored do not change the game, so they are left out.
+ */
+function sameSpot(a: SpotConfig, b: SpotConfig): boolean {
+	const plain = ({ maxBytes: _bytes, maxCombos: _combos, isomorphism: _iso, ...game }: SpotConfig): string =>
+		JSON.stringify(game, (_, value: unknown) => (value instanceof Float64Array ? Array.from(value) : value));
+	return plain(a) === plain(b);
+}
+
+/** Largest rank distance within a runout bucket, for `runoutBuckets: true`. */
+const DEFAULT_BUCKET_GAP = 1;
+
+/** Rank swaps that keep every hand of both ranges in its range. */
+function rangeRankMerge(players: readonly [PlayerIndex, PlayerIndex], maxGap: number): RunoutMerge {
+	const allowed = new Uint8Array(13 * 13);
+	for (let a = 0; a < 13; a++) {
+		for (let b = a; b < 13; b++) {
+			const map = rankSwap(a, b);
+			let ok = true;
+			for (const player of players) {
+				for (let i = 0; ok && i < player.count; i++) {
+					const combo = player.combos[i];
+					const image = comboIndex(map[COMBO_CARDS[combo * 2]], map[COMBO_CARDS[combo * 2 + 1]]);
+					if (player.slot[image] < 0) ok = false;
+				}
+			}
+			allowed[a * 13 + b] = allowed[b * 13 + a] = ok ? 1 : 0;
+		}
+	}
+	return { ranks: (a, b) => allowed[a * 13 + b] === 1, maxGap };
+}
+
+let warnedThreads = false;
+
+/**
+ * Threads a run will use. The browser build has none to offer, so anything
+ * above one falls back to the calling thread, with a single warning.
+ */
+function resolveWorkers(options: SolveOptions): number {
+	if (options.analysisOnly) return 1;
+	const asked = options.workers === 'auto' ? defaultWorkerCount() : (options.workers ?? 1);
+	if (asked > 1 && !THREADS_AVAILABLE) {
+		if (!warnedThreads) {
+			warnedThreads = true;
+			console.warn(`@toysolver/holdem: worker threads are Node-only; solving on one thread (${PLATFORM} build)`);
+		}
+		return 1;
+	}
+	return asked;
 }
 
 /** View a buffer as regret storage of the given precision. */
@@ -656,6 +927,7 @@ function makeSolution(
 	ctx: Context,
 	solver: Solver,
 	iterations: number,
+	totalIterations: number,
 	history: Progress[],
 	stoppedAt: 'target' | 'iterations',
 	workers: number,
@@ -686,7 +958,7 @@ function makeSolution(
 		for (let current = node; parent[current] >= 0; current = parent[current]) {
 			const owner = parent[current];
 			if (tree.kind[owner] !== NodeKind.Decision || tree.player[owner] !== player) continue;
-			const at = boardAtRound(spot.runouts.childFactor, board, round, tree.round[owner]);
+			const at = boardAtRound(spot.runouts, board, round, tree.round[owner]);
 			const { actions, probs } = solver.averageStrategyAt(owner, at);
 			const action = viaEdge[current] - tree.firstEdge[owner];
 			for (let i = 0; i < index.count; i++) reach[index.combos[i]] *= probs[i * actions + action];
@@ -700,8 +972,10 @@ function makeSolution(
 	return {
 		spot,
 		iterations,
+		totalIterations,
 		stoppedAt,
 		workers,
+		solver,
 		history,
 		ev(player) {
 			cachedEv ??= solver.expectedValue();
@@ -766,6 +1040,11 @@ function makeSolution(
 				raiseSizes: 'raiseSizes' in betting ? betting.raiseSizes : raiseRows,
 				maxRaises: betting.maxRaises ?? (source.maxRaises === undefined ? undefined : later(source.maxRaises, Array.isArray(source.maxRaises))),
 				allowAllIn: betting.allowAllIn ?? (source.allowAllIn === undefined ? undefined : later(source.allowAllIn, Array.isArray(source.allowAllIn))),
+				allInThreshold: 'allInThreshold' in betting ? betting.allInThreshold : source.allInThreshold === undefined ? undefined : later(source.allInThreshold, Array.isArray(source.allInThreshold)),
+				noDonk: 'noDonk' in betting ? betting.noDonk : source.noDonk === undefined ? undefined : later(source.noDonk, Array.isArray(source.noDonk)),
+				mergeSizes: 'mergeSizes' in betting ? betting.mergeSizes : source.mergeSizes,
+				minWeight: source.minWeight,
+				isomorphism: source.isomorphism,
 				maxCombos: 'maxCombos' in betting ? betting.maxCombos : source.maxCombos,
 				maxBytes: 'maxBytes' in betting ? betting.maxBytes : source.maxBytes,
 				chipScale: spot.chipScale,

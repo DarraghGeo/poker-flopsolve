@@ -6,6 +6,7 @@ import {
 	foldValues,
 	makeTerminalScratch,
 	showdownValues,
+	showdownValuesReference,
 } from '../src/showdown.ts';
 
 function mulberry32(seed: number): () => number {
@@ -115,5 +116,44 @@ describe('runouts', () => {
 	it('rejects boards that are not postflop', () => {
 		expect(() => enumerateRunouts(parseCards('As Kh'))).toThrow(/3, 4 or 5 cards/);
 		expect(() => enumerateRunouts([0, 1, 2, 3, 4, 5])).toThrow(/3, 4 or 5 cards/);
+	});
+});
+
+describe('optimised showdown', () => {
+	it.each(BOARDS)('matches the reference kernel to the last bit on %s, call after call', (text) => {
+		// One scratch shared by every call, in the solver's order, so any sum
+		// a call failed to clear would corrupt the next one.
+		const runouts = enumerateRunouts(parseCards(text));
+		const random = mulberry32(0x5eed + text.length);
+		// A partial table, as the solver builds it: only hands in some range.
+		const relevant = new Uint8Array(COMBOS);
+		for (let combo = 0; combo < COMBOS; combo++) relevant[combo] = random() < 0.4 ? 1 : 0;
+		const table = buildShowdownTable(runouts, relevant);
+		const scratch = makeTerminalScratch();
+		const fast = new Float64Array(COMBOS);
+		const slow = new Float64Array(COMBOS);
+		const reach = new Float64Array(COMBOS);
+
+		for (let call = 0; call < 200; call++) {
+			const board = Math.floor(random() * table.boards);
+			const count = table.liveCount[board];
+			const live = table.order.subarray(board * table.stride, board * table.stride + count);
+			reach.fill(0);
+			for (let i = 0; i < count; i++) reach[live[i]] = random() < 0.3 ? 0 : random();
+			const payoff = 1 + random() * 50;
+
+			showdownValues(reach, table, board, payoff, scratch, fast);
+			showdownValuesReference(reach, table, board, payoff, scratch, slow);
+			// Bit for bit: regret matching is discontinuous at zero, so even
+			// rounding-level differences would steer a solve elsewhere.
+			for (let i = 0; i < count; i++) {
+				const combo = live[i];
+				expect(Object.is(fast[combo], slow[combo]), `${formatCombo(combo)} call ${call}: ${fast[combo]} vs ${slow[combo]}`).toBe(true);
+			}
+		}
+		// Both kernels must leave the shared sums as they found them.
+		for (const sums of [scratch.weaker, scratch.stronger, scratch.all]) {
+			expect(sums.every((value) => value === 0)).toBe(true);
+		}
 	});
 });

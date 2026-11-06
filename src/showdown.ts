@@ -151,6 +151,119 @@ export function buildShowdownTable(runouts: Runouts, relevant?: Uint8Array): Sho
 /**
  * Counterfactual values at a showdown, exact under card removal.
  *
+ * Two passes over strength-ordered hands: ascending for the reach each hand
+ * beats, descending for the reach that beats it. Each is a running total minus
+ * what the hand's own cards block — the reach on its first card plus the reach
+ * on its second. The pair term inclusion-exclusion would subtract is always
+ * zero here: the only hand holding both cards is this one, and a hand's tie
+ * group is added only after the group is queried. So no pair sums are kept.
+ *
+ * Most tie groups hold one hand, and those query and commit in one step.
+ * Only the 52 single-card sums are dirtied, so they are cleared by a fill
+ * rather than a pass over the hands.
+ *
+ * This order of operations is bit-for-bit the reference kernel's, which
+ * matters: a value that is truly zero stays exactly zero, and regret matching,
+ * being discontinuous at zero, would otherwise amplify rounding noise.
+ *
+ * @param reach opponent reach per combination
+ * @param table strength ordering
+ * @param board final-round board index
+ * @param payoff chips the winner gains, i.e. each player's contribution
+ * @param scratch reusable buffers
+ * @param out destination of length COMBOS; every live entry is written
+ */
+export function showdownValues(
+	reach: Float64Array,
+	table: ShowdownTable,
+	board: number,
+	payoff: number,
+	scratch: TerminalScratch,
+	out: Float64Array,
+): void {
+	const { weaker, stronger, win } = scratch;
+	// Reading an imported const crosses a module binding on every access, which
+	// in a loop this tight costs more than the arithmetic. Hoist them.
+	const cards = COMBO_CARDS;
+	const order = table.order;
+	const starts = table.groupStart;
+	const orderBase = board * table.stride;
+	const groupBase = board * (table.stride + 1);
+	const groups = table.groupCount[board];
+	if (table.liveCount[board] === 0) return;
+
+	let running = 0;
+	for (let g = 0; g < groups; g++) {
+		const from = starts[groupBase + g];
+		const to = starts[groupBase + g + 1];
+		if (to - from === 1) {
+			const combo = order[orderBase + from];
+			const a = cards[combo * 2];
+			const b = cards[combo * 2 + 1];
+			win[combo] = running - (weaker[a] + weaker[b]);
+			const value = reach[combo];
+			if (value !== 0) {
+				running += value;
+				weaker[a] += value;
+				weaker[b] += value;
+			}
+			continue;
+		}
+		for (let i = from; i < to; i++) {
+			const combo = order[orderBase + i];
+			win[combo] = running - (weaker[cards[combo * 2]] + weaker[cards[combo * 2 + 1]]);
+		}
+		for (let i = from; i < to; i++) {
+			const combo = order[orderBase + i];
+			const value = reach[combo];
+			if (value === 0) continue;
+			running += value;
+			weaker[cards[combo * 2]] += value;
+			weaker[cards[combo * 2 + 1]] += value;
+		}
+	}
+
+	running = 0;
+	for (let g = groups - 1; g >= 0; g--) {
+		const from = starts[groupBase + g];
+		const to = starts[groupBase + g + 1];
+		if (to - from === 1) {
+			const combo = order[orderBase + from];
+			const a = cards[combo * 2];
+			const b = cards[combo * 2 + 1];
+			out[combo] = payoff * (win[combo] - (running - (stronger[a] + stronger[b])));
+			const value = reach[combo];
+			if (value !== 0) {
+				running += value;
+				stronger[a] += value;
+				stronger[b] += value;
+			}
+			continue;
+		}
+		for (let i = from; i < to; i++) {
+			const combo = order[orderBase + i];
+			out[combo] =
+				payoff * (win[combo] - (running - (stronger[cards[combo * 2]] + stronger[cards[combo * 2 + 1]])));
+		}
+		for (let i = from; i < to; i++) {
+			const combo = order[orderBase + i];
+			const value = reach[combo];
+			if (value === 0) continue;
+			running += value;
+			stronger[cards[combo * 2]] += value;
+			stronger[cards[combo * 2 + 1]] += value;
+		}
+	}
+
+	weaker.fill(0, 0, DECK);
+	stronger.fill(0, 0, DECK);
+}
+
+/**
+ * The showdown kernel as it was before `showdownValues` dropped the pair sums
+ * and the clearing pass, kept as the reference it is tested against — to the
+ * last bit.
+ *
  * @param reach opponent reach per combination
  * @param table strength ordering
  * @param board final-round board index
@@ -158,7 +271,7 @@ export function buildShowdownTable(runouts: Runouts, relevant?: Uint8Array): Sho
  * @param scratch reusable buffers
  * @param out destination of length COMBOS; fully overwritten
  */
-export function showdownValues(
+export function showdownValuesReference(
 	reach: Float64Array,
 	table: ShowdownTable,
 	board: number,
@@ -262,7 +375,6 @@ export function foldValues(
 	const cards = COMBO_CARDS;
 	const deck = DECK;
 
-	for (let i = 0; i < liveCount; i++) out[live[i]] = 0;
 	if (liveCount === 0) return;
 
 	let total = 0;
@@ -275,17 +387,13 @@ export function foldValues(
 		sums[cards[combo * 2 + 1]] += value;
 		sums[deck + combo] += value;
 	}
+	// A hand's pair entry is read by that hand alone, so it is cleared as it
+	// is read; the 52 single-card entries are cleared together after.
 	for (let i = 0; i < liveCount; i++) {
 		const combo = live[i];
-		const a = cards[combo * 2];
-		const b = cards[combo * 2 + 1];
-		out[combo] = payoff * (total - (sums[a] + sums[b] - sums[deck + combo]));
+		const pair = deck + combo;
+		out[combo] = payoff * (total - (sums[cards[combo * 2]] + sums[cards[combo * 2 + 1]] - sums[pair]));
+		sums[pair] = 0;
 	}
-	for (let i = 0; i < liveCount; i++) {
-		const combo = live[i];
-		if (reach[combo] === 0) continue;
-		sums[cards[combo * 2]] = 0;
-		sums[cards[combo * 2 + 1]] = 0;
-		sums[deck + combo] = 0;
-	}
+	sums.fill(0, 0, deck);
 }

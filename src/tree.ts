@@ -85,6 +85,46 @@ export interface TreeConfig {
 	readonly chipScale: number;
 	/** Smallest legal raise increment, in units. */
 	readonly minRaiseUnits: number;
+	/**
+	 * A bet or raise committing at least this fraction of the actor's
+	 * remaining stack becomes a shove instead; once or per round. Unset or 0,
+	 * never.
+	 */
+	readonly allInThreshold?: number | readonly number[];
+	/**
+	 * Out of position may not lead into the player who made the last
+	 * aggressive action of the round before; it may only check. Once or per
+	 * round.
+	 */
+	readonly noDonk?: boolean | readonly boolean[];
+	/**
+	 * Pot-fraction sizes closer together than this collapse into one, their
+	 * mean. Unset or 0, none.
+	 */
+	readonly mergeSizes?: number;
+}
+
+/**
+ * Collapse pot-fraction sizes closer together than `distance` into their mean.
+ * Other kinds of size pass through untouched, after the merged ones.
+ */
+export function mergeBetSizes(sizes: readonly BetSize[], distance: number): BetSize[] {
+	if (!(distance > 0)) return [...sizes];
+	const fractions = sizes.filter((size): size is number => typeof size === 'number').sort((a, b) => a - b);
+	const others = sizes.filter((size) => typeof size !== 'number');
+	const merged: number[] = [];
+	let cluster: number[] = [];
+	const flush = (): void => {
+		if (cluster.length === 0) return;
+		merged.push(Math.round((cluster.reduce((a, b) => a + b, 0) / cluster.length) * 1000) / 1000);
+		cluster = [];
+	};
+	for (const size of fractions) {
+		if (cluster.length > 0 && size - cluster[0] >= distance) flush();
+		cluster.push(size);
+	}
+	flush();
+	return [...merged, ...others];
 }
 
 /** Structure-of-arrays betting tree. */
@@ -120,6 +160,10 @@ interface BetState {
 	readonly acted: number;
 	/** What each player had in when this round opened; equal for both. */
 	readonly base: number;
+	/** Who last bet or raised this round, or -1. */
+	readonly aggressor: number;
+	/** Who last bet or raised the round before, or -1. */
+	readonly previousAggressor: number;
 }
 
 /**
@@ -144,9 +188,15 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 	const rounds = runouts.rounds;
 	const maxRaises = perRound(config.maxRaises, Array.isArray(config.maxRaises), rounds, 'maxRaises');
 	const allowAllIn = perRound(config.allowAllIn, Array.isArray(config.allowAllIn), rounds, 'allowAllIn');
+	const merge = config.mergeSizes ?? 0;
 	const raiseSizes = config.raiseSizes
-		? perRound<readonly BetSize[]>(config.raiseSizes, raisesPerRound(config.raiseSizes), rounds, 'raiseSizes')
+		? perRound<readonly BetSize[]>(config.raiseSizes, raisesPerRound(config.raiseSizes), rounds, 'raiseSizes').map(
+				(row) => mergeBetSizes(row, merge),
+			)
 		: null;
+	const betSizes = config.betSizes.map((row) => mergeBetSizes(row, merge));
+	const threshold = perRound(config.allInThreshold ?? 0, Array.isArray(config.allInThreshold), rounds, 'allInThreshold');
+	const noDonk = perRound(config.noDonk ?? false, Array.isArray(config.noDonk), rounds, 'noDonk');
 	const half = Math.round(potUnits / 2);
 
 	const addNode = (
@@ -186,6 +236,8 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 			lastRaise: minRaiseUnits,
 			acted: 0,
 			base: state.invested[0],
+			aggressor: -1,
+			previousAggressor: state.aggressor,
 		};
 		// With someone already all in there is nothing left to decide, so the
 		// remaining streets run out straight to showdown.
@@ -247,16 +299,24 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 
 		// Nobody can put in more than the opponent is able to match.
 		const cap = Math.min(stackUnits, theirs + (stackUnits - theirs));
-		if (state.aggressions < maxRaises[state.round] && myRemaining > owed) {
+		// A donk bet: out of position opening a round into the player who
+		// took the betting lead the round before.
+		const donk =
+			noDonk[state.round] && me === 0 && owed === 0 && state.aggressions === 0 && state.previousAggressor === 1;
+		if (state.aggressions < maxRaises[state.round] && myRemaining > owed && !donk) {
 			const seen = new Set<number>();
 			const sizes: BetSize[] =
 				owed > 0 && raiseSizes
 					? [...raiseSizes[state.round]]
-					: [...(config.betSizes[state.round] ?? [])].filter((size) => !(typeof size === 'object' && 'times' in size));
+					: [...(betSizes[state.round] ?? [])].filter((size) => !(typeof size === 'object' && 'times' in size));
 			if (allowAllIn[state.round]) sizes.push('allin');
 
 			for (const size of sizes) {
-				const target = resolveTarget(size, state, cap);
+				let target = resolveTarget(size, state, cap);
+				// Close enough to everything that the rest is not worth keeping.
+				if (target !== null && threshold[state.round] > 0 && target - mine >= threshold[state.round] * myRemaining) {
+					target = cap;
+				}
 				if (target === null || seen.has(target)) continue;
 				seen.add(target);
 				const isShove = target >= stackUnits;
@@ -300,6 +360,8 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 					lastRaise: entry.target - theirs,
 					acted: state.acted + 1,
 					base: state.base,
+					aggressor: me,
+					previousAggressor: state.previousAggressor,
 				});
 			}
 			edgeChild[base + i] = child;
@@ -316,6 +378,8 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 		lastRaise: minRaiseUnits,
 		acted: 0,
 		base: 0,
+		aggressor: -1,
+		previousAggressor: -1,
 	});
 
 	const decisionNodes: number[] = [];
