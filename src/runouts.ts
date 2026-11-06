@@ -63,6 +63,11 @@ export interface Runouts {
 	readonly maps: CardMaps;
 	/** Whether any board stands for more than itself. */
 	readonly symmetric: boolean;
+	/**
+	 * Whether some board stands for deals that are not its exact mirror
+	 * images — runout buckets — so the stored game approximates the real one.
+	 */
+	readonly approximate: boolean;
 	/** The board as given. */
 	readonly initial: readonly number[];
 }
@@ -82,7 +87,11 @@ export interface Runouts {
  *   first; see `suitSymmetries`. Omitted, none.
  * @throws if the board is not a legal postflop board
  */
-export function enumerateRunouts(board: readonly number[], symmetries?: readonly Uint8Array[]): Runouts {
+export function enumerateRunouts(
+	board: readonly number[],
+	symmetries?: readonly Uint8Array[],
+	merge?: RunoutMerge,
+): Runouts {
 	if (board.length < 3 || board.length > 5) {
 		throw new Error(`A postflop board has 3, 4 or 5 cards; got ${board.length} (${formatCards(board)})`);
 	}
@@ -105,6 +114,7 @@ export function enumerateRunouts(board: readonly number[], symmetries?: readonly
 	const orbitCard: Uint8Array[] = [new Uint8Array(1)];
 	let stabilisers: number[][] = [group];
 	let symmetric = false;
+	let approximate = false;
 	const stabiliserStart: Int32Array[] = [];
 	const stabiliserMap: Int32Array[] = [];
 	const recordStabilisers = (list: number[][]): void => {
@@ -144,26 +154,62 @@ export function enumerateRunouts(board: readonly number[], symmetries?: readonly
 			for (let i = 0; i < previousWidth; i++) used[previousCards[base + i]] = 1;
 			const stabiliser = stabilisers[p];
 
+			// One stored child per orbit of the board's symmetries.
+			const children: { card: number; maps: number[]; cards: number[]; fixing: number[]; merged: boolean }[] = [];
 			for (let card = 0; card < DECK; card++) {
 				if (used[card] || seen[card]) continue;
 				// Ascending, so the first unseen card of an orbit is its lowest.
-				const fixing: number[] = [];
+				const child = { card, maps: [] as number[], cards: [] as number[], fixing: [] as number[], merged: false };
 				for (const sigma of stabiliser) {
 					const image = maps.card[sigma][card];
-					if (image === card) fixing.push(sigma);
+					if (image === card) child.fixing.push(sigma);
 					if (seen[image]) continue;
 					seen[image] = 1;
 					// `sigma` sends `card` to `image`, so its inverse sends the
 					// deal of `image` back onto this board.
-					memberMap.push(image === card ? 0 : maps.inverse(sigma));
-					memberCard.push(image);
+					child.maps.push(image === card ? 0 : maps.inverse(sigma));
+					child.cards.push(image);
 				}
+				children.push(child);
+			}
+
+			// Runout buckets: a child that plays like an earlier one is folded
+			// into it, relabelled by swapping the two cards' ranks.
+			if (merge) {
+				const boardRanks = new Set<number>();
+				for (let i = 0; i < previousWidth; i++) boardRanks.add(previousCards[base + i] >> 2);
+				for (let j = 0; j < children.length; j++) {
+					const later = children[j];
+					const rankJ = later.card >> 2;
+					if (boardRanks.has(rankJ)) continue;
+					for (let i = 0; i < j; i++) {
+						const earlier = children[i];
+						if (earlier.merged || (earlier.card & 3) !== (later.card & 3)) continue;
+						const rankI = earlier.card >> 2;
+						if (boardRanks.has(rankI) || rankJ - rankI > merge.maxGap || !merge.ranks(rankI, rankJ)) continue;
+						if (connectivity(boardRanks, rankI) !== connectivity(boardRanks, rankJ)) continue;
+						const swap = maps.add(rankSwap(rankI, rankJ));
+						for (let m = 0; m < later.maps.length; m++) {
+							earlier.maps.push(maps.then(later.maps[m], swap));
+							earlier.cards.push(later.cards[m]);
+						}
+						later.merged = true;
+						approximate = true;
+						break;
+					}
+				}
+			}
+
+			for (const child of children) {
+				if (child.merged) continue;
 				for (let i = 0; i < previousWidth; i++) level.push(previousCards[base + i]);
-				level.push(card);
+				level.push(child.card);
 				parents.push(p);
+				memberMap.push(...child.maps);
+				memberCard.push(...child.cards);
 				memberStart.push(memberMap.length);
-				nextStabilisers.push(fixing);
-				if (memberMap.length - memberStart[memberStart.length - 2] > 1) symmetric = true;
+				nextStabilisers.push(child.fixing);
+				if (child.maps.length > 1) symmetric = true;
 			}
 		}
 		starts[previousCount] = parents.length;
@@ -182,9 +228,51 @@ export function enumerateRunouts(board: readonly number[], symmetries?: readonly
 
 	return {
 		rounds, width, counts, cards, childStart, parent, orbitStart, orbitMap, orbitCard,
-		stabiliserStart, stabiliserMap, maps, symmetric,
+		stabiliserStart, stabiliserMap, maps, symmetric, approximate,
 		initial: [...board],
 	};
+}
+
+/** Which runouts may be bucketed together; see `enumerateRunouts`. */
+export interface RunoutMerge {
+	/**
+	 * Whether swapping these two ranks leaves the game close enough to itself:
+	 * at the least, every hand in either range still maps to a hand in it.
+	 */
+	ranks(a: number, b: number): boolean;
+	/** Largest distance between two ranks in one bucket, counted from the stored card. */
+	readonly maxGap: number;
+}
+
+/** The card map swapping two ranks in every suit. */
+export function rankSwap(a: number, b: number): Uint8Array {
+	const out = new Uint8Array(DECK);
+	for (let card = 0; card < DECK; card++) {
+		const rank = card >> 2;
+		out[card] = ((rank === a ? b : rank === b ? a : rank) << 2) | (card & 3);
+	}
+	return out;
+}
+
+/**
+ * How far a rank goes toward a straight with the board: the most board ranks
+ * sharing one five-rank window with it, the ace counting low as well.
+ */
+export function connectivity(boardRanks: ReadonlySet<number>, rank: number): number {
+	let best = 0;
+	// Windows by their lowest rank; -1 is the wheel, A-2-3-4-5.
+	for (let low = -1; low <= 8; low++) {
+		if (rank < low || rank > low + 4) {
+			if (!(low === -1 && rank === 12)) continue;
+		}
+		let count = 0;
+		for (let r = low; r <= low + 4; r++) {
+			const actual = r === -1 ? 12 : r;
+			if (actual !== rank && boardRanks.has(actual)) count++;
+		}
+		if (count > best) best = count;
+	}
+	return best;
 }
 
 /**

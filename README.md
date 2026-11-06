@@ -256,6 +256,30 @@ runouts. To read a mirrored one, `spot.resolveBoard('Ts9s4h 7c')` gives the stor
 and how hands relabel onto it. Ranges that differ between suits anywhere — an exact combo,
 or a partial weight on one suit — have no symmetry to use, and solve as before.
 
+### Runout buckets (approximate)
+
+`runoutBuckets: true` solves one turn or river card for several that play alike: two cards
+of one suit, neither pairing the board, equally connected to its straights, whose rank
+swap maps both ranges onto themselves. The stored card stands for the others with hands
+relabelled by the swap. A number instead of `true` is the widest rank gap allowed in a
+bucket (`true` is 1, the most cautious).
+
+It is an approximation — 55 on a 6 river and 66 on a 5 river sit on opposite sides of the
+board card, and no relabelling fixes that — so `exploitabilityPercent()` (and
+`targetPercent`) measure the bucketed game, and `run.trueExploitabilityPercent()` measures
+the strategy in the real one, every card dealt. How much it saves and costs depends on
+the ranges; suited connectors keep ranks apart, pocket pairs near the merged ranks cost
+accuracy. On AhKdQc, 4 threads, to 0.3% of pot in the bucketed game:
+
+| Ranges | Gap | Runouts | Time | True exploitability |
+|---|---|---|---|---|
+| Bench (wide, connectors) | exact | 2,352 | 13.2 s | 0.271% |
+| | 1 | 1,672 | 10.5 s | 0.278% |
+| | 3 | 1,348 | 8.0 s | 0.302% |
+| Pairs and broadway | exact | 2,352 | 9.3 s | 0.228% |
+| | 1 | 1,396 | 4.9 s | 0.482% |
+| | 3 | 1,088 | 4.2 s | 0.542% |
+
 ### 16-bit storage
 
 A spot too big for 32-bit storage under `maxBytes` is solved at 16 bits instead

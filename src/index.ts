@@ -8,12 +8,13 @@
  * you are in, so the solver starts from a dead pot with both players even.
  */
 
-import { COMBO_CARDS, COMBOS, formatCards, parseCards } from './cards.ts';
+import { COMBO_CARDS, COMBOS, comboIndex, formatCards, parseCards } from './cards.ts';
 import type { BetSize, RaiseSizes, Tree } from './tree.ts';
 import { ACTION_LABELS, ActionKind, buildTree, NodeKind, raisesPerRound } from './tree.ts';
 import type { Runouts } from './runouts.ts';
 import type { ResolvedBoard } from './runouts.ts';
-import { boardAtRound, enumerateRunouts, resolveBoard } from './runouts.ts';
+import type { RunoutMerge } from './runouts.ts';
+import { boardAtRound, enumerateRunouts, rankSwap, resolveBoard } from './runouts.ts';
 import { suitSymmetries } from './abstraction.ts';
 import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
@@ -125,6 +126,18 @@ export interface SpotConfig {
 	 * anywhere simply have no symmetry to use.
 	 */
 	readonly isomorphism?: boolean;
+	/**
+	 * Solve one turn or river card for several that play alike — an
+	 * approximation. Two cards of one suit are bucketed together when neither
+	 * pairs the board, they connect equally to its straights, and swapping
+	 * their ranks maps each range onto itself (so `98s` in a range keeps an 8
+	 * and a 9 apart). The stored card stands for the others with hands
+	 * relabelled by that swap. How much it saves depends on the ranges: with
+	 * pairs and broadway hands most low cards bucket together; suited
+	 * connectors keep them apart. `trueExploitabilityPercent()` measures the
+	 * strategy in the real game, every card dealt. Default false.
+	 */
+	readonly runoutBuckets?: boolean | number;
 }
 
 /** Projected cost of solving a spot. */
@@ -268,7 +281,13 @@ export function defineSpot(config: SpotConfig): Spot {
 		config.isomorphism === false || board.length === 5
 			? undefined
 			: suitSymmetries(board, [players[0].weights, players[1].weights]);
-	const runouts = enumerateRunouts(board, symmetries);
+	const runouts = enumerateRunouts(
+		board,
+		symmetries,
+		config.runoutBuckets && board.length < 5
+			? rangeRankMerge(players, config.runoutBuckets === true ? DEFAULT_BUCKET_GAP : config.runoutBuckets)
+			: undefined,
+	);
 
 	const tree = buildTree(
 		{
@@ -558,6 +577,14 @@ export interface SolveRun {
 	step(count: number): void;
 	/** Distance from equilibrium as a percentage of the pot. */
 	exploitabilityPercent(): number;
+	/**
+	 * Exploitability in the real game, every card dealt, as a percentage of
+	 * the pot. The same as `exploitabilityPercent()` unless `runoutBuckets`
+	 * folded cards that are not exact mirror images; then the strategy is
+	 * copied onto every real runout of an unbucketed spot and measured there,
+	 * which costs that spot's memory and one best-response pass over it.
+	 */
+	trueExploitabilityPercent(): number;
 	/** A view of the strategy as it stands; cheap, take a fresh one each time. */
 	snapshot(history?: readonly Progress[], stoppedAt?: 'target' | 'iterations'): Solution;
 	/** Release worker threads. Snapshots taken before this stay usable. */
@@ -678,6 +705,19 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		exploitabilityPercent() {
 			return (100 * solver.exploitability()) / (spot.potUnits / spot.chipScale);
 		},
+		trueExploitabilityPercent() {
+			if (!spot.runouts.approximate) return this.exploitabilityPercent();
+			const real = createRun(defineSpot({ ...spot.source, runoutBuckets: false }), {
+				workers: pool ? pool.workers : 1,
+				precision,
+			});
+			try {
+				warmStart(real.solver.ctx, ctx, true);
+				return real.exploitabilityPercent();
+			} finally {
+				real.close();
+			}
+		},
 		snapshot(history = [], stoppedAt = 'iterations') {
 			return makeSolution(spot, ctx, solver, completed, offset + completed, [...history], stoppedAt, pool ? pool.workers : 1);
 		},
@@ -692,6 +732,29 @@ function sameSpot(a: SpotConfig, b: SpotConfig): boolean {
 	const plain = ({ maxBytes: _bytes, maxCombos: _combos, isomorphism: _iso, ...game }: SpotConfig): string =>
 		JSON.stringify(game, (_, value: unknown) => (value instanceof Float64Array ? Array.from(value) : value));
 	return plain(a) === plain(b);
+}
+
+/** Largest rank distance within a runout bucket, for `runoutBuckets: true`. */
+const DEFAULT_BUCKET_GAP = 1;
+
+/** Rank swaps that keep every hand of both ranges in its range. */
+function rangeRankMerge(players: readonly [PlayerIndex, PlayerIndex], maxGap: number): RunoutMerge {
+	const allowed = new Uint8Array(13 * 13);
+	for (let a = 0; a < 13; a++) {
+		for (let b = a; b < 13; b++) {
+			const map = rankSwap(a, b);
+			let ok = true;
+			for (const player of players) {
+				for (let i = 0; ok && i < player.count; i++) {
+					const combo = player.combos[i];
+					const image = comboIndex(map[COMBO_CARDS[combo * 2]], map[COMBO_CARDS[combo * 2 + 1]]);
+					if (player.slot[image] < 0) ok = false;
+				}
+			}
+			allowed[a * 13 + b] = allowed[b * 13 + a] = ok ? 1 : 0;
+		}
+	}
+	return { ranks: (a, b) => allowed[a * 13 + b] === 1, maxGap };
 }
 
 let warnedThreads = false;
