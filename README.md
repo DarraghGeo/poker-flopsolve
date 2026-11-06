@@ -107,6 +107,24 @@ defineSpot({ ..., board: 'Qs Jh 4d',
 
 A subgame keeps the rounds from its own onwards.
 
+### Betting per player
+
+Every betting setting — `betSizes`, `raiseSizes`, `maxRaises`, `allowAllIn`,
+`allInThreshold` — can also be given apart for each player, each side in its usual form:
+
+```ts
+defineSpot({ ...,
+  betSizes: { oop: [[0.33]], ip: [[0.5, 1.25]] },   // OOP bets small, IP bets half or overbets
+  maxRaises: { oop: 2, ip: 1 },                     // only OOP may raise a bet
+  allowAllIn: { oop: false, ip: true },
+});
+```
+
+Settings only shape the betting tree, which is built once before solving, so this costs
+nothing per iteration: the same game given plainly or per player solves at the same
+speed, and asymmetric sizes cost exactly what their tree does. With `maxRaises` apart, a
+player may bet or raise only while the round's aggressions are under their own limit.
+
 ### Trimming the tree
 
 Tree size multiplies everything else, so three switches cut the lines that cost the most

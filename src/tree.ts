@@ -25,6 +25,27 @@ export type BetSize = number | { chips: number } | { times: number } | 'allin';
 /** Sizes offered when facing a bet: one row for every round, or a row per round. */
 export type RaiseSizes = readonly BetSize[] | readonly (readonly BetSize[])[];
 
+/**
+ * A setting given once for both players, or apart: `{ oop: …, ip: … }`, each
+ * side in the setting's own form.
+ */
+export type PerPlayer<T> = T | { readonly oop: T; readonly ip: T };
+
+/** Whether a setting is given apart for each player. */
+export function isPerPlayer<T>(value: PerPlayer<T>): value is { readonly oop: T; readonly ip: T } {
+	return typeof value === 'object' && value !== null && !Array.isArray(value) && 'oop' in value && 'ip' in value;
+}
+
+/** One player's side of a setting: 0 out of position, 1 in position. */
+export function forPlayer<T>(value: PerPlayer<T>, player: number): T {
+	return isPerPlayer(value) ? (player === 0 ? value.oop : value.ip) : value;
+}
+
+/** Apply `f` to each side of a setting, keeping its shape. */
+export function mapPlayers<T, U>(value: PerPlayer<T>, f: (side: T) => U): PerPlayer<U> {
+	return isPerPlayer(value) ? { oop: f(value.oop), ip: f(value.ip) } : f(value);
+}
+
 /** Whether raise sizes are given per round rather than once for all of them. */
 export function raisesPerRound(sizes: RaiseSizes): sizes is readonly (readonly BetSize[])[] {
 	return sizes.length > 0 && Array.isArray(sizes[0]);
@@ -71,17 +92,21 @@ export interface TreeConfig {
 	readonly potUnits: number;
 	/** Effective stack behind, per player, in units. */
 	readonly stackUnits: number;
-	/** Bet sizes offered on each betting round. */
-	readonly betSizes: readonly (readonly BetSize[])[];
+	/** Bet sizes offered on each betting round; for both players, or apart. */
+	readonly betSizes: PerPlayer<readonly (readonly BetSize[])[]>;
 	/**
 	 * Sizes offered when facing a bet, on every round or per round. Unset,
 	 * raises use the round's bet sizes.
 	 */
-	readonly raiseSizes?: RaiseSizes;
-	/** Maximum aggressive actions per round, the opening bet the first; once or per round. */
-	readonly maxRaises: number | readonly number[];
+	readonly raiseSizes?: PerPlayer<RaiseSizes | undefined>;
+	/**
+	 * Maximum aggressive actions per round, the opening bet the first; once or
+	 * per round. Given apart, a player may bet or raise only while the round's
+	 * aggressions are under their own limit.
+	 */
+	readonly maxRaises: PerPlayer<number | readonly number[]>;
 	/** Offer a shove alongside the configured sizes; once or per round. */
-	readonly allowAllIn: boolean | readonly boolean[];
+	readonly allowAllIn: PerPlayer<boolean | readonly boolean[]>;
 	readonly chipScale: number;
 	/** Smallest legal raise increment, in units. */
 	readonly minRaiseUnits: number;
@@ -90,7 +115,7 @@ export interface TreeConfig {
 	 * remaining stack becomes a shove instead; once or per round. Unset or 0,
 	 * never.
 	 */
-	readonly allInThreshold?: number | readonly number[];
+	readonly allInThreshold?: PerPlayer<number | readonly number[] | undefined>;
 	/**
 	 * Out of position may not lead into the player who made the last
 	 * aggressive action of the round before; it may only check. Once or per
@@ -186,16 +211,28 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 
 	const { potUnits, stackUnits, chipScale, minRaiseUnits } = config;
 	const rounds = runouts.rounds;
-	const maxRaises = perRound(config.maxRaises, Array.isArray(config.maxRaises), rounds, 'maxRaises');
-	const allowAllIn = perRound(config.allowAllIn, Array.isArray(config.allowAllIn), rounds, 'allowAllIn');
+	// Every betting setting resolved per player, then per round.
+	const players = [0, 1] as const;
+	const maxRaises = players.map((p) => {
+		const value = forPlayer(config.maxRaises, p);
+		return perRound(value, Array.isArray(value), rounds, 'maxRaises');
+	});
+	const allowAllIn = players.map((p) => {
+		const value = forPlayer(config.allowAllIn, p);
+		return perRound(value, Array.isArray(value), rounds, 'allowAllIn');
+	});
 	const merge = config.mergeSizes ?? 0;
-	const raiseSizes = config.raiseSizes
-		? perRound<readonly BetSize[]>(config.raiseSizes, raisesPerRound(config.raiseSizes), rounds, 'raiseSizes').map(
-				(row) => mergeBetSizes(row, merge),
-			)
-		: null;
-	const betSizes = config.betSizes.map((row) => mergeBetSizes(row, merge));
-	const threshold = perRound(config.allInThreshold ?? 0, Array.isArray(config.allInThreshold), rounds, 'allInThreshold');
+	const raiseSizes = players.map((p) => {
+		const value = forPlayer(config.raiseSizes, p);
+		return value
+			? perRound<readonly BetSize[]>(value, raisesPerRound(value), rounds, 'raiseSizes').map((row) => mergeBetSizes(row, merge))
+			: null;
+	});
+	const betSizes = players.map((p) => forPlayer(config.betSizes, p).map((row) => mergeBetSizes(row, merge)));
+	const threshold = players.map((p) => {
+		const value = forPlayer(config.allInThreshold, p) ?? 0;
+		return perRound(value, Array.isArray(value), rounds, 'allInThreshold');
+	});
 	const noDonk = perRound(config.noDonk ?? false, Array.isArray(config.noDonk), rounds, 'noDonk');
 	const half = Math.round(potUnits / 2);
 
@@ -303,18 +340,19 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 		// took the betting lead the round before.
 		const donk =
 			noDonk[state.round] && me === 0 && owed === 0 && state.aggressions === 0 && state.previousAggressor === 1;
-		if (state.aggressions < maxRaises[state.round] && myRemaining > owed && !donk) {
+		if (state.aggressions < maxRaises[me][state.round] && myRemaining > owed && !donk) {
 			const seen = new Set<number>();
+			const myRaises = raiseSizes[me];
 			const sizes: BetSize[] =
-				owed > 0 && raiseSizes
-					? [...raiseSizes[state.round]]
-					: [...(betSizes[state.round] ?? [])].filter((size) => !(typeof size === 'object' && 'times' in size));
-			if (allowAllIn[state.round]) sizes.push('allin');
+				owed > 0 && myRaises
+					? [...myRaises[state.round]]
+					: [...(betSizes[me][state.round] ?? [])].filter((size) => !(typeof size === 'object' && 'times' in size));
+			if (allowAllIn[me][state.round]) sizes.push('allin');
 
 			for (const size of sizes) {
 				let target = resolveTarget(size, state, cap);
 				// Close enough to everything that the rest is not worth keeping.
-				if (target !== null && threshold[state.round] > 0 && target - mine >= threshold[state.round] * myRemaining) {
+				if (target !== null && threshold[me][state.round] > 0 && target - mine >= threshold[me][state.round] * myRemaining) {
 					target = cap;
 				}
 				if (target === null || seen.has(target)) continue;
