@@ -55,6 +55,11 @@ export const CONTROL = {
 
 export const COMMAND = { work: 0, exit: 1 } as const;
 
+/** How long worker threads may take to start before a solve gives up on them. */
+export const WORKER_START_MS = 30_000;
+export const WORKER_START_ERROR =
+	'Worker threads did not start within 30 s. Run with workers: 1, or check that worker threads can load this package.';
+
 /** How the runouts are split and where the cut sits in the tree. */
 export interface ShardPlan {
 	readonly round: number;
@@ -188,10 +193,14 @@ export function startPool(
 
 	// Barrier: a worker that started after the first dispatch would never see
 	// the generation change, and the pool would deadlock.
+	// A worker that fails to start reports it by an event, which cannot be
+	// delivered while this thread waits here, so the wait is bounded.
+	const deadline = Date.now() + WORKER_START_MS;
 	for (;;) {
 		const ready = Atomics.load(control, CONTROL.ready);
 		if (ready >= spawned || failure) break;
-		Atomics.wait(control, CONTROL.ready, ready, 20);
+		if (Date.now() > deadline) failure = new Error(WORKER_START_ERROR);
+		else Atomics.wait(control, CONTROL.ready, ready, 20);
 	}
 	if (failure) {
 		for (const thread of threads) thread.terminate();
