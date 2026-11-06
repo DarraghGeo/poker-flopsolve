@@ -17,6 +17,7 @@ import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
+import { DEFAULT_MAX_BYTES, PLATFORM, THREADS_AVAILABLE } from './platform/node.ts';
 import type { Context, PlayerIndex, RegretStore, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
@@ -34,12 +35,11 @@ export { activeCombos, parseRange, rangeWeight } from './range.ts';
 export type { BetSize } from './tree.ts';
 export type { Solver } from './cfr.ts';
 export { ACTION_LABELS, ActionKind, NodeKind } from './tree.ts';
+/** 'node' or 'browser': which build is running. */
+export { PLATFORM } from './platform/node.ts';
 
 /** Sub-chip resolution, so pot-fraction sizing is exact. */
 const DEFAULT_CHIP_SCALE = 100;
-
-/** Default ceiling on solver storage. */
-const DEFAULT_MAX_BYTES = 6 * 1024 * 1024 * 1024;
 
 /** Measured throughput on a warm run, used only to project solve time. */
 const OPS_PER_SECOND = 2e8;
@@ -76,7 +76,11 @@ export interface SpotConfig {
 	readonly allowAllIn?: boolean | readonly boolean[];
 	/** Refuse a range wider than this many combinations. */
 	readonly maxCombos?: number;
-	/** Refuse a spot needing more than this much storage. */
+	/**
+	 * Refuse a spot needing more than this much storage. Defaults to 6 GiB in
+	 * the Node build and 512 MiB in the browser build, where a tab has far less
+	 * to give.
+	 */
 	readonly maxBytes?: number;
 	readonly chipScale?: number;
 }
@@ -308,6 +312,8 @@ export interface SolveOptions {
 	 * reaches 1e-7 by two thousand — always orders of magnitude under the
 	 * exploitability, so never the largest error in the answer, but do not
 	 * expect two worker counts to agree bit for bit.
+	 *
+	 * The browser build is single-threaded: any count resolves to 1 there.
 	 */
 	readonly workers?: number | 'auto';
 	/**
@@ -453,7 +459,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
 	const weights = runoutWeights(spot.runouts);
 
-	const requested = options.analysisOnly ? 1 : options.workers === 'auto' ? defaultWorkerCount() : (options.workers ?? 1);
+	const requested = resolveWorkers(options);
 	const plan = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
 
 	// Workers need the accumulators in shared memory. Allocating shared for a
@@ -525,6 +531,25 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			return makeSolution(spot, ctx, solver, completed, [...history], stoppedAt, pool ? pool.workers : 1);
 		},
 	};
+}
+
+let warnedThreads = false;
+
+/**
+ * Threads a run will use. The browser build has none to offer, so anything
+ * above one falls back to the calling thread, with a single warning.
+ */
+function resolveWorkers(options: SolveOptions): number {
+	if (options.analysisOnly) return 1;
+	const asked = options.workers === 'auto' ? defaultWorkerCount() : (options.workers ?? 1);
+	if (asked > 1 && !THREADS_AVAILABLE) {
+		if (!warnedThreads) {
+			warnedThreads = true;
+			console.warn(`@toysolver/holdem: worker threads are Node-only; solving on one thread (${PLATFORM} build)`);
+		}
+		return 1;
+	}
+	return asked;
 }
 
 /** View a buffer as regret storage of the given precision. */

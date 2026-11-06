@@ -31,15 +31,16 @@
  * workers, which is a different association of the same addition.
  */
 
-import { availableParallelism } from 'node:os';
-import { Worker } from 'node:worker_threads';
-import { fileURLToPath } from 'node:url';
 import { COMBOS } from './cards.ts';
 import type { Context, RootTraversal, Solver } from './cfr.ts';
 import { Mode } from './cfr.ts';
 import type { Runouts } from './runouts.ts';
 import type { Tree } from './tree.ts';
 import { NodeKind } from './tree.ts';
+import type { WorkerHandle } from './platform/node.ts';
+import { spawnWorker } from './platform/node.ts';
+
+export { defaultWorkerCount } from './platform/node.ts';
 
 export const CONTROL = {
 	generation: 0,
@@ -155,12 +156,7 @@ export function startPool(
 	const controlBuffer = new SharedArrayBuffer(CONTROL.size * 4);
 	const control = new Int32Array(controlBuffer);
 
-	const workerUrl = new URL(
-		import.meta.url.endsWith('.ts') ? './worker.ts' : './worker.js',
-		import.meta.url,
-	);
-
-	const threads: Worker[] = [];
+	const threads: WorkerHandle[] = [];
 	let failure: Error | null = null;
 
 	for (let w = 0; w < spawned; w++) {
@@ -178,17 +174,15 @@ export function startPool(
 			exchange: exchangeBuffer,
 			entryCount,
 		};
-		const thread = new Worker(fileURLToPath(workerUrl), { workerData: setup });
 		// A worker that dies would otherwise leave the main thread waiting on a
 		// counter that can never reach its target.
-		thread.on('error', (error: Error) => {
+		const thread = spawnWorker(setup, (error: Error) => {
 			failure ??= error;
 			Atomics.store(control, CONTROL.ready, spawned);
 			Atomics.add(control, CONTROL.done, spawned);
 			Atomics.notify(control, CONTROL.done);
 			Atomics.notify(control, CONTROL.ready);
 		});
-		thread.unref();
 		threads.push(thread);
 	}
 
@@ -200,7 +194,7 @@ export function startPool(
 		Atomics.wait(control, CONTROL.ready, ready, 20);
 	}
 	if (failure) {
-		for (const thread of threads) void thread.terminate();
+		for (const thread of threads) thread.terminate();
 		throw failure;
 	}
 
@@ -294,21 +288,7 @@ export function startPool(
 			Atomics.store(control, CONTROL.command, COMMAND.exit);
 			Atomics.add(control, CONTROL.generation, 1);
 			Atomics.notify(control, CONTROL.generation);
-			for (const thread of threads) void thread.terminate();
+			for (const thread of threads) thread.terminate();
 		},
 	};
-}
-
-/**
- * Suggested worker count for this machine, the main thread included.
- *
- * One less than the available parallelism, but never under two. Scaling stays
- * monotone right up to the core count — a flop solve measured 3.3x on 4
- * workers, 3.9x on 6 and 4.3x on 8 across 8 cores — so the only reason to hold
- * one back is leaving the machine responsive, and on two cores that would mean
- * not splitting at all.
- */
-export function defaultWorkerCount(): number {
-	const cores = availableParallelism();
-	return cores < 2 ? 1 : Math.max(2, cores - 1);
 }

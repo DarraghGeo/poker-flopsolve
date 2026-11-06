@@ -18,7 +18,8 @@
     "sourceMap": true,
     "outDir": "dist",
     "skipLibCheck": true,
+    "paths": { "@toysolver/holdem": ["./src/index.ts"] },
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src", "test", "bin", "ui"]
+  "include": ["src", "test", "bin", "ui", "scripts", "examples", "tsup.config.ts"]
 }

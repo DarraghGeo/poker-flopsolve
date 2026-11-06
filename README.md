@@ -152,6 +152,25 @@ This is *unsafe* re-solving. The subgame is solved for the ranges that arrive, s
 strategy can be exploitable in ways the original allowed for. It also does not make the
 earlier streets any more accurate than their coarse model of the future.
 
+## In a browser
+
+The package also runs in a browser, for the small solves a page wants: river spots and
+narrow turn spots. Bundlers pick the browser build (`dist/browser.js`) automatically
+through the `browser` export condition. It is the same solver, single-threaded:
+
+- no worker threads, so `workers` resolves to 1 (asking for more logs one warning);
+- no `SharedArrayBuffer`, so the page needs no cross-origin isolation headers;
+- `maxBytes` defaults to 512 MiB rather than 6 GiB, so a spot too big for a tab is
+  refused up front by `defineSpot` instead of taking the tab down.
+
+A solve blocks the thread it runs on, so host it in a Web Worker and step it in chunks;
+[`examples/browser-worker.ts`](examples/browser-worker.ts) does that with progress and a
+stop message in about sixty lines. Flop spots and wide turn spots belong in Node, where
+`workers` splits the runouts across cores.
+
+`npm test` checks the browser build in headless Chromium against Node (skipped where
+Playwright is not installed), and `npm run bench:browser` times it beside Node.
+
 ## Performance
 
 Measured on an Apple M2, single threaded:
