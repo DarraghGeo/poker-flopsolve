@@ -157,6 +157,8 @@ export function warmStart(to: Context, from: Context, averages: boolean): WarmSt
 	const newSum = new Float64Array(width);
 	const hasRegret = to.regret.length > 0 && from.regret.length > 0;
 
+	// A combination's position in the old board's hand list, or -1.
+	const position = new Int32Array(COMBOS).fill(-1);
 	let matched = 0;
 	for (const node of tree.decisionNodes) {
 		const old = match[node];
@@ -166,8 +168,6 @@ export function warmStart(to: Context, from: Context, averages: boolean): WarmSt
 		const owner = tree.player[node];
 		const actions = tree.numEdges[node];
 		const oldActions = from.tree.numEdges[old];
-		const index = to.players[owner];
-		const oldIndex = from.players[owner];
 
 		// Which old action each new one continues.
 		const actionOf = new Int32Array(actions).fill(-1);
@@ -178,28 +178,37 @@ export function warmStart(to: Context, from: Context, averages: boolean): WarmSt
 
 		for (let board = 0; board < to.runouts.counts[round]; board++) {
 			const resolved = resolveBoard(from.runouts, realCards(to.runouts, round, board));
+			// Blocks are laid out by position in each board's hand list.
+			const oldSlot = (from.active.roundBase[round] + resolved.board) * 2 + owner;
+			const oldFrom = from.active.start[oldSlot];
+			const oldCount = from.active.count[oldSlot];
 			const oldBlock = from.layout.blockOffset[old] + resolved.board;
-			const oldBase = from.layout.offset[old] + resolved.board * oldActions * oldIndex.count;
-			const oldLength = oldActions * oldIndex.count;
+			const oldBase = from.layout.offset[old] + oldActions * from.layout.rowStart[oldSlot];
+			const oldLength = oldActions * oldCount;
 			if (hasRegret) readBlock(from.regret, from.regretScale, oldBlock, oldBase, oldLength, oldRegret);
 			readBlock(from.strategySum, from.sumScale, oldBlock, oldBase, oldLength, oldSum);
+			for (let j = 0; j < oldCount; j++) position[from.active.list[oldFrom + j]] = j;
 
-			const length = actions * index.count;
+			const newSlot = (to.active.roundBase[round] + board) * 2 + owner;
+			const newFrom = to.active.start[newSlot];
+			const count = to.active.count[newSlot];
+			const length = actions * count;
 			newRegret.fill(0, 0, length);
 			newSum.fill(0, 0, length);
-			for (let i = 0; i < index.count; i++) {
-				const slot = oldIndex.slot[resolved.combos[index.combos[i]]];
-				if (slot < 0) continue;
+			for (let i = 0; i < count; i++) {
+				const j = position[resolved.combos[to.active.list[newFrom + i]]];
+				if (j < 0) continue;
 				for (let e = 0; e < actions; e++) {
 					const action = actionOf[e];
 					if (action < 0) continue;
-					newRegret[e * index.count + i] = oldRegret[action * oldIndex.count + slot];
-					newSum[e * index.count + i] = oldSum[action * oldIndex.count + slot];
+					newRegret[e * count + i] = oldRegret[action * oldCount + j];
+					newSum[e * count + i] = oldSum[action * oldCount + j];
 				}
 			}
+			for (let j = 0; j < oldCount; j++) position[from.active.list[oldFrom + j]] = -1;
 
 			const block = to.layout.blockOffset[node] + board;
-			const base = to.layout.offset[node] + board * length;
+			const base = to.layout.offset[node] + actions * to.layout.rowStart[newSlot];
 			if (hasRegret) writeBlock(to.regret, to.regretScale, REGRET_STEPS, block, base, length, newRegret);
 			if (averages) writeBlock(to.strategySum, to.sumScale, SUM_STEPS, block, base, length, newSum);
 			// The old solve may not have kept mirrored hands equal; this one must.
