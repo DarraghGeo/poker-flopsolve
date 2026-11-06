@@ -32,7 +32,12 @@ import type { WorkerSetup } from './parallel.ts';
 import { COMMAND, CONTROL } from './parallel.ts';
 
 const setup = workerData as WorkerSetup;
-const { config, dcfr, precision } = setup.payload as { config: SpotConfig; dcfr: boolean; precision: Precision };
+const { config, dcfr, precision, simd } = setup.payload as {
+	config: SpotConfig;
+	dcfr: boolean;
+	precision: Precision;
+	simd: boolean;
+};
 
 const spot = defineSpot(config);
 const relevant = new Uint8Array(COMBOS);
@@ -66,6 +71,7 @@ const ctx: Context = {
 	chanceOverride: null,
 	entryIndexOf: null,
 	expandOrbits: false,
+	simd,
 };
 
 const solver = makeSolver(ctx);

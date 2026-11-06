@@ -58,6 +58,8 @@ const options: SolveOptions = {
 	algorithm: args.algorithm === 'cfr+' ? 'cfr+' : 'dcfr',
 	// e.g. --approx '{"pruneBelow":1e-4}'
 	approximations: args.approx ? JSON.parse(args.approx) : undefined,
+	// --no-simd for the JavaScript kernels
+	simd: args['no-simd'] !== 'true',
 };
 /** `--no-iso` solves every runout, for comparison with folding mirrored ones. */
 const isomorphism = args['no-iso'] !== 'true';

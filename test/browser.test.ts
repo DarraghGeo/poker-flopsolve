@@ -52,16 +52,16 @@ function solveHere(config: SpotConfig, iterations: number): Outcome {
 	};
 }
 
-let browser: Record<string, Outcome> | null = null;
+let browser: (Record<string, Outcome> & { simd?: boolean }) | null = null;
 
 beforeAll(async () => {
 	// One browser launch for every spot. Asking for 4 workers checks that the
 	// browser build falls back to one thread instead of failing.
 	const source = `
-		import { defineSpot, PLATFORM, solve } from './src/index.ts';
+		import { defineSpot, PLATFORM, simdAvailable, solve } from './src/index.ts';
 		const SPOTS = ${JSON.stringify(SPOTS)};
 		export default async function run() {
-			const out = {};
+			const out = { simd: simdAvailable() };
 			for (const [name, { config, iterations }] of Object.entries(SPOTS)) {
 				const solution = solve(defineSpot(config), { iterations, workers: 4 });
 				out[name] = {
@@ -90,6 +90,14 @@ describe('browser build', () => {
 		expect(bundle).not.toMatch(/worker_threads/);
 	});
 
+	it('runs the WebAssembly SIMD kernels', (context) => {
+		if (!browser) {
+			context.skip();
+			return;
+		}
+		expect(browser.simd).toBe(true);
+	});
+
 	for (const [name, { config, iterations }] of Object.entries(SPOTS)) {
 		it(`solves the ${name} spot as Node does`, (context) => {
 			if (!browser) {
@@ -97,7 +105,7 @@ describe('browser build', () => {
 				return;
 			}
 			const here = solveHere(config, iterations);
-			const there = browser[name];
+			const there = browser[name] as Outcome;
 			expect(there.platform).toBe('browser');
 			expect(there.workers).toBe(1);
 			// Same code on the same engine family; allow for a last-bit

@@ -42,7 +42,6 @@ describe('average strategy where a hand never reached the node', () => {
 				averageStrategy(ctx.strategySum, base, actions, index.count, lists.list, lists.slot, from, count, strategy, ctx.regret);
 				for (let k = 0; k < count; k++) {
 					const i = lists.slot[from + k];
-					const combo = lists.list[from + k];
 					let sum = 0;
 					let positive = 0;
 					for (let a = 0; a < actions; a++) {
@@ -54,7 +53,8 @@ describe('average strategy where a hand never reached the node', () => {
 						const r = Math.max(0, ctx.regret[base + a * index.count + i]);
 						const expected = sum > 0 ? s / sum : positive > 0 ? r / positive : 1 / actions;
 						expect(probs[i * actions + a]).toBeCloseTo(expected, 12);
-						expect(strategy[a * COMBOS + combo]).toBeCloseTo(expected, 12);
+						// Laid out as storage is: by action, then storage slot.
+						expect(strategy[a * index.count + i]).toBeCloseTo(expected, 12);
 					}
 					if (sum > 0) reached++;
 					else if (positive > 0) {

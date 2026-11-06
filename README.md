@@ -237,6 +237,18 @@ Measured on an Apple M2, single threaded:
 `defineSpot` reports the projected cost before anything is allocated, and refuses a spot
 over `maxBytes` with concrete suggestions. `maxCombos` caps range width.
 
+### SIMD kernels
+
+Regret matching and the average-strategy pass — the per-hand normalisation at every
+decision, about a third of the solve — run as WebAssembly SIMD kernels, two doubles per
+instruction, in Node and in the browser alike. They are written in AssemblyScript
+(`assembly/kernels.ts`) and embedded in `src/wasm/kernels.ts`, so nothing is fetched at
+run time and only changing a kernel needs `npm run build:wasm`. Results are identical to
+the JavaScript kernels to the last bit; `simd: false` uses those instead, and platforms
+without WebAssembly SIMD fall back to them on their own (`simdAvailable()` says which).
+Measured interleaved on the bench turn spot: iterations ~18% faster in Node and 16% in
+Chromium, exploitability checks ~8%.
+
 ### Mirrored runouts
 
 When swapping suits leaves the board and both ranges unchanged, a deal in one of those

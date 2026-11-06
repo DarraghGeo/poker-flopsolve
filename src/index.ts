@@ -39,6 +39,7 @@ export * from './eval7.ts';
 export { activeCombos, parseRange, rangeWeight } from './range.ts';
 export type { ResolvedBoard } from './runouts.ts';
 export type { WarmStartReport } from './warm.ts';
+export { simdAvailable } from './kernels.ts';
 export type { BetSize } from './tree.ts';
 export type { Solver } from './cfr.ts';
 export { ACTION_LABELS, ActionKind, NodeKind } from './tree.ts';
@@ -452,6 +453,12 @@ export interface SolveOptions {
 	 * exactly, in the full game — shows.
 	 */
 	readonly approximations?: Approximations;
+	/**
+	 * Use the WebAssembly SIMD kernels where the platform supports them,
+	 * falling back to JavaScript where it does not. Results are identical
+	 * either way, to the bit; this exists to compare the two. Default true.
+	 */
+	readonly simd?: boolean;
 }
 
 /** See `SolveOptions.approximations`. */
@@ -657,6 +664,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		chanceOverride: null,
 		entryIndexOf: plan ? plan.entryIndexOf : null,
 		expandOrbits: false,
+		simd: options.simd ?? true,
 		// The traversal sums over every runout, so the denominator has to count
 		// them too: a hand pair is dealt once per compatible completion, not
 		// once. With a river board that factor is 1, which is exactly why this
@@ -676,7 +684,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 
 	const solver = makeSolver(ctx);
 	const pool: Pool | null = plan
-		? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations }, requested)
+		? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
 		: null;
 	if (pool) solver.useRoot(pool.traverse);
 	let completed = 0;

@@ -24,6 +24,8 @@ import type { ShowdownTable, TerminalScratch } from './showdown.ts';
 import { foldValues, makeTerminalScratch, showdownValues } from './showdown.ts';
 import type { Tree } from './tree.ts';
 import { pairValues } from './pairs.ts';
+import type { Kernels } from './kernels.ts';
+import { loadKernels } from './kernels.ts';
 import { NodeKind } from './tree.ts';
 
 /** Which combinations a player holds, and where each sits in storage. */
@@ -162,6 +164,8 @@ export interface Context {
 	 * onto it, exact for any reach, at the cost of the walks saved.
 	 */
 	expandOrbits: boolean;
+	/** Use the WebAssembly SIMD kernels where the platform has them. */
+	readonly simd: boolean;
 }
 
 /**
@@ -382,15 +386,21 @@ interface Buffers {
 	readonly mappedMe: Float64Array[];
 	readonly mappedOpp: Float64Array[];
 	readonly mappedLive: Uint16Array[];
+	/** This thread's SIMD kernels, whose memory holds `strategy`; null for JavaScript. */
+	readonly kernels: Kernels | null;
 }
 
-function makeBuffers(tree: Tree, maxActions: number): Buffers {
+function makeBuffers(tree: Tree, maxActions: number, simd: boolean): Buffers {
 	const depth = treeDepth(tree) + 2;
 	const make = <T>(factory: () => T): T[] => Array.from({ length: depth }, factory);
+	const kernels = simd ? loadKernels(depth, maxActions * COMBOS) : null;
 	return {
+		kernels,
 		value: make(() => new Float64Array(COMBOS)),
 		reachFor: [make(() => new Float64Array(COMBOS)), make(() => new Float64Array(COMBOS))],
-		strategy: make(() => new Float64Array(maxActions * COMBOS)),
+		strategy: kernels
+			? Array.from({ length: depth }, (_, d) => kernels.strategy(d))
+			: make(() => new Float64Array(maxActions * COMBOS)),
 		actionValues: make(() => new Float64Array(maxActions * COMBOS)),
 		live: make(() => new Uint16Array(COMBOS)),
 		mappedMe: make(() => new Float64Array(COMBOS)),
@@ -439,6 +449,7 @@ export type Mode = (typeof Mode)[keyof typeof Mode];
  *
  * @param source regrets, for the current strategy
  * @param slots each active entry's storage slot, beside `active`
+ * @param strategy written as storage is laid out: `strategy[a * stride + slot]`
  */
 function normalise(
 	source: RegretStore | SumStore,
@@ -453,19 +464,19 @@ function normalise(
 ): void {
 	const uniform = 1 / actions;
 	for (let i = 0; i < count; i++) {
-		const combo = active[from + i];
-		const at = base + slots[from + i];
+		const slot = slots[from + i];
+		const at = base + slot;
 		let total = 0;
 		for (let a = 0; a < actions; a++) {
 			const value = source[at + a * stride];
 			const positive = value > 0 ? value : 0;
-			strategy[a * COMBOS + combo] = positive;
+			strategy[a * stride + slot] = positive;
 			total += positive;
 		}
 		if (total > 0) {
-			for (let a = 0; a < actions; a++) strategy[a * COMBOS + combo] /= total;
+			for (let a = 0; a < actions; a++) strategy[a * stride + slot] /= total;
 		} else {
-			for (let a = 0; a < actions; a++) strategy[a * COMBOS + combo] = uniform;
+			for (let a = 0; a < actions; a++) strategy[a * stride + slot] = uniform;
 		}
 	}
 }
@@ -513,30 +524,30 @@ export function averageStrategy(
 	const fallback = regret !== undefined && regret.length > 0 ? regret : null;
 	const uniform = 1 / actions;
 	for (let i = 0; i < count; i++) {
-		const combo = active[from + i];
-		const at = base + slots[from + i];
+		const slot = slots[from + i];
+		const at = base + slot;
 		let total = 0;
 		for (let a = 0; a < actions; a++) {
 			const value = strategySum[at + a * stride];
-			strategy[a * COMBOS + combo] = value;
+			strategy[a * stride + slot] = value;
 			total += value;
 		}
 		if (total > 0) {
-			for (let a = 0; a < actions; a++) strategy[a * COMBOS + combo] /= total;
+			for (let a = 0; a < actions; a++) strategy[a * stride + slot] /= total;
 			continue;
 		}
 		if (fallback !== null) {
 			for (let a = 0; a < actions; a++) {
 				const value = fallback[at + a * stride];
 				const positive = value > 0 ? value : 0;
-				strategy[a * COMBOS + combo] = positive;
+				strategy[a * stride + slot] = positive;
 				total += positive;
 			}
 		}
 		if (total > 0) {
-			for (let a = 0; a < actions; a++) strategy[a * COMBOS + combo] /= total;
+			for (let a = 0; a < actions; a++) strategy[a * stride + slot] /= total;
 		} else {
-			for (let a = 0; a < actions; a++) strategy[a * COMBOS + combo] = uniform;
+			for (let a = 0; a < actions; a++) strategy[a * stride + slot] = uniform;
 		}
 	}
 }
@@ -695,9 +706,21 @@ function traverse(
 	const activeFrom = lists.start[listSlot];
 	const activeCount = lists.count[listSlot];
 
+	// Laid out as storage is: `strategy[a * stride + slot]`.
 	const strategy = buffers.strategy[depth];
-	if (mode === Mode.Train) {
+	if (mode === Mode.Train && buffers.kernels !== null) {
+		const kernels = buffers.kernels;
+		kernels.input.set(ctx.regret.subarray(slotBase, slotBase + actions * stride));
+		kernels.regretMatch(strategy, actions, stride);
+	} else if (mode === Mode.Train) {
 		regretMatch(ctx.regret, slotBase, actions, stride, active, activeSlot, activeFrom, activeCount, strategy);
+	} else if (buffers.kernels !== null) {
+		const kernels = buffers.kernels;
+		const length = actions * stride;
+		kernels.input.set(ctx.strategySum.subarray(slotBase, slotBase + length));
+		const hasRegret = ctx.regret.length > 0;
+		if (hasRegret) kernels.second.set(ctx.regret.subarray(slotBase, slotBase + length));
+		kernels.averageMatch(strategy, actions, stride, hasRegret);
 	} else {
 		averageStrategy(ctx.strategySum, slotBase, actions, stride, active, activeSlot, activeFrom, activeCount, strategy, ctx.regret);
 	}
@@ -731,10 +754,11 @@ function traverse(
 
 	for (let a = 0; a < actions; a++) {
 		const offset = a * COMBOS;
+		const row = a * stride;
 		const source = isTraverser ? reachMe : reachOpp;
 		for (let i = 0; i < activeCount; i++) {
 			const combo = active[activeFrom + i];
-			childReach[combo] = source[combo] * strategy[offset + combo];
+			childReach[combo] = source[combo] * strategy[row + activeSlot[activeFrom + i]];
 		}
 
 		const value = traverse(
@@ -749,7 +773,7 @@ function traverse(
 			for (let i = 0; i < activeCount; i++) {
 				const combo = active[activeFrom + i];
 				actionValues[offset + combo] = value[combo];
-				out[combo] += strategy[offset + combo] * value[combo];
+				out[combo] += strategy[row + activeSlot[activeFrom + i]] * value[combo];
 			}
 		} else {
 			// The opponent's strategy already sits inside their reach, so the
@@ -782,7 +806,7 @@ function traverse(
 				const accumulated = regret[at];
 				regret[at] =
 					accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[offset + combo] - out[combo];
-				strategySum[at] = strategySum[at] * keepSum + reachMe[combo] * strategy[offset + combo];
+				strategySum[at] = strategySum[at] * keepSum + reachMe[combo] * strategy[a * stride + activeSlot[activeFrom + i]];
 			}
 		}
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates) {
@@ -797,7 +821,7 @@ function traverse(
 				// CFR+: clamp the accumulated regret at zero in the same pass.
 				const updated = regret[at] + actionValues[offset + combo] - out[combo];
 				regret[at] = updated > 0 ? updated : 0;
-				strategySum[at] += iterWeight * reachMe[combo] * strategy[offset + combo];
+				strategySum[at] += iterWeight * reachMe[combo] * strategy[a * stride + activeSlot[activeFrom + i]];
 			}
 		}
 	}
@@ -889,9 +913,9 @@ function updateQuantised(
 			if (magnitude > largestRegret) largestRegret = magnitude;
 			actionValues[offset + combo] = updated;
 
-			const sum = strategySum[at] * oldSum * keepSum + weight * reachMe[combo] * strategy[offset + combo];
+			const sum = strategySum[at] * oldSum * keepSum + weight * reachMe[combo] * strategy[a * stride + activeSlot[activeFrom + i]];
 			if (sum > largestSum) largestSum = sum;
-			strategy[offset + combo] = sum;
+			strategy[a * stride + activeSlot[activeFrom + i]] = sum;
 		}
 	}
 
@@ -909,7 +933,7 @@ function updateQuantised(
 			const at = slotRow + activeSlot[activeFrom + i];
 			const r = actionValues[offset + combo] * regretStep;
 			regret[at] = r < 0 ? r - 0.5 : r + 0.5;
-			const s = strategy[offset + combo] * sumStep + dither(at, iterWeight);
+			const s = strategy[a * stride + activeSlot[activeFrom + i]] * sumStep + dither(at, iterWeight);
 			strategySum[at] = s < SUM_STEPS ? s : SUM_STEPS;
 		}
 	}
@@ -991,7 +1015,7 @@ export interface Solver {
 
 /** Create a solver over prepared structures. */
 export function makeSolver(ctx: Context): Solver {
-	const buffers = makeBuffers(ctx.tree, ctx.layout.maxActions);
+	const buffers = makeBuffers(ctx.tree, ctx.layout.maxActions, ctx.simd);
 	const reach0 = new Float64Array(COMBOS);
 	const reach1 = new Float64Array(COMBOS);
 	const rootLive = new Uint16Array(COMBOS);

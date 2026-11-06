@@ -272,7 +272,7 @@ function walk(
 				const row = cols[c] * COMBOS;
 				for (let i = 0; i < activeCount; i++) {
 					const combo = active[activeFrom + i];
-					out[row + combo] += strategy[offset + combo] * value[row + combo];
+					out[row + combo] += strategy[a * stride + lists.slot[activeFrom + i]] * value[row + combo];
 				}
 			}
 		}
@@ -287,7 +287,8 @@ function walk(
 		let childCount = 0;
 		for (let c = 0; c < colCount; c++) {
 			const k = cols[c];
-			const r = colReach[k] * strategy[offset + hands[k]];
+			// Strategies are laid out by storage slot.
+			const r = colReach[k] * strategy[a * stride + index.slot[hands[k]]];
 			childReach[k] = r;
 			if (r !== 0) childCols[childCount++] = k;
 		}

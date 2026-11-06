@@ -29,7 +29,8 @@
     "ui": "node --import tsx ui/server.ts",
     "bench": "node --import tsx bin/bench.ts",
     "bench:kernels": "node --import tsx bin/kernels.ts",
-    "bench:browser": "node --import tsx bin/bench-browser.ts"
+    "bench:browser": "node --import tsx bin/bench-browser.ts",
+    "build:wasm": "node --import tsx scripts/build-wasm.ts"
   },
   "keywords": [
     "poker",
@@ -41,6 +42,7 @@
   ],
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "assemblyscript": "^0.28.20",
     "esbuild": "^0.27.7",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
