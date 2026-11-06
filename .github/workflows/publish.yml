@@ -9,8 +9,9 @@ on:
 
 permissions:
   contents: read
-  # Lets npm sign the package with provenance: a public record that it was
-  # built here, from this commit.
+  # npm trusted publishing: the job proves to npm, by OpenID Connect, that it
+  # is this workflow in this repository, so no npm token is stored anywhere.
+  # The same identity signs the package with provenance.
   id-token: write
 
 concurrency:
@@ -25,8 +26,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm 11.5.1 or later.
+      - name: Update npm
+        run: npm install -g npm@^11.5.1
 
       - name: Install
         run: npm install --no-audit --no-fund
@@ -58,11 +63,4 @@ jobs:
 
       - name: Publish
         if: steps.version.outputs.published == 'false'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::warning::No NPM_TOKEN secret, so ${{ steps.version.outputs.version }} was not published. Add one in Settings > Secrets and variables > Actions, then re-run this workflow."
-            exit 0
-          fi
-          npm publish --provenance --access public
+        run: npm publish --provenance --access public
