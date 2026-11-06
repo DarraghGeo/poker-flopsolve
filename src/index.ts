@@ -10,7 +10,8 @@
 
 import { COMBO_CARDS, COMBOS, comboIndex, formatCards, parseCards } from './cards.ts';
 import type { BetSize, RaiseSizes, Tree } from './tree.ts';
-import { ACTION_LABELS, ActionKind, buildTree, NodeKind, raisesPerRound } from './tree.ts';
+import type { PerPlayer } from './tree.ts';
+import { ACTION_LABELS, ActionKind, buildTree, forPlayer, isPerPlayer, mapPlayers, NodeKind, raisesPerRound } from './tree.ts';
 import type { Runouts } from './runouts.ts';
 import type { ResolvedBoard } from './runouts.ts';
 import type { RunoutMerge } from './runouts.ts';
@@ -45,6 +46,7 @@ export { simdAvailable } from './kernels.ts';
 export type { BetSize } from './tree.ts';
 export type { Solver } from './cfr.ts';
 export { ACTION_LABELS, ActionKind, NodeKind } from './tree.ts';
+export type { PerPlayer, RaiseSizes } from './tree.ts';
 /** 'node' or 'browser': which build is running. */
 export { PLATFORM } from './platform/node.ts';
 
@@ -70,20 +72,29 @@ export interface SpotConfig {
 	readonly oop: string | Float64Array;
 	/** The in-position player's range, in either form. */
 	readonly ip: string | Float64Array;
-	/** Bet sizes per betting round; a single row applies to every round. */
-	readonly betSizes: readonly (readonly BetSize[])[];
+	/**
+	 * Bet sizes per betting round; a single row applies to every round.
+	 *
+	 * This and every other betting setting below (`raiseSizes`, `maxRaises`,
+	 * `allowAllIn`, `allInThreshold`) can be given apart for each player as
+	 * `{ oop: …, ip: … }`, each side in the setting's usual form:
+	 * `betSizes: { oop: [[0.33]], ip: [[0.5, 1]] }`. They only shape the
+	 * tree, so a solve costs the same either way.
+	 */
+	readonly betSizes: PerPlayer<readonly (readonly BetSize[])[]>;
 	/**
 	 * Sizes offered when facing a bet; unset, raises use the bet sizes. One
 	 * row for every round, or a row per round like `betSizes`.
 	 */
-	readonly raiseSizes?: RaiseSizes;
+	readonly raiseSizes?: PerPlayer<RaiseSizes | undefined>;
 	/**
 	 * Maximum aggressive actions per round; the opening bet is the first.
-	 * One number, or one per round. Default 1.
+	 * One number, or one per round. Default 1. Given apart, a player may bet
+	 * or raise only while the round's aggressions are under their own limit.
 	 */
-	readonly maxRaises?: number | readonly number[];
+	readonly maxRaises?: PerPlayer<number | readonly number[]>;
 	/** Offer a shove alongside the configured sizes; once, or per round. Default false. */
-	readonly allowAllIn?: boolean | readonly boolean[];
+	readonly allowAllIn?: PerPlayer<boolean | readonly boolean[]>;
 	/**
 	 * Turn a bet or raise into a shove when it would commit at least this
 	 * fraction of the actor's remaining stack — 0.67 makes any bet of two
@@ -91,7 +102,7 @@ export interface SpotConfig {
 	 * multiply a tree for little strategic difference. Once, or per round.
 	 * Unset, never.
 	 */
-	readonly allInThreshold?: number | readonly number[];
+	readonly allInThreshold?: PerPlayer<number | readonly number[] | undefined>;
 	/**
 	 * Forbid donk bets: out of position may only check when opening a round
 	 * into the player who made the last bet or raise of the round before.
@@ -236,16 +247,20 @@ export function defineSpot(config: SpotConfig): Spot {
 	if (config.pot <= 0) throw new Error('pot must be positive');
 	if (config.stack <= 0) throw new Error('stack must be positive');
 
-	const rows =
-		config.betSizes.length === 1
-			? Array.from({ length: rounds }, () => config.betSizes[0])
-			: config.betSizes;
-	if (rows.length !== rounds) {
-		throw new Error(
-			`betSizes has ${config.betSizes.length} rows but this board has ${rounds} ` +
-				'betting rounds; give one row per round, or a single row for all of them',
-		);
-	}
+	// One row per round, for each player.
+	const rowsFor = (sizes: readonly (readonly BetSize[])[], who: string): readonly (readonly BetSize[])[] => {
+		const expanded = sizes.length === 1 ? Array.from({ length: rounds }, () => sizes[0]) : sizes;
+		if (expanded.length !== rounds) {
+			throw new Error(
+				`${who}betSizes has ${sizes.length} rows but this board has ${rounds} ` +
+					'betting rounds; give one row per round, or a single row for all of them',
+			);
+		}
+		return expanded;
+	};
+	const rows = isPerPlayer(config.betSizes)
+		? { oop: rowsFor(config.betSizes.oop, 'oop '), ip: rowsFor(config.betSizes.ip, 'ip ') }
+		: rowsFor(config.betSizes, '');
 
 	// Board cards cannot be in anyone's range.
 	const onBoard = new Set(board);
@@ -317,9 +332,10 @@ export function defineSpot(config: SpotConfig): Spot {
 
 	const suggestions: string[] = [];
 	if (compressedBytes > maxBytes) {
-		const widest = Math.max(...rows.map((r) => r.length));
+		const widest = Math.max(...[0, 1].flatMap((p) => forPlayer(rows, p).map((r) => r.length)));
 		if (widest > 1) suggestions.push(`use fewer bet sizes (currently up to ${widest} per round)`);
-		if (Math.max(...[config.maxRaises ?? 1].flat()) > 1) suggestions.push(`lower maxRaises to 1`);
+		const raises = [0, 1].flatMap((p) => [forPlayer(config.maxRaises ?? 1, p)].flat());
+		if (Math.max(...raises) > 1) suggestions.push(`lower maxRaises to 1`);
 		suggestions.push(`narrow the ranges (currently ${players[0].count} and ${players[1].count} combos)`);
 		if (runouts.rounds === 3) suggestions.push('solve from the turn instead of the flop');
 	}
@@ -1062,8 +1078,11 @@ function makeSolution(
 			// Settings given per round lose the rounds already played.
 			const later = <T>(value: T | readonly T[], listed: boolean): T | readonly T[] =>
 				listed && (value as readonly T[]).length > 1 ? (value as readonly T[]).slice(round) : value;
-			const rows = later(source.betSizes, true) as readonly (readonly BetSize[])[];
-			const raiseRows = source.raiseSizes && (later<unknown>(source.raiseSizes, raisesPerRound(source.raiseSizes)) as RaiseSizes);
+			// Each player's side of a setting loses the played rounds alike.
+			const laterEach = <T>(value: PerPlayer<T> | undefined, listed: (side: T) => boolean): PerPlayer<T> | undefined =>
+				value === undefined ? undefined : (mapPlayers(value, (side) => later(side, listed(side)) as T) as PerPlayer<T>);
+			const rows = laterEach(source.betSizes, () => true) as SpotConfig['betSizes'];
+			const raiseRows = laterEach(source.raiseSizes, (side) => side !== undefined && raisesPerRound(side));
 
 			return {
 				board: formatCards(cards),
@@ -1073,9 +1092,9 @@ function makeSolution(
 				ip: reachAt(node, board, 1),
 				betSizes: betting.betSizes ?? rows,
 				raiseSizes: 'raiseSizes' in betting ? betting.raiseSizes : raiseRows,
-				maxRaises: betting.maxRaises ?? (source.maxRaises === undefined ? undefined : later(source.maxRaises, Array.isArray(source.maxRaises))),
-				allowAllIn: betting.allowAllIn ?? (source.allowAllIn === undefined ? undefined : later(source.allowAllIn, Array.isArray(source.allowAllIn))),
-				allInThreshold: 'allInThreshold' in betting ? betting.allInThreshold : source.allInThreshold === undefined ? undefined : later(source.allInThreshold, Array.isArray(source.allInThreshold)),
+				maxRaises: betting.maxRaises ?? laterEach(source.maxRaises, Array.isArray),
+				allowAllIn: betting.allowAllIn ?? laterEach(source.allowAllIn, Array.isArray),
+				allInThreshold: 'allInThreshold' in betting ? betting.allInThreshold : laterEach(source.allInThreshold, Array.isArray),
 				noDonk: 'noDonk' in betting ? betting.noDonk : source.noDonk === undefined ? undefined : later(source.noDonk, Array.isArray(source.noDonk)),
 				mergeSizes: 'mergeSizes' in betting ? betting.mergeSizes : source.mergeSizes,
 				minWeight: source.minWeight,
