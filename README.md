@@ -91,6 +91,11 @@ defineSpot({ ..., betSizes: [[0.5]], raiseSizes: [{ times: 3 }], maxRaises: 2 })
 // bet 40 into 80, raise to 120
 ```
 
+A raise smaller than a full raise is bumped up to the minimum raise. When even that does
+not fit in the stack, the raise is all-in for less: a player facing a bet can always shove
+whatever they have beyond the call (up to `maxRaises`), with or without `allowAllIn`.
+Before 0.4.1 such a shove was dropped, leaving a short stack only fold or call.
+
 ## Betting per round
 
 `raiseSizes`, `maxRaises` and `allowAllIn` can each be given once for every round, or one

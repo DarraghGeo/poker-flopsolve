@@ -306,13 +306,13 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 		target = Math.min(target, cap);
 		if (target <= theirs) return null;
 
+		// Short of a full raise: bumped up to one where the stack allows it,
+		// and otherwise all-in for less. A player can always put in everything
+		// they have, raise or not — dropping that shove left a short stack
+		// facing a bet only call or fold.
 		const raiseSize = target - theirs;
 		const minimum = Math.max(state.lastRaise, minRaiseUnits);
-		if (raiseSize < minimum) {
-			const bumped = theirs + minimum;
-			if (bumped > cap) return null;
-			target = bumped;
-		}
+		if (raiseSize < minimum) target = Math.min(theirs + minimum, cap);
 		return target;
 	};
 
