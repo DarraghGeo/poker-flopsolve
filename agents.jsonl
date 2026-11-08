@@ -25,3 +25,4 @@
 {"url":"https://claude.ai/code/session_014RSNFgF2LX886bTwxpyQhS","title":"Tree size: action translation — shared response subtrees across bet sizes","issue":54,"state":"active","updated":"2026-11-08T16:31:39.221Z"}
 {"url":"https://claude.ai/code/session_014RSNFi33oVGYsFswwGSYnW","title":"Tree size: out-of-core river storage in OPFS, or CFR-D decomposition","issue":55,"state":"active","updated":"2026-11-08T16:31:39.221Z"}
 {"url":"https://claude.ai/code/session_014RSNFhbc7RypgDUXzkqBiV","title":"Tree size: strategy grafting — solve one size at a time and stitch","issue":56,"state":"active","updated":"2026-11-08T16:31:39.221Z"}
+{"url":null,"title":"Layout offsets overflow Int32 on trees over 2^31 slots (the target spot T)","issue":58,"state":"active","updated":"2026-11-08T16:32:02.858Z"}
