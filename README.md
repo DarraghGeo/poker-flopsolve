@@ -406,8 +406,11 @@ Single-threaded, Node, time to 0.3% of pot:
 | AsKh7d, pairs and broadway | 16.7 s | 12.9 s | 31 MB |
 | Ks9s4s, pairs and broadway | 5.5 s | 4.5 s | 7 MB |
 
-At equal exploitability its per-hand root EVs are as close to an exact 0.1% solve or
-closer. It runs on one thread only, in both engines; the baselines count against
+Stopped at 15 s, single-threaded in Chromium, it leaves 0.29% of pot on the first spot
+where the exact solve leaves 0.69%, 0.11% for 0.20% on the wide flop and 0.17% for
+0.28% on pairs and broadway; the range-weighted error of per-hand root EVs against an
+exact 0.1% solve falls from 1.0–1.1% of pot to 0.12–0.16% on the first, and to about a
+third on the others. It runs on one thread only, in both engines; the baselines count against
 `maxBytes`. With `p: 1` it is the exact solve, bit for bit. `rounds: [2]` samples
 river deals only.
 
