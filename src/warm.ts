@@ -27,7 +27,6 @@ import { tieBlock } from './cfr.ts';
 import { COMBOS } from './cards.ts';
 import type { Runouts } from './runouts.ts';
 import { resolveBoard } from './runouts.ts';
-import { NO_COMBO, resolveClustered } from './clusters.ts';
 import type { Tree } from './tree.ts';
 import { ActionKind, NodeKind } from './tree.ts';
 
@@ -178,10 +177,7 @@ export function warmStart(to: Context, from: Context, averages: boolean): WarmSt
 		}
 
 		for (let board = 0; board < to.runouts.counts[round]; board++) {
-			const cards = realCards(to.runouts, round, board);
-			const clustered = from.runouts.orbitCombos ? resolveClustered(from.runouts, from.players, cards) : null;
-			const resolved = clustered ?? resolveBoard(from.runouts, cards);
-			const handMap = clustered ? clustered.combos[owner] : resolved.combos as Uint16Array;
+			const resolved = resolveBoard(from.runouts, realCards(to.runouts, round, board));
 			// Blocks are laid out by position in each board's hand list.
 			const oldSlot = (from.active.roundBase[round] + resolved.board) * 2 + owner;
 			const oldFrom = from.active.start[oldSlot];
@@ -200,8 +196,7 @@ export function warmStart(to: Context, from: Context, averages: boolean): WarmSt
 			newRegret.fill(0, 0, length);
 			newSum.fill(0, 0, length);
 			for (let i = 0; i < count; i++) {
-				const stored = handMap[to.active.list[newFrom + i]];
-				const j = stored === NO_COMBO ? -1 : position[stored];
+				const j = position[resolved.combos[to.active.list[newFrom + i]]];
 				if (j < 0) continue;
 				for (let e = 0; e < actions; e++) {
 					const action = actionOf[e];

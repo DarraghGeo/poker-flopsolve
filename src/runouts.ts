@@ -20,7 +20,6 @@
 
 import { CardMaps } from './abstraction.ts';
 import { DECK, formatCards } from './cards.ts';
-import type { ClusterChild, RunoutClusterer } from './clusters.ts';
 
 /** Boards visible at each betting round. */
 export interface Runouts {
@@ -71,13 +70,6 @@ export interface Runouts {
 	readonly approximate: boolean;
 	/** The board as given. */
 	readonly initial: readonly number[];
-	/**
-	 * With runout clusters only: per round, each orbit member's own hand maps,
-	 * one per player, real combination to stored (`NO_COMBO` where it cannot
-	 * be held), or null where the member's card map carries the hands. A
-	 * round is null when no member there needs one. Unset without clusters.
-	 */
-	readonly orbitCombos?: readonly ((readonly [Uint16Array, Uint16Array] | null)[] | null)[];
 }
 
 /**
@@ -99,7 +91,6 @@ export function enumerateRunouts(
 	board: readonly number[],
 	symmetries?: readonly Uint8Array[],
 	merge?: RunoutMerge,
-	clusterer?: RunoutClusterer,
 ): Runouts {
 	if (board.length < 3 || board.length > 5) {
 		throw new Error(`A postflop board has 3, 4 or 5 cards; got ${board.length} (${formatCards(board)})`);
@@ -126,7 +117,6 @@ export function enumerateRunouts(
 	let approximate = false;
 	const stabiliserStart: Int32Array[] = [];
 	const stabiliserMap: Int32Array[] = [];
-	const orbitCombos: ((readonly [Uint16Array, Uint16Array] | null)[] | null)[] = [null];
 	const recordStabilisers = (list: number[][]): void => {
 		const starts = new Int32Array(list.length + 1);
 		const flat: number[] = [];
@@ -154,7 +144,6 @@ export function enumerateRunouts(
 		const memberStart: number[] = [0];
 		const memberMap: number[] = [];
 		const memberCard: number[] = [];
-		const memberCombos: (readonly [Uint16Array, Uint16Array] | null)[] = [];
 		const nextStabilisers: number[][] = [];
 
 		for (let p = 0; p < previousCount; p++) {
@@ -166,14 +155,11 @@ export function enumerateRunouts(
 			const stabiliser = stabilisers[p];
 
 			// One stored child per orbit of the board's symmetries.
-			const children: (ClusterChild & { fixing: number[] })[] = [];
+			const children: { card: number; maps: number[]; cards: number[]; fixing: number[]; merged: boolean }[] = [];
 			for (let card = 0; card < DECK; card++) {
 				if (used[card] || seen[card]) continue;
 				// Ascending, so the first unseen card of an orbit is its lowest.
-				const child = {
-					card, maps: [] as number[], cards: [] as number[], fixing: [] as number[], merged: false,
-					combos: [] as (readonly [Uint16Array, Uint16Array] | null)[],
-				};
+				const child = { card, maps: [] as number[], cards: [] as number[], fixing: [] as number[], merged: false };
 				for (const sigma of stabiliser) {
 					const image = maps.card[sigma][card];
 					if (image === card) child.fixing.push(sigma);
@@ -183,7 +169,6 @@ export function enumerateRunouts(
 					// deal of `image` back onto this board.
 					child.maps.push(image === card ? 0 : maps.inverse(sigma));
 					child.cards.push(image);
-					child.combos.push(null);
 				}
 				children.push(child);
 			}
@@ -207,21 +192,12 @@ export function enumerateRunouts(
 						for (let m = 0; m < later.maps.length; m++) {
 							earlier.maps.push(maps.then(later.maps[m], swap));
 							earlier.cards.push(later.cards[m]);
-							earlier.combos.push(null);
 						}
 						later.merged = true;
 						approximate = true;
 						break;
 					}
 				}
-			}
-
-			// Runout clusters: cards that play alike by what they do to both
-			// ranges, folded into a medoid; see clusters.ts.
-			if (clusterer?.applies(previousWidth)) {
-				const parentCards = Array.from(previousCards.subarray(base, base + previousWidth));
-				clusterer.cluster(parentCards, children.filter((child) => !child.merged), maps);
-				approximate = true;
 			}
 
 			for (const child of children) {
@@ -231,7 +207,6 @@ export function enumerateRunouts(
 				parents.push(p);
 				memberMap.push(...child.maps);
 				memberCard.push(...child.cards);
-				memberCombos.push(...child.combos);
 				memberStart.push(memberMap.length);
 				nextStabilisers.push(child.fixing);
 				if (child.maps.length > 1) symmetric = true;
@@ -247,7 +222,6 @@ export function enumerateRunouts(
 		orbitStart.push(Int32Array.from(memberStart));
 		orbitMap.push(Int32Array.from(memberMap));
 		orbitCard.push(Uint8Array.from(memberCard));
-		orbitCombos.push(memberCombos.some((c) => c !== null) ? memberCombos : null);
 		stabilisers = nextStabilisers;
 		recordStabilisers(stabilisers);
 	}
@@ -256,7 +230,6 @@ export function enumerateRunouts(
 		rounds, width, counts, cards, childStart, parent, orbitStart, orbitMap, orbitCard,
 		stabiliserStart, stabiliserMap, maps, symmetric, approximate,
 		initial: [...board],
-		...(clusterer ? { orbitCombos } : {}),
 	};
 }
 
@@ -326,11 +299,6 @@ export interface ResolvedBoard {
 	 * plays as `combos[h]` on the stored one. The identity without symmetry.
 	 */
 	readonly combos: Uint16Array;
-	/**
-	 * With runout clusters, each player's own map, which `combos` (player 0's)
-	 * does not cover; `NO_COMBO` (0xffff) where the hand cannot be held.
-	 */
-	readonly playerCombos?: readonly [Uint16Array, Uint16Array];
 }
 
 /**

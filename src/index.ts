@@ -17,8 +17,6 @@ import type { ResolvedBoard } from './runouts.ts';
 import type { RunoutMerge } from './runouts.ts';
 import { boardAtRound, enumerateRunouts, rankSwap, resolveBoard } from './runouts.ts';
 import { suitSymmetries } from './abstraction.ts';
-import type { ClusterCounts } from './clusters.ts';
-import { resolveClustered, RunoutClusterer } from './clusters.ts';
 import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
 import { buildHandSpace } from './hands.ts';
@@ -154,16 +152,6 @@ export interface SpotConfig {
 	 * strategy in the real game, every card dealt. Default false.
 	 */
 	readonly runoutBuckets?: boolean | number;
-	/**
-	 * Experimental: solve a few representative turn (and river) cards for all
-	 * of them, chosen by what each card does to both ranges — potential-aware
-	 * card abstraction, k-medoids under the earth mover's distance. Hands on a
-	 * merged card play as the representative's hands of the same strength
-	 * rank where no rank swap fits. An approximation, measured by
-	 * `trueExploitabilityPercent()`; it runs the JavaScript traversal on one
-	 * thread. Unset, off.
-	 */
-	readonly runoutClusters?: ClusterCounts;
 }
 
 /** Projected cost of solving a spot. */
@@ -317,7 +305,6 @@ export function defineSpot(config: SpotConfig): Spot {
 		config.runoutBuckets && board.length < 5
 			? rangeRankMerge(players, config.runoutBuckets === true ? DEFAULT_BUCKET_GAP : config.runoutBuckets)
 			: undefined,
-		config.runoutClusters && board.length < 5 ? new RunoutClusterer(players, config.runoutClusters) : undefined,
 	);
 
 	const tree = buildTree(
@@ -378,12 +365,7 @@ export function defineSpot(config: SpotConfig): Spot {
 		stackUnits: Math.round(config.stack * chipScale),
 		source: config,
 		resolveBoard(cards) {
-			const list = typeof cards === 'string' ? parseCards(cards) : cards;
-			if (runouts.orbitCombos) {
-				const clustered = resolveClustered(runouts, players, list);
-				return { round: clustered.round, board: clustered.board, combos: clustered.combos[0], playerCombos: clustered.combos };
-			}
-			return resolveBoard(runouts, list);
+			return resolveBoard(runouts, typeof cards === 'string' ? parseCards(cards) : cards);
 		},
 	};
 }
@@ -537,6 +519,26 @@ export interface Approximations {
 	 * cost more iterations than it saved: a flop spot on 4 threads reached
 	 * 0.3% of pot in 14.1 s exact, 23.1 s at p = 0.5, and not within 400
 	 * iterations at p = 0.25; at best it broke even to 1%.
+	 *
+	 * Runout clusters — potential-aware card abstraction (Ganzfried &
+	 * Sandholm, 2014): turn and river cards grouped by k-medoids under the
+	 * earth mover's distance between each range's river-equity distribution,
+	 * plus flush, straight and pair texture, one walk per cluster with reach
+	 * gathered from every member — were built and measured as well, and left
+	 * out (prototype and data in bench/clusters, commit ef1fa9c). Rank swaps
+	 * alone cannot get there: suited connectors leave only ranks 2-5 swappable on
+	 * AsKh7d, so about 37 of 49 turns stay apart whatever k asks for, and the
+	 * rest need hands mapped by strength order, and that is where the error
+	 * comes from. At 15 s in the browser, single-threaded, true exploitability:
+	 * bench flop 2.3% at k = 16 (rivers 20) against 1.8% exact and 0.7% for
+	 * `runoutBuckets`, which also beat it on per-combination EV; both monotone
+	 * flops lost to exact on every measure. It won only where exact gets
+	 * almost nowhere in 15 s — a two-size wide flop, under 10 iterations —
+	 * and on the pairs-and-broadway flop's EVs (mean error 0.3% of pot against
+	 * 1.0%, at 0.8% exploitability against 0.6%). Its error has a floor that
+	 * more iterations do not lower: on the bench flop 1.1-3.2% of pot mean
+	 * per-combination EV error and 2.2-4.7% exploitability from k = 16 down
+	 * to 4, on the wide flop 1.3-2.3% and 4-10%.
 	 */
 }
 
@@ -690,9 +692,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
 	const weights = runoutWeights(spot.runouts);
 
-	// Runout clusters run the JavaScript traversal on one thread.
-	const clustered = spot.runouts.orbitCombos !== undefined;
-	const requested = clustered ? 1 : resolveWorkers(options);
+	const requested = resolveWorkers(options);
 	const plan = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
 
 	// Workers need the accumulators in shared memory. Allocating shared for a
@@ -708,7 +708,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// a platform with WebAssembly SIMD. It owns the storage; the context sees
 	// it through views.
 	const engine =
-		options.engine !== 'js' && !clustered && precision === 'f32' && !options.analysisOnly && options.simd !== false
+		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false
 			? createEngine(
 					{
 						tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
@@ -800,7 +800,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		},
 		trueExploitabilityPercent() {
 			if (!spot.runouts.approximate) return this.exploitabilityPercent();
-			const real = createRun(defineSpot({ ...spot.source, runoutBuckets: false, runoutClusters: undefined }), {
+			const real = createRun(defineSpot({ ...spot.source, runoutBuckets: false }), {
 				workers: threadCount,
 				precision,
 			});

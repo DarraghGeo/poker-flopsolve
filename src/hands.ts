@@ -19,7 +19,7 @@
  * already sorted by strength, with each entry's strength and cards beside it.
  */
 
-import { COMBO_CARDS, COMBOS, DECK } from './cards.ts';
+import { COMBOS, DECK } from './cards.ts';
 import type { PlayerIndex } from './cfr.ts';
 import type { Runouts } from './runouts.ts';
 
@@ -48,21 +48,6 @@ export interface HandSpace {
 	 */
 	readonly sameStart: Int32Array;
 	readonly same: Int32Array;
-	/**
-	 * Runout clusters only, else null: deals whose hands map many to one. For
-	 * round `r` (null where none do) and orbit member `m`, player `p`, the
-	 * pairs from `start[m * 2 + p]` to `start[m * 2 + p + 1]` are a parent-board
-	 * hand index `from` and the stored child-board hand index `to` it plays
-	 * as. The `up` lists are not built for such a round.
-	 */
-	readonly gather: readonly (GatherList | null)[] | null;
-}
-
-/** See `HandSpace.gather`. */
-export interface GatherList {
-	readonly start: Int32Array;
-	readonly from: Uint16Array;
-	readonly to: Uint16Array;
 }
 
 /** A list's offset and length for a round, board and player. */
@@ -83,16 +68,9 @@ export function buildHandSpace(
 	// Deals.
 	const upStart: Int32Array[] = [new Int32Array(0)];
 	const up: number[] = [];
-	const gather: (GatherList | null)[] | null = runouts.orbitCombos ? [null] : null;
 	for (let round = 1; round < runouts.rounds; round++) {
 		const orbitStart = runouts.orbitStart[round];
 		const starts = new Int32Array(runouts.orbitMap[round].length * 2);
-		const general = runouts.orbitCombos?.[round] ?? null;
-		if (gather !== null) gather.push(general ? buildGather(runouts, lists, round, general, indexOf) : null);
-		if (general !== null) {
-			upStart.push(starts);
-			continue;
-		}
 		for (let child = 0; child < runouts.counts[round]; child++) {
 			const parent = runouts.parent[round][child];
 			for (let player = 0; player < 2; player++) {
@@ -136,64 +114,7 @@ export function buildHandSpace(
 	}
 	sameStart[slots] = same.length;
 
-	return { upStart, up: Uint16Array.from(up), sameStart, same: Int32Array.from(same), gather };
-}
-
-/** The gather pairs of one clustered round; `indexOf` is all -1 scratch, left so. */
-function buildGather(
-	runouts: Runouts,
-	lists: HandLists,
-	round: number,
-	general: readonly (readonly [Uint16Array, Uint16Array] | null)[],
-	indexOf: Int32Array,
-): GatherList {
-	const orbitStart = runouts.orbitStart[round];
-	const start = new Int32Array(runouts.orbitMap[round].length * 2 + 1);
-	const from: number[] = [];
-	const to: number[] = [];
-	const childIndex = [new Int32Array(COMBOS).fill(-1), new Int32Array(COMBOS).fill(-1)];
-	for (let child = 0; child < runouts.counts[round]; child++) {
-		const parent = runouts.parent[round][child];
-		for (let player = 0; player < 2; player++) {
-			const [childFrom, childCount] = span(lists, round, child, player);
-			for (let k = 0; k < childCount; k++) childIndex[player][lists.list[childFrom + k]] = k;
-		}
-		for (let m = orbitStart[child]; m < orbitStart[child + 1]; m++) {
-			const own = general[m];
-			const dealt = runouts.orbitCard[round][m];
-			for (let player = 0; player < 2; player++) {
-				start[m * 2 + player] = from.length;
-				const map = own ? own[player] : runouts.maps.combo[runouts.orbitMap[round][m]];
-				const [parentFrom, parentCount] = span(lists, round - 1, parent, player);
-				for (let i = 0; i < parentCount; i++) {
-					const real = lists.list[parentFrom + i];
-					// A hand holding the dealt card is not dealt this card.
-					if (COMBO_CARD_A[real] === dealt || COMBO_CARD_B[real] === dealt) continue;
-					const stored = map[real];
-					const at = stored === 0xffff ? -1 : childIndex[player][stored];
-					if (at < 0) continue;
-					from.push(i);
-					to.push(at);
-				}
-			}
-		}
-		for (let player = 0; player < 2; player++) {
-			const [childFrom, childCount] = span(lists, round, child, player);
-			for (let k = 0; k < childCount; k++) childIndex[player][lists.list[childFrom + k]] = -1;
-		}
-	}
-	// Members are laid out player 0, player 1, next member: each run ends
-	// where the next begins, and the last ends at the total.
-	start[start.length - 1] = from.length;
-	void indexOf;
-	return { start, from: Uint16Array.from(from), to: Uint16Array.from(to) };
-}
-
-const COMBO_CARD_A = new Uint8Array(COMBOS);
-const COMBO_CARD_B = new Uint8Array(COMBOS);
-for (let h = 0; h < COMBOS; h++) {
-	COMBO_CARD_A[h] = COMBO_CARDS[h * 2];
-	COMBO_CARD_B[h] = COMBO_CARDS[h * 2 + 1];
+	return { upStart, up: Uint16Array.from(up), sameStart, same: Int32Array.from(same) };
 }
 
 /**
