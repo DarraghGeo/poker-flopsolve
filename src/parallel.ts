@@ -40,6 +40,9 @@ import { NodeKind } from './tree.ts';
 import type { WorkerHandle } from './platform/node.ts';
 import { spawnWorker } from './platform/node.ts';
 
+/** How a pool starts its workers; the platform's `spawnWorker` unless a test swaps it. */
+export type SpawnWorker = (setup: WorkerSetup, onError: (error: Error) => void) => WorkerHandle;
+
 export { defaultWorkerCount } from './platform/node.ts';
 
 export const CONTROL = {
@@ -50,8 +53,14 @@ export const CONTROL = {
 	iterWeight: 4,
 	ready: 5,
 	mode: 6,
+	/** Set, never cleared, by a worker whose walk threw; see src/worker.ts. */
+	failed: 7,
 	size: 8,
 } as const;
+
+/** What a step throws once a worker has failed mid-iteration. */
+export const WORKER_FAILED_ERROR =
+	'A solver thread failed mid-iteration (out of memory, or a bug); this run cannot continue. Close it and solve again, or use workers: 1.';
 
 export const COMMAND = { work: 0, exit: 1 } as const;
 
@@ -143,6 +152,7 @@ export interface Pool {
  * @param plan how the runouts are split
  * @param payload everything the worker needs to rebuild the context
  * @param workers threads doing the work, the main thread included
+ * @param spawn how each worker is started
  */
 export function startPool(
 	ctx: Context,
@@ -150,6 +160,7 @@ export function startPool(
 	plan: ShardPlan,
 	payload: unknown,
 	workers: number,
+	spawn: SpawnWorker = spawnWorker,
 ): Pool {
 	const entryCount = plan.entryNodes.length;
 	// The main thread is one of the `workers`; only the rest are spawned.
@@ -181,7 +192,7 @@ export function startPool(
 		};
 		// A worker that dies would otherwise leave the main thread waiting on a
 		// counter that can never reach its target.
-		const thread = spawnWorker(setup, (error: Error) => {
+		const thread = spawn(setup, (error: Error) => {
 			failure ??= error;
 			Atomics.store(control, CONTROL.ready, spawned);
 			Atomics.add(control, CONTROL.done, spawned);
@@ -213,7 +224,12 @@ export function startPool(
 	const mainReachMe = new Float64Array(COMBOS);
 	const mainReachOpp = new Float64Array(COMBOS);
 
+	const failed = (): Error | null =>
+		failure ?? (Atomics.load(control, CONTROL.failed) ? new Error(WORKER_FAILED_ERROR) : null);
+
 	const dispatch = (mode: Mode, traverser: 0 | 1, iterWeight: number): void => {
+		const before = failed();
+		if (before) throw before;
 		Atomics.store(control, CONTROL.done, 0);
 		Atomics.store(control, CONTROL.mode, mode);
 		Atomics.store(control, CONTROL.traverser, traverser);
@@ -247,13 +263,15 @@ export function startPool(
 			ctx.shardEnd = fullEnd;
 		}
 
+		// A worker whose walk throws says so in `failed` and counts itself
+		// done, as its error event cannot reach this thread while it waits.
 		for (;;) {
 			const done = Atomics.load(control, CONTROL.done);
-			if (done >= spawned) break;
-			if (failure) throw failure;
+			if (done >= spawned || failure) break;
 			Atomics.wait(control, CONTROL.done, done, 50);
 		}
-		if (failure) throw failure;
+		const after = failed();
+		if (after) throw after;
 	};
 
 	return {

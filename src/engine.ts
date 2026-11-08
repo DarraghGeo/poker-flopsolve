@@ -108,8 +108,16 @@ export interface EngineWorkerSetup {
 /** How a pool starts its workers; the platform layer supplies it. */
 export type SpawnEngineWorker = (setup: EngineWorkerSetup, onError: (error: Error) => void) => { terminate(): void };
 
-/** Control slots shared with engine workers. */
-export const ENGINE_CONTROL = { generation: 0, done: 1, command: 2, mode: 3, traverser: 4, ready: 5, size: 8 } as const;
+/**
+ * Control slots shared with engine workers. `failed` is set, never cleared,
+ * by a thread whose walk threw: the main thread waits in `Atomics.wait` and
+ * so never sees a worker's error event while a step runs.
+ */
+export const ENGINE_CONTROL = { generation: 0, done: 1, command: 2, mode: 3, traverser: 4, ready: 5, failed: 6, size: 8 } as const;
+
+/** What a step throws once a thread has failed mid-iteration. */
+export const THREAD_FAILED_ERROR =
+	'A solver thread failed mid-iteration (an engine abort, or out of memory); this run cannot continue. Close it and solve again, or use workers: 1.';
 
 /**
  * Lay a spot out in a fresh memory and instantiate the engine over it, or
@@ -315,6 +323,7 @@ export function createEngine(
 			}
 		} else {
 			const plan = pool.plan;
+			if (failure || Atomics.load(control!, ENGINE_CONTROL.failed)) throw failure ?? new Error(THREAD_FAILED_ERROR);
 			// Collect: walk above the split, recording what the workers need.
 			exports.setShard(plan.round, 0, 0);
 			exports.setPhase(1, 0);
@@ -335,12 +344,14 @@ export function createEngine(
 				const out = exports.runChance(mode, traverser, plan.entryNodes[entry], slot, slot + rowBytes, positive, negative, sum, weight, clamp);
 				valueView.set(new Float32Array(memory.buffer, out, stride), entry * stride);
 			}
+			// A thread whose walk throws says so in `failed` and counts itself
+			// done, as its error event cannot reach this thread while it waits.
 			for (;;) {
 				const done = Atomics.load(control!, ENGINE_CONTROL.done);
 				if (done >= threads - 1 || failure) break;
 				Atomics.wait(control!, ENGINE_CONTROL.done, done, 50);
 			}
-			if (failure) throw failure;
+			if (failure || Atomics.load(control!, ENGINE_CONTROL.failed)) throw failure ?? new Error(THREAD_FAILED_ERROR);
 			const partialView = new Float32Array(memory.buffer, offsets[partials], (threads - 1) * entries * stride);
 			for (let w = 0; w < threads - 1; w++) {
 				for (let i = 0; i < entries * stride; i++) valueView[i] += partialView[w * entries * stride + i];
