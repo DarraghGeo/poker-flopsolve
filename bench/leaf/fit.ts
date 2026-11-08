@@ -86,7 +86,8 @@ function evaluate(model: Model, coef: Map<string, number[]>, spots: Spot[], zero
 		const pred = s.rows.map((r) => {
 			const c = coef.get(model.key(r));
 			const x = model.x(r);
-			const share = c ? x.reduce((t, v, i) => t + v * c[i], 0) : r.eq;
+			if (!c) throw new Error(`no fitted bucket ${model.key(r)} for ${model.name}`);
+			const share = x.reduce((t, v, i) => t + v * c[i], 0);
 			return (share - 0.5) * s.pot;
 		});
 		// Range EVs, true and predicted, each player's weighted by w * m.

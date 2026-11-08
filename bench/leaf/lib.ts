@@ -213,10 +213,8 @@ export function comboEv(
 	const round = s.ctx.tree.round[node];
 	const ev = new Float64Array(COMBOS).fill(Number.NaN);
 	const mass = new Float64Array(COMBOS);
-	const dead = new Set(boardCards);
 	const mine = liveCombos(reachMe, boardCards);
 	const theirs = liveCombos(reachOpp, boardCards);
-	void dead;
 	for (const a of mine) {
 		let m = 0;
 		for (const b of theirs) if (disjoint(a, b)) m += reachOpp[b];

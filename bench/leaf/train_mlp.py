@@ -4,7 +4,8 @@
 
 Rows come from featurize.ts: 36 features, then EV / pot, weight w * m, spot
 id. Every fifth spot is held out, and any test files are scored too. Reports the same errors
-as fit.ts, in % of pot, with DeepStack's zero-sum correction applied.
+as fit.ts, in % of pot, with DeepStack's zero-sum correction applied, except
+that max is over every combo: the rows carry w * m, not the weight w alone.
 """
 import sys, time
 import numpy as np
@@ -98,10 +99,12 @@ def report(name, d):
         a = np.array(res[p])
         print(f'  {name:>40} {"OOP" if p == 0 else "IP "}: mae {a[:, 0].mean():5.2f}  p90 {np.percentile(a[:, 0], 90):5.2f}  max {a[:, 1].mean():6.2f}  range {a[:, 2].mean():5.2f}  (% of pot, {len(a)} spots)')
 
-report('train', train[train[:, F + 2] < 200000])
+# A sample of training spots, for the train / held-out gap.
+sample = np.unique(train[:, F + 2])[:400]
+report('train', train[np.isin(train[:, F + 2], sample)])
 for name, d in tests.items():
     report(name.split('/')[-1], d)
     if name.endswith('.f32'):
         # Predictions in row order, for aggregate.py to join with the rows.
         np.save(name[:-4] + f'.pred{H}.npy', forward(((d[:, :F] - mu) / sd).astype(np.float32), P))
-np.savez('/tmp/claude-0/-home-user-poker-flopsolve/ad79a97b-598e-57c2-8394-3dedc3f57b58/scratchpad/mlp.npz', *P, mu=mu, sd=sd)
+np.savez(sys.argv[1].split(',')[0][:-4] + f'.mlp{H}.npz', *P, mu=mu, sd=sd)

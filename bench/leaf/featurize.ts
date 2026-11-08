@@ -20,12 +20,16 @@ export const WIDTH = 1 + HAND_BINS + 1 + 1 + 1 + 6 + 1 + 2 * RANGE_BINS + 1 + 1 
 const [inputs, out] = process.argv.slice(2);
 const chunks: Float32Array[] = [];
 let count = 0;
-for (const file of inputs.split(',')) {
+// Leaf files each number their spots from 0, so ids are offset per file;
+// they stay well inside float32's exact integers.
+const FILE_STRIDE = 1_000_000;
+for (const [index, file] of inputs.split(',').entries()) {
 	for (const line of readFileSync(file, 'utf8').split('\n')) {
 		if (!line) continue;
 		const s = JSON.parse(line) as { id: number; board?: string; pot: number; stack: number; rows: (Row & { board?: number[] })[]; label?: string; cards?: number[] };
 		const board = s.board ? parseCards(s.board) : (s.cards as number[]);
-		const block = featurize(s.id, board, s.pot, s.stack, s.rows);
+		if (s.id >= FILE_STRIDE) throw new Error(`spot id ${s.id} is over ${FILE_STRIDE}`);
+		const block = featurize(index * FILE_STRIDE + s.id, board, s.pot, s.stack, s.rows);
 		chunks.push(block);
 		count += block.length / (WIDTH + 3);
 	}
@@ -110,7 +114,6 @@ function featurize(id: number, board: number[], pot: number, stack: number, rows
 		x[k++] = r.ev / pot;
 		x[k++] = r.w * r.m;
 		x[k++] = id;
-		void x; void k;
 	});
 	return outRows;
 }

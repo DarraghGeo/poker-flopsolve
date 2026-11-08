@@ -37,6 +37,11 @@ for line in lines:
         e = leaf_err[(node, r['player'])]
         e[0] += r['w'] * r['m'] * abs(p[i] - shift - r['ev']); e[1] += r['w'] * r['m']
 assert at == len(pred)
+cards = defaultdict(int)
+for line in lines:
+    cards[line['label'].rsplit(' b', 1)[0]] += 1
+if any(n != 49 for n in cards.values()):
+    sys.exit(f'every turn card must be stored (a rainbow flop): got {dict(cards)}')
 out = defaultdict(lambda: [0.0, 0.0, 0.0])
 for (node, pl, combo), (t, q_, m, w) in acc.items():
     o = out[(node, pl)]

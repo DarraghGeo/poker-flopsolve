@@ -7,8 +7,7 @@
  *   node --import tsx bench/leaf/ref.ts <spot> <outdir> [workers]
  */
 import { writeFileSync } from 'node:fs';
-import { COMBOS, createRun, defineSpot, formatCards, NodeKind } from '../../src/index.ts';
-import type { SpotConfig } from '../../src/index.ts';
+import { createRun, defineSpot, formatCards, NodeKind } from '../../src/index.ts';
 import { MEASURE } from './spots.ts';
 import { comboEv, rowsFor } from './lib.ts';
 
@@ -51,7 +50,6 @@ for (const node of leaves) {
 		lines.push(JSON.stringify({ id: id++, label: `${name} ${sol.path(node)} b${b}`, board: formatCards(cards), pot, stack, rows }));
 	}
 }
-void COMBOS;
 writeFileSync(`${outdir}/leaves-${name}.jsonl`, lines.join('\n') + '\n');
 console.log(`${name}: ${leaves.length} leaf nodes, ${lines.length} leaf boards`);
 run.close();

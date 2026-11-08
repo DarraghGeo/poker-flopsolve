@@ -16,6 +16,7 @@ const names = Object.keys(ARCHETYPES);
 const GEOMETRIES = [{ pot: 100, stack: 200 }, { pot: 200, stack: 150 }];
 writeFileSync(out, '');
 const t0 = performance.now();
+let skipped = 0;
 for (let i = 0; i < Number(countArg); i++) {
 	const id = seed * 100000 + i;
 	const deck = Array.from({ length: 52 }, (_, c) => c);
@@ -29,8 +30,11 @@ for (let i = 0; i < Number(countArg); i++) {
 	let spot;
 	try {
 		spot = defineSpot({ board: formatCards(board), ...g, oop: o.weights, ip: p.weights, betSizes: [[0.5]], maxRaises: 1 });
-	} catch {
-		continue; // a range emptied by the board
+	} catch (error) {
+		// A range the board empties is skipped; anything else is a bug.
+		if (!String(error).includes('empty once the board is removed')) throw error;
+		skipped++;
+		continue;
 	}
 	const run = createRun(spot);
 	let it = 0, e = Infinity;
@@ -46,4 +50,4 @@ for (let i = 0; i < Number(countArg); i++) {
 	const rows = rowsFor(id, board, g.pot, g.stack, reach, ev);
 	appendFileSync(out, JSON.stringify({ id, board: formatCards(board), ...g, modes: [o.mode, p.mode], iterations: it, exploit: e, rows }) + '\n');
 }
-console.log(`seed ${seed}: ${countArg} spots in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+console.log(`seed ${seed}: ${Number(countArg) - skipped} spots (${skipped} skipped) in ${((performance.now() - t0) / 1000).toFixed(1)} s`);

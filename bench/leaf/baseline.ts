@@ -7,7 +7,7 @@
  *   node --import tsx bench/leaf/baseline.ts <refdir> [spot,...]
  */
 import { readFileSync } from 'node:fs';
-import { createRun, defineSpot } from '../../src/index.ts';
+import { COMBO_CARDS, createRun, defineSpot } from '../../src/index.ts';
 import type { SpotConfig } from '../../src/index.ts';
 import { runInBrowser } from '../../scripts/browser-harness.ts';
 import { comboEv } from './lib.ts';
@@ -63,7 +63,6 @@ export function score(ref: { rootEv: (number | null)[][]; weights: number[][] },
 	});
 }
 
-import { COMBO_CARDS } from '../../src/index.ts';
 function mass(c: number, opp: number[]): number {
 	const a = COMBO_CARDS[c * 2], b = COMBO_CARDS[c * 2 + 1];
 	let m = 0;
