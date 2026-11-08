@@ -97,6 +97,68 @@ export function setPhase(value: i32, apply: i32): void {
 	applyUpdates = apply !== 0;
 }
 
+// Chance sampling with baselines (`Approximations.chanceSampling`); off
+// while `sampleRounds` is 0. See `sampledChance` in src/cfr.ts, which this
+// mirrors step for step, the deal choice included.
+let sampleRounds: i32 = 0;
+let sampleP: f64 = 1;
+let sampleEvery: u32 = 0;
+let sampleWeight: f32 = 1;
+let catchUp: bool = true;
+let baseOffset: usize = 0;
+let boardOffset: usize = 0;
+let walkOffset: usize = 0;
+let baseline: usize = 0;
+let lastWalk: usize = 0;
+let lastUpdate: usize = 0;
+let blockOffset: usize = 0;
+let iteration: i32 = 0;
+let dcfrRule: bool = false;
+
+/** Turn sampling on: tables and state from src/engine.ts, rounds as a bit mask. */
+export function setSampling(
+	rounds: i32, p: f64, every: i32, unbiased: i32, catchUpOn: i32,
+	baseOffsets: usize, boardOffsets: usize, walkOffsets: usize,
+	baselines: usize, lastWalks: usize, lastUpdates: usize, blockOffsets: usize,
+): void {
+	sampleRounds = rounds;
+	sampleP = p;
+	sampleEvery = <u32>every;
+	sampleWeight = unbiased !== 0 ? <f32>(1 / p) : 1;
+	catchUp = catchUpOn !== 0;
+	baseOffset = baseOffsets;
+	boardOffset = boardOffsets;
+	walkOffset = walkOffsets;
+	baseline = baselines;
+	lastWalk = lastWalks;
+	lastUpdate = lastUpdates;
+	blockOffset = blockOffsets;
+}
+
+/** The iteration a training walk is for, counted from 1, and whether it runs DCFR. */
+export function setIteration(t: i32, dcfr: i32): void {
+	iteration = t;
+	dcfrRule = dcfr !== 0;
+}
+
+/** Whether a deal is walked on an iteration, as `sampled` in src/cfr.ts. */
+function sampled(node: i32, board: i32, t: i32): bool {
+	let h: u32 = (<u32>node ^ (<u32>board * 0x9e3779b1)) * 0x85ebca6b;
+	if (sampleEvery > 0) {
+		h ^= h >>> 13;
+		h *= 0xc2b2ae35;
+		h ^= h >>> 16;
+		return (<u64>h + <u64>t) % <u64>sampleEvery === 0;
+	}
+	h ^= <u32>t * 0x27d4eb2f;
+	h ^= h >>> 15;
+	h *= 0xc2b2ae35;
+	h ^= h >>> 13;
+	h *= 0x165667b1;
+	h ^= h >>> 16;
+	return <f64>h / 4294967296.0 < sampleP;
+}
+
 // Per-iteration settings, from `run`.
 let mode: i32 = 0;
 let keepPositive: f32 = 1;
@@ -268,6 +330,9 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 			if (shardStart > first) first = shardStart;
 			if (shardEnd < last) last = shardEnd;
 		}
+		// Chance sampling decides how each deal's values are had; how they
+		// spread over the deal's mirror images is the same either way.
+		const sampleHere = sampleRounds !== 0 && mode === TRAIN && applyUpdates && ((sampleRounds >> nextRound) & 1) !== 0;
 		for (let childBoard = first; childBoard < last; childBoard++) {
 			const childSlot = (nextBase + childBoard) * 2;
 			const nMe = i32At(listCount, childSlot + traverser);
@@ -277,7 +342,9 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 			let value: usize = 0;
 			for (let m = firstMember; m < membersEnd; m++) {
 				const upMe = up + (<usize>i32At(ups, m * 2 + traverser) << 1);
-				if (m === firstMember) {
+				if (m === firstMember && sampleHere) {
+					value = sampledValue(traverser, node, child, childSlot, childBoard, upMe, up + (<usize>i32At(ups, m * 2 + opponent) << 1), reachMe, reachOpp, childMe, childOpp, depth);
+				} else if (m === firstMember) {
 					const upOpp = up + (<usize>i32At(ups, m * 2 + opponent) << 1);
 					for (let k = 0; k < nMe; k++) store<f32>(childMe + (<usize>k << 2), f32At(reachMe, <i32>load<u16>(upMe + (<usize>k << 1))));
 					for (let k = 0; k < nOpp; k++) store<f32>(childOpp + (<usize>k << 2), f32At(reachOpp, <i32>load<u16>(upOpp + (<usize>k << 1))));
@@ -384,10 +451,72 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 		}
 	}
 
-	if (isTraverser && mode === TRAIN && applyUpdates) {
+	if (isTraverser && mode === TRAIN && applyUpdates && sampleRounds !== 0 && dcfrRule) {
+		// A subtree sampling skipped missed those iterations' discounts;
+		// nothing was added meanwhile, so each sign held.
+		const block = lastUpdate + (<usize>(i32At(blockOffset, node) + board) << 2);
+		const savedPositive = keepPositive;
+		const savedNegative = keepNegative;
+		const savedSum = keepSum;
+		let positive = <f64>keepPositive;
+		let negative = <f64>keepNegative;
+		let sum = <f64>keepSum;
+		if (catchUp) {
+			for (let t = load<i32>(block) + 1; t < iteration; t++) {
+				// `dcfrFactors` in src/cfr.ts at α 1.5, β 0, γ 3, without
+				// pulling a general power function into the module.
+				const age: f64 = t > 2 ? <f64>(t - 2) : 0;
+				const grown = age * Math.sqrt(age);
+				const kept = <f64>(t - 1) / <f64>t;
+				positive *= grown / (grown + 1);
+				negative *= 0.5;
+				sum *= kept * kept * kept;
+			}
+		}
+		store<i32>(block, iteration);
+		keepPositive = <f32>positive;
+		keepNegative = <f32>negative;
+		keepSum = <f32>sum;
+		update(base, sumBase, actions, n, reachMe, strategy, actionValues, out);
+		keepPositive = savedPositive;
+		keepNegative = savedNegative;
+		keepSum = savedSum;
+	} else if (isTraverser && mode === TRAIN && applyUpdates) {
 		update(base, sumBase, actions, n, reachMe, strategy, actionValues, out);
 	}
 	return out;
+}
+
+/**
+ * One deal's values in a sampled chance node's training walk, as
+ * `sampledValue` in src/cfr.ts: a deal not walked gives its baseline, the
+ * values it returned when last walked; a walked deal gives `b + (v - b) / p`
+ * and becomes the new baseline. A deal never walked yet is always walked.
+ */
+function sampledValue(
+	traverser: i32, node: i32, child: i32, childSlot: i32, childBoard: i32, upMe: usize, upOpp: usize,
+	reachMe: usize, reachOpp: usize, childMe: usize, childOpp: usize, depth: i32,
+): usize {
+	const opponent = 1 - traverser;
+	const nMe = i32At(listCount, childSlot + traverser);
+	const at = baseline + (<usize>(i32At(baseOffset, node) + i32At(boardOffset, childSlot + traverser)) << 2);
+	const walkAt = lastWalk + (<usize>(i32At(walkOffset, node) + childBoard * 2 + traverser) << 2);
+	const fresh = load<i32>(walkAt) === 0;
+	if (!fresh && !sampled(node, childBoard, iteration)) return at;
+	const nOpp = i32At(listCount, childSlot + opponent);
+	for (let k = 0; k < nMe; k++) store<f32>(childMe + (<usize>k << 2), f32At(reachMe, <i32>load<u16>(upMe + (<usize>k << 1))));
+	for (let k = 0; k < nOpp; k++) store<f32>(childOpp + (<usize>k << 2), f32At(reachOpp, <i32>load<u16>(upOpp + (<usize>k << 1))));
+	const value = traverse(traverser, child, childBoard, childMe, childOpp, depth + 1);
+	for (let k = 0; k < nMe; k++) {
+		const o = <usize>k << 2;
+		const v = load<f32>(value + o);
+		const b = load<f32>(at + o);
+		store<f32>(at + o, v);
+		// `v + (w - 1)(v - b)` is `b + w(v - b)`, and exactly `v` at w = 1.
+		if (!fresh) store<f32>(value + o, v + (sampleWeight - 1) * (v - b));
+	}
+	store<i32>(walkAt, iteration);
+	return value;
 }
 
 /** Current strategy: each hand's share of positive regret, uniform where none. */

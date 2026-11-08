@@ -27,11 +27,14 @@ import { warmStart } from './warm.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
 import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit } from './platform/node.ts';
-import type { Context, PlayerIndex, RegretStore, RootValues, Solver, SumStore } from './cfr.ts';
+import type { Context, PlayerIndex, RegretStore, RootValues, SamplingOptions, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
 	buildPlayerIndex,
+	makeSampling,
+	planSampling,
+	samplingBytes,
 	makeSolver,
 	makeTerminalScratch,
 	matchupMass,
@@ -46,7 +49,7 @@ export type { ResolvedBoard } from './runouts.ts';
 export type { WarmStartReport } from './warm.ts';
 export { simdAvailable } from './kernels.ts';
 export type { BetSize } from './tree.ts';
-export type { Solver } from './cfr.ts';
+export type { SamplingOptions, Solver } from './cfr.ts';
 export { ACTION_LABELS, ActionKind, NodeKind } from './tree.ts';
 export type { PerPlayer, RaiseSizes } from './tree.ts';
 /** 'node' or 'browser': which build is running. */
@@ -724,6 +727,34 @@ export interface Approximations {
 	 *   for thousands of precomputed solves per tree and archetype, rebuilt
 	 *   whenever the defaults change.
 	 */
+	/**
+	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
+	 * training iteration walks each turn and river deal with probability `p`
+	 * (default 0.35, both rounds). A deal left out adds the per-hand values it
+	 * returned when last walked, its baseline; a walked deal adds
+	 * `b + (v - b) / p` and its values become the new baseline. DCFR discounts
+	 * a skipped subtree missed are applied when it is next walked. This is
+	 * what made sampling pay where the plain 1/p weighting above did not:
+	 * the correction only carries how much a deal's values moved since its
+	 * last walk, which is small.
+	 *
+	 * Iterations get several times cheaper and take 2–5 times as many to a
+	 * target, so the net is about 1.2–1.5 times faster to 0.3% of pot, and
+	 * per-hand root EVs come out closer to the true ones at the same
+	 * exploitability. Measured single-threaded in Node against the exact
+	 * solve, time to 0.3% of pot (to 1%): AsKh7d 23.7 s → 15.9 s (13.3 → 9.0),
+	 * Ks9s4s 6.0 → 4.3 (3.4 → 2.3), the README's wide flop 13.4 → 9.3
+	 * (7.5 → 5.3), and pairs-and-broadway ranges on AsKh7d 16.7 → 12.9 and on
+	 * Ks9s4s 5.5 → 4.5. Exploitability is measured exactly, in the full game.
+	 *
+	 * Costs: one float per hand per stored deal per chance node, 6–31 MB on
+	 * those flops (about 12–20% beside their storage), counted against
+	 * `maxBytes`; always one thread (`workers` is ignored); 32- or 64-bit
+	 * storage only. With `targetPercent`, a sampled solve runs more
+	 * iterations, so it makes a few more exploitability checks.
+	 * Off, nothing changes; at `p: 1` it is the exact solve, bit for bit.
+	 */
+	readonly chanceSampling?: SamplingOptions;
 }
 
 /** See `Approximations.coarseStart`. */
@@ -913,7 +944,9 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// browser build can only thread the engine.
 	const wantsEngine =
 		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false;
-	const requested = resolveWorkers(options, wantsEngine);
+	// Sampling's state is one thread's; see `Approximations.chanceSampling`.
+	const samplingOptions = options.approximations?.chanceSampling;
+	const requested = samplingOptions ? 1 : resolveWorkers(options, wantsEngine);
 	const plan = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
 
 	// Workers need the accumulators in shared memory. Allocating shared for a
@@ -925,12 +958,22 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 
 	const active = buildActiveLists(spot.runouts, spot.players, showdown);
 	const hands = buildHandSpace(spot.runouts, spot.players, active);
+	if (samplingOptions && quantised) throw new Error('chanceSampling needs 32- or 64-bit storage');
+	const samplingPlan = samplingOptions ? planSampling(spot.tree, spot.runouts, active, layout, samplingOptions) : undefined;
+	// Measured as the precision choice above measures storage: by the estimate.
+	const storageBytes = Math.max(bytes, layout.bytes);
+	if (samplingPlan && storageBytes + samplingBytes(samplingPlan) > maxBytes) {
+		throw new Error(
+			`chanceSampling needs ${Math.ceil(samplingBytes(samplingPlan) / 2 ** 20)} MiB of baselines beside ` +
+				`${Math.ceil(storageBytes / 2 ** 20)} MiB of storage, over maxBytes; sample fewer rounds or raise maxBytes`,
+		);
+	}
 	// The engine owns the storage; the context sees it through views.
 	const engine = wantsEngine
 		? createEngine(
 				{
 					tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
-					runoutWeight: weights, chipScale: spot.chipScale,
+					runoutWeight: weights, chipScale: spot.chipScale, sampling: samplingPlan,
 				},
 				plan ? { plan, threads: requested, spawn: spawnEngineWorker } : undefined,
 			)
@@ -970,6 +1013,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		totalMass: matchupMass(spot.players[0].weights, spot.players[1].weights) * weights[0],
 		dcfr: (options.algorithm ?? 'dcfr') === 'dcfr',
 	};
+	if (samplingPlan) ctx.sampling = makeSampling(samplingPlan, engine?.sampling ?? undefined);
 
 	// Seeded before any worker starts, so they all see the inherited values.
 	let warm: WarmStartReport | null = null;
@@ -996,6 +1040,8 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			}
 			offset = options.warmIteration ?? coarse.totalIterations;
 		}
+		// Inherited accumulators are discounted up to where the count resumes.
+		if (warm) ctx.sampling?.lastUpdate.fill(offset);
 
 		solver = makeSolver(ctx);
 		if (warm && coarsePlan) coarseMs.set(solver, coarsePlan.elapsed);
