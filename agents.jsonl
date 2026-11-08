@@ -8,3 +8,4 @@
 {"url":null,"title":"Approx EV: regret-based pruning of subtrees no hand plays","issue":26,"state":"active","updated":"2026-11-08T14:54:45.040Z"}
 {"url":null,"title":"Approx EV: compress combos into weighted hand classes (shorter vectors)","issue":28,"state":"active","updated":"2026-11-08T14:54:48.586Z"}
 {"url":null,"title":"Speed: multi-threaded WASM (and WebGPU prototype) in the browser","issue":29,"state":"active","updated":"2026-11-08T14:54:52.097Z"}
+{"url":null,"title":"Approx EV: precomputed flop library + nearest-spot warm start","issue":30,"state":"active","updated":"2026-11-08T14:54:56.295Z"}
