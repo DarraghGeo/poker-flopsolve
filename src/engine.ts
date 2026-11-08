@@ -21,7 +21,7 @@ import type { Tree } from './tree.ts';
 import { ENGINE_WASM } from './wasm/engine.ts';
 import { ENGINE_SHARED_WASM } from './wasm/engine-shared.ts';
 import type { ShardPlan } from './parallel.ts';
-import { THREAD_FAILED_ERROR, WORKER_START_ERROR, WORKER_START_MS } from './parallel.ts';
+import { awaitThreads, THREAD_FAILED_ERROR, WORKER_START_ERROR, WORKER_START_MS } from './parallel.ts';
 
 /** The parts of the WebAssembly API used here, typed locally: the project builds without DOM typings. */
 interface WasmApi {
@@ -128,7 +128,13 @@ export const ENGINE_CONTROL = { generation: 0, done: 1, command: 2, mode: 3, tra
  */
 export function createEngine(
 	input: EngineInput,
-	pool?: { plan: ShardPlan; threads: number; spawn: SpawnEngineWorker },
+	pool?: {
+		plan: ShardPlan;
+		threads: number;
+		spawn: SpawnEngineWorker;
+		/** The shortest a step waits for the other threads; see `awaitThreads` in src/parallel.ts. */
+		backstopFloorMs?: number;
+	},
 ): Engine | null {
 	const shared = pool !== undefined;
 	const compiledModule = compiledEngine(shared ? 'shared' : 'plain');
@@ -368,6 +374,7 @@ export function createEngine(
 		Atomics.store(control!, ENGINE_CONTROL.command, 0);
 		Atomics.add(control!, ENGINE_CONTROL.generation, 1);
 		Atomics.notify(control!, ENGINE_CONTROL.generation);
+		const dispatched = performance.now();
 		exports.setShard(plan.round, plan.bounds[0], plan.bounds[1]);
 		exports.setPhase(0, apply);
 		const valueView = new Float32Array(memory.buffer, offsets[values], entries * stride);
@@ -378,11 +385,10 @@ export function createEngine(
 		}
 		// A thread whose walk throws says so in `failed` and counts itself
 		// done, as its error event cannot reach this thread while it waits.
-		for (;;) {
-			const done = Atomics.load(control!, ENGINE_CONTROL.done);
-			if (done >= threads - 1 || failure) break;
-			Atomics.wait(control!, ENGINE_CONTROL.done, done, 50);
-		}
+		// One killed without unwinding does neither, hence the backstop.
+		failure ??= awaitThreads(
+			control!, ENGINE_CONTROL.done, threads - 1, dispatched, pool!.backstopFloorMs, () => failure !== null,
+		);
 		const dead = failed();
 		if (dead) throw dead;
 		const partialView = new Float32Array(memory.buffer, offsets[partials], (threads - 1) * entries * stride);
