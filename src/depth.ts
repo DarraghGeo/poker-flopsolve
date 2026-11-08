@@ -98,6 +98,7 @@ export interface DepthLimitedReport {
 	readonly blueprintMs: number;
 	/** Largest leaf spot's storage. */
 	readonly leafBytes: number;
+	/** Building the leaf tables, refreshes included. */
 	readonly tablesMs: number;
 	/** The kept value tables. */
 	readonly tableBytes: number;
@@ -262,21 +263,7 @@ function matchNodes(leaf: Tree, from: number, bp: Tree, to: number): { node: num
 			walk(leaf.edgeChild[leaf.firstEdge[a]], bp.edgeChild[bp.firstEdge[b]]);
 			return;
 		}
-		const edges = new Int32Array(leaf.numEdges[a]).fill(-1);
-		for (let e = 0; e < leaf.numEdges[a]; e++) {
-			const action = leaf.edgeAction[leaf.firstEdge[a] + e];
-			let best = -1;
-			for (let f = 0; f < bp.numEdges[b]; f++) {
-				const other = bp.edgeAction[bp.firstEdge[b] + f];
-				if (other === action) {
-					best = f;
-					break;
-				}
-				// A bet the stack caps is a shove here, a bet there, or back.
-				if (best < 0 && action >= ActionKind.Bet && other >= ActionKind.Bet) best = f;
-			}
-			edges[e] = best;
-		}
+		const edges = matchEdges(leaf, a, bp, b);
 		pairs.push({ node: a, source: b, edges });
 		for (let e = 0; e < leaf.numEdges[a]; e++) {
 			const child = leaf.edgeChild[leaf.firstEdge[a] + e];
@@ -285,6 +272,43 @@ function matchNodes(leaf: Tree, from: number, bp: Tree, to: number): { node: num
 	};
 	walk(from, to);
 	return pairs;
+}
+
+/**
+ * Each of a leaf decision's edges' blueprint edge, or -1. Edges of one kind
+ * match in order, the n-th bet to the n-th bet, so a blueprint with several
+ * sizes keeps them apart; past the blueprint's last of a kind, the last. A
+ * bet or raise with no counterpart of its kind takes an aggressive edge at
+ * the same place among the aggressive ones, since a bet the stack caps is a
+ * shove on one side and a bet on the other.
+ */
+function matchEdges(leaf: Tree, a: number, bp: Tree, b: number): Int32Array {
+	const kinds = (tree: Tree, node: number, aggressive: boolean): number[][] => {
+		const byKind: number[][] = [[], [], [], [], [], [], []];
+		for (let e = 0; e < tree.numEdges[node]; e++) {
+			const action = tree.edgeAction[tree.firstEdge[node] + e];
+			byKind[action].push(e);
+			if (aggressive && action >= ActionKind.Bet) byKind[6].push(e);
+		}
+		return byKind;
+	};
+	const mine = kinds(leaf, a, true);
+	const theirs = kinds(bp, b, true);
+	const edges = new Int32Array(leaf.numEdges[a]).fill(-1);
+	for (let kind = 0; kind < 6; kind++) {
+		mine[kind].forEach((e, rank) => {
+			const same = theirs[kind];
+			if (same.length > 0) {
+				edges[e] = same[Math.min(rank, same.length - 1)];
+				return;
+			}
+			if (kind < ActionKind.Bet) return;
+			const at = mine[6].indexOf(e);
+			const any = theirs[6];
+			if (any.length > 0) edges[e] = any[Math.min(at, any.length - 1)];
+		});
+	}
+	return edges;
 }
 
 /** Each action family's weight under a bias. */
@@ -307,13 +331,15 @@ function firstChance(tree: Tree): number {
  * Prepare a depth-limited solve of a flop spot: solve its blueprint, build
  * the leaf tables, and return a run over the flop alone. See the file
  * comment. JavaScript traversal, one thread, for the flop. The blueprint
- * stays in memory until `close()`, for `refresh()`.
+ * stays in memory until `close()`, for `refresh()`; a run closed reads as
+ * before, but cannot refresh.
  */
 export function createDepthLimitedRun(config: SpotConfig, options: DepthLimitedOptions = {}): DepthLimitedRun {
 	const continuations = options.continuations ?? DEFAULT_CONTINUATIONS;
 	const k = continuations.length;
 	if (k === 0) throw new Error('A depth-limited solve needs at least one continuation');
 	const strength = options.bias ?? 5;
+	if (!(Number.isFinite(strength) && strength > 0)) throw new Error(`bias must be a positive number; got ${strength}`);
 	const betting = options.blueprint ?? DEFAULT_BLUEPRINT;
 	const model = options.leafModel ?? 'additive';
 	if (config.runoutBuckets) throw new Error('A depth-limited solve deals every card; leave runoutBuckets off');
@@ -360,6 +386,12 @@ export function createDepthLimitedRun(config: SpotConfig, options: DepthLimitedO
 	const blueprintMs = Date.now() - started;
 	options.onPhase?.('blueprint');
 	const bp = blueprint.solver.ctx;
+	// What `refresh` needs of the blueprint, dropped on `close()`.
+	let held: { blueprint: Solution; bp: Context; blueprintSpot: Spot } | null = { blueprint, bp, blueprintSpot };
+	const last = blueprint.history.at(-1);
+	const blueprintExploitability = last
+		? (100 * last.exploitability) / (blueprintSpot.potUnits / blueprintSpot.chipScale)
+		: blueprint.exploitabilityPercent();
 	const bpLines = cutAtTurn(blueprintSpot.tree).leaves;
 	if (bpLines.length === 0) throw new Error('The blueprint has no line into the turn');
 
@@ -404,6 +436,8 @@ export function createDepthLimitedRun(config: SpotConfig, options: DepthLimitedO
 
 	/** One leaf's table: each player's EV per hand for every pair of continuations. */
 	const buildTable = (l: number, reach: readonly [Float64Array, Float64Array]): Float64Array => {
+		if (held === null) throw new Error('This depth-limited run is closed; its blueprint is gone');
+		const { blueprint, bp, blueprintSpot } = held;
 		const line = cut.leaves[l];
 		const sourceNode = sources[l].origin;
 		const leafSpot = defineSpot({
@@ -438,6 +472,7 @@ export function createDepthLimitedRun(config: SpotConfig, options: DepthLimitedO
 			// leaf's edges; a decision with no counterpart checks or calls.
 			const base = new Float32Array(ctx.strategySum.length);
 			const scratch = new Float64Array(16 * COMBOS);
+			const shared = new Float64Array(16);
 			const passive = (action: number): number => (action === ActionKind.Check || action === ActionKind.Call ? 1 : 0);
 			for (const { node, source: from, edges } of pairs) {
 				const round = tree.round[node];
@@ -446,6 +481,8 @@ export function createDepthLimitedRun(config: SpotConfig, options: DepthLimitedO
 				for (let board = 0; board < leafSpot.runouts.counts[round]; board++) {
 					const count = ctx.active.count[(ctx.active.roundBase[round] + board) * 2 + owner];
 					const at = blockBase(ctx.layout, tree, node, board);
+					shared.fill(0);
+					for (let e = 0; e < actions; e++) if (from >= 0 && edges[e] >= 0) shared[edges[e]]++;
 					if (from >= 0) {
 						averageStrategy(
 							bp.strategySum, blockBase(bp.layout, blueprintSpot.tree, from, board),
@@ -456,7 +493,8 @@ export function createDepthLimitedRun(config: SpotConfig, options: DepthLimitedO
 						let total = 0;
 						for (let e = 0; e < actions; e++) {
 							const f = from < 0 ? -1 : edges[e];
-							const p = f < 0 ? 0 : scratch[f * count + i];
+							// A blueprint edge two leaf edges share is split between them.
+							const p = f < 0 ? 0 : scratch[f * count + i] / shared[f];
 							base[at + e * count + i] = p;
 							total += p;
 						}
@@ -532,31 +570,39 @@ export function createDepthLimitedRun(config: SpotConfig, options: DepthLimitedO
 	const showdown = showdownTable(config, lists);
 	const leaf = makeLeafValues(run.solver.ctx, cut.leaves, tables, k, cut.allIns, showdown.tables, showdown.payoff, model);
 	run.solver.ctx.leaf = leaf.values;
-	const report: DepthLimitedReport = {
+	const report: { -readonly [K in keyof DepthLimitedReport]: DepthLimitedReport[K] } = {
 		leaves: cut.leaves.length,
 		continuations: k,
 		blueprintIterations: blueprint.iterations,
-		blueprintExploitability: blueprint.exploitabilityPercent(),
+		blueprintExploitability,
 		blueprintBytes: blueprintSpot.estimate.bytes,
 		blueprintMs,
 		get leafBytes() {
 			return leafBytes;
 		},
-		tablesMs,
+		tablesMs: 0,
 		tableBytes: tables.reduce((sum, t) => sum + t.byteLength, 0) + leaf.bytes,
 		lines: cut.leaves.map((line, l) => ({ leaf: line.path, source: sources[l].path })),
 	};
+	report.tablesMs = tablesMs;
+	const close = run.close.bind(run);
 	return Object.assign(run, {
 		report,
 		refresh() {
 			// Ranges as the flop solve now sends them; a line it no longer
 			// plays keeps the blueprint's.
 			const now = run.snapshot();
+			const started = Date.now();
 			cut.leaves.forEach((line, l) => {
 				const reach = ([0, 1] as const).map((p) => now.reachAt(line.node, 0, p)) as [Float64Array, Float64Array];
 				const fresh = reach.every((r) => r.some((x) => x > 1e-6));
 				if (fresh) tables[l] = buildTable(l, reach);
 			});
+			report.tablesMs += Date.now() - started;
+		},
+		close() {
+			held = null;
+			close();
 		},
 	});
 }

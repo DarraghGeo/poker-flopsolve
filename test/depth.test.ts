@@ -80,11 +80,12 @@ describe('showdownTable', () => {
 });
 
 describe('createDepthLimitedRun', () => {
-	it("builds each leaf's table as the blueprint's own values there", () => {
+	for (const sizes of [[0.66], [0.33, 0.66]]) {
+	it(`builds each leaf's table as the blueprint's own values there (sizes ${sizes.join(', ')})`, () => {
 		let leaves = 0;
-		const run = createDepthLimitedRun(flop, {
+		const run = createDepthLimitedRun({ ...flop, betSizes: [sizes] }, {
 			continuations: ['blueprint'],
-			blueprint: { betSizes: [[0.66]] },
+			blueprint: { betSizes: [sizes] },
 			blueprintTarget: 1,
 			onLeafSpot({ table, source }, blueprint) {
 				leaves++;
@@ -111,10 +112,10 @@ describe('createDepthLimitedRun', () => {
 			},
 		});
 		expect(leaves).toBe(run.report.leaves);
-		expect(run.report.lines.map((line) => line.leaf).sort()).toEqual(['bc', 'xbc', 'xx']);
 		expect(run.report.lines.every((line) => line.leaf === line.source)).toBe(true);
 		run.close();
 	});
+	}
 
 	it('is zero-sum and close to the exact solve when the blueprint is the game', () => {
 		const exact = solve(defineSpot(flop), { targetPercent: 0.2, iterations: 500 });
@@ -139,5 +140,18 @@ describe('createDepthLimitedRun', () => {
 	it('refuses a spot that does not start on the flop', () => {
 		expect(() => createDepthLimitedRun({ ...flop, board: 'Ts 9s 4h 2c' })).toThrow(/flop/);
 		expect(() => createDepthLimitedRun({ ...flop, runoutBuckets: true })).toThrow(/runoutBuckets/);
+		expect(() => createDepthLimitedRun(flop, { bias: 0 })).toThrow(/bias/);
+	});
+
+	it('refreshes its tables while open, and lets the blueprint go once closed', () => {
+		const run = createDepthLimitedRun(flop, { continuations: ['blueprint'], blueprintTarget: 1 });
+		run.step(20);
+		const before = run.report.tablesMs;
+		run.refresh();
+		run.step(20);
+		expect(run.report.tablesMs).toBeGreaterThanOrEqual(before);
+		expect(run.snapshot().ev(0) + run.snapshot().ev(1)).toBeCloseTo(0, 6);
+		run.close();
+		expect(() => run.refresh()).toThrow(/closed/);
 	});
 });

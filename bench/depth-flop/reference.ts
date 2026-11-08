@@ -24,6 +24,7 @@ for (const name of process.argv.slice(2)) {
 	let done = 0;
 	let next = 20;
 	let exploitability = Infinity;
+	let saved = false;
 	while (done < 2000) {
 		run.step(next - done);
 		done = next;
@@ -34,11 +35,12 @@ for (const name of process.argv.slice(2)) {
 		if (exploitability < 3) {
 			const report = rootReport(spot, run.solver);
 			writeFileSync(new URL(`${name}.json`, OUT), JSON.stringify({ name, iterations: done, seconds, exploitability, ...report }));
+			saved = true;
 		}
 		if (exploitability <= target) break;
-		next = Math.ceil(done * (exploitability > 2 * target ? 1.5 : 1.2));
+		next = Math.min(2000, Math.ceil(done * (exploitability > 2 * target ? 1.5 : 1.2)));
 	}
-	console.log(`  saved`);
+	console.log(saved ? '  saved' : '  never under 3% of pot: nothing saved');
 	run.close();
 }
 process.exit(0);
