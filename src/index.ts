@@ -536,6 +536,37 @@ export interface Approximations {
 	 * cost more iterations than it saved: a flop spot on 4 threads reached
 	 * 0.3% of pot in 14.1 s exact, 23.1 s at p = 0.5, and not within 400
 	 * iterations at p = 0.25; at best it broke even to 1%.
+	 *
+	 * A library of precomputed flops (#30) — the 1,755 suit-isomorphic flops
+	 * solved for a few archetype ranges, answering a query by lookup and then
+	 * warm-starting — was measured and is not offered. The experiment is in
+	 * `bench/library/`: the bench `flop` (AsKh7d) and `monotone` (Ks9s4s)
+	 * spots and a wide AsKh7d (213 vs 205 combos), references solved to 0.1%
+	 * of pot, a budget of 15 s single-threaded in Chromium (36, 96 and 36
+	 * iterations), errors in per-combination root EV, % of pot.
+	 *
+	 * - A lookup is only as good as the nearest stored spot. From a flop a
+	 *   rank swap away (AsKh6d for AsKh7d, Ks9s5s for Ks9s4s) the mean error
+	 *   was 0.8–1.8 and the largest 7–40, since the hands whose role changes
+	 *   are simply wrong; from AsQh7d or Ks8s4s the mean was 3–8. For a custom range on the same flop,
+	 *   re-weighting the archetype's per-matchup values (the strategies cannot
+	 *   adapt) gave a mean of 1.3–4.5 and a largest of 3–14. Cold solves
+	 *   reached a mean of 0.2–2.4 and a largest of 0.4–4.9 inside the budget,
+	 *   so a lookup wins only in the first seconds and never on the worst
+	 *   hands.
+	 * - A warm start from the whole of a neighbour's solve is fast (0.5% in 8
+	 *   iterations instead of 52) and stays available in-session as
+	 *   `SolveOptions.warmCards`. But the whole tree is 9–33 MB per flop at a
+	 *   byte per value, 16–58 GB per archetype for every flop. What a library
+	 *   can ship is the flop's decisions (~2 KB a flop) or the flop's and the
+	 *   turn's (~0.2 MB). Seeded with the flop's alone, solves took 76–92
+	 *   iterations to 0.5% where cold took 40–52: the later streets start cold
+	 *   but are discounted as if late in the solve. Restarting the count at 10
+	 *   recovered 44–52 on rainbow flops and 44–56 on monotone ones (a cold
+	 *   solve restarted at 10, nothing seeded, took 52–68); flop and turn,
+	 *   52–68. At most 15% fewer iterations on some spots and more on others,
+	 *   for thousands of precomputed solves per tree and archetype, rebuilt
+	 *   whenever the defaults change.
 	 */
 }
 
