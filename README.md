@@ -416,6 +416,42 @@ accuracy. On AhKdQc, 4 threads, to 0.3% of pot in the bucketed game:
 | | 1 | 1,396 | 4.9 s | 0.482% |
 | | 3 | 1,088 | 4.2 s | 0.542% |
 
+### Line runouts (approximate, opt-in)
+
+`lineRunouts: true` deals coarser turn and river cards in the betting lines that are
+rarely reached, and every card in the rest. A chance node deals coarsely once the betting
+before it holds two bets or raises (all streets so far), and so does every deal below a
+coarse one. A coarse deal stores one card per class of cards that pair, flush and
+straight the board alike, ranks folded in bands of three; the class's other cards play as
+it. `{ aggressions, raises, band }` spells another rule. It is for trees too big to hold
+otherwise, and it stacks with `runoutBuckets`:
+
+| Spot (three sizes a street, pot 55, stack 975) | Exact | `lineRunouts: true` | with `runoutBuckets: 3` too |
+|---|---|---|---|
+| As Kh 7d, raise sizes 0.75 + all-in, 3 aggressions (i16) | 8.67 GiB | 3.91 GiB | 2.66 GiB |
+| Ks 9s 4s, same tree (f32) | 3.75 GiB | 2.66 GiB | 2.18 GiB |
+
+It costs accuracy, and more than its share of the reach suggests: the lines it coarsens
+are reached on 10% of river deals, but a best response finds them. On Ks 9s 4s, 510
+iterations on 4 threads against an exact solve to 0.30% of pot, % of pot:
+
+| Rule | Storage (f32) | True exploitability | Root EV error, mean (worst) |
+|---|---|---|---|
+| exact | 3.75 GiB | 0.30 | |
+| `lineRunouts: true` | 2.66 GiB | 3.8 | 0.6–0.8 (3.5) |
+| `{ aggressions: 2, band: 13 }` | 1.68 GiB | 13.7 | 2.2–2.4 (14.7) |
+| `{ raises: 1, band: 13 }` | 2.40 GiB | 8.0 | 1.9–3.1 (11.2) |
+| `runoutBuckets: 3` instead, same memory | 2.66 GiB | 0.97 | 0.3 (2.0) |
+
+On that monotone board `runoutBuckets` is the better trade at equal memory; line runouts
+pay where buckets cannot fold much, as on rainbow boards with connected ranges.
+`exploitabilityPercent()` measures the coarse game, which is not quite zero-sum (a hand
+holding the stored card misses its class, and values are rescaled for it), so read
+`run.trueExploitabilityPercent()`. Board indices are per line: `spot.resolveBoard(cards,
+node)` finds a real board in a node's line. JavaScript engine only — threaded in Node,
+one thread in the browser. `bench/history-runouts/` has the census, the storage
+projection for any rule and the measurements.
+
 ### Chance sampling (opt-in)
 
 `approximations: { chanceSampling: {} }` walks each turn and river deal on only some
