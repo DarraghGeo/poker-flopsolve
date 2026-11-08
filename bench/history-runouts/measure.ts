@@ -175,15 +175,23 @@ if (mode === 'ref') {
 	console.log('reach by class:', reference.reach);
 } else {
 	const reference = JSON.parse(readFileSync(refFile, 'utf8'), (_, v: unknown) => (v === null ? NaN : v)) as Reference;
-	const rule = {
-		...(opt('raises') ? { raises: Number(opt('raises')) } : {}),
-		...(opt('aggressions') ? { aggressions: Number(opt('aggressions')) } : {}),
-		band: Number(opt('band', '13')),
-	};
-	// `--buckets g` instead: the existing global `runoutBuckets`, for comparison at equal memory.
+	// `--lines` alone is `lineRunouts: true`; `--raises`/`--aggressions`/`--band` spell a rule;
+	// `--buckets g` adds the global `runoutBuckets`, alone or stacked.
+	const spelled = opt('raises') !== undefined || opt('aggressions') !== undefined;
+	const rule = spelled
+		? {
+				...(opt('raises') ? { raises: Number(opt('raises')) } : {}),
+				...(opt('aggressions') ? { aggressions: Number(opt('aggressions')) } : {}),
+				band: Number(opt('band', '3')),
+			}
+		: args.includes('--lines') ? { aggressions: 2, band: 3 } : null;
 	const buckets = opt('buckets');
-	const config: SpotConfig = buckets ? { ...SPOTS[name], runoutBuckets: Number(buckets) } : { ...SPOTS[name], lineRunouts: rule };
-	const label = `${name} ${buckets ? `runoutBuckets ${buckets}` : JSON.stringify(rule)}`;
+	const config: SpotConfig = {
+		...SPOTS[name],
+		...(buckets ? { runoutBuckets: Number(buckets) } : {}),
+		...(rule ? { lineRunouts: rule } : {}),
+	};
+	const label = `${name} ${buckets ? `runoutBuckets ${buckets} ` : ''}${rule ? JSON.stringify(rule) : ''}`;
 	const { run, seconds, exploitability } = solveTo(config, Number(opt('iters', String(reference.iterations))), label, false);
 	const peakRss = process.resourceUsage().maxRSS * 1024;
 	const heap = process.memoryUsage().heapUsed;
@@ -211,7 +219,7 @@ if (mode === 'ref') {
 	const truth = run.trueExploitabilityPercent();
 	run.close();
 	const result = {
-		spot: name, rule: buckets ? { runoutBuckets: Number(buckets) } : rule, iterations: run.completed, seconds: Math.round(seconds), storage: gib(storage), peakRss: gib(peakRss), heap: gib(heap),
+		spot: name, rule: { ...(buckets ? { runoutBuckets: Number(buckets) } : {}), ...(rule ?? {}) }, iterations: run.completed, seconds: Math.round(seconds), storage: gib(storage), peakRss: gib(peakRss), heap: gib(heap),
 		ownExploitability: +exploitability.toFixed(3), trueExploitability: +truth.toFixed(3),
 		rootEv: { oop: { mae: +oop.mae.toFixed(3), max: +oop.max.toFixed(3) }, ip: { mae: +ip.mae.toFixed(3), max: +ip.max.toFixed(3) } },
 		rootBetEvMae: +(actionError / actionMass).toFixed(3),
@@ -220,6 +228,6 @@ if (mode === 'ref') {
 		trueExploitabilitySeconds: Math.round((performance.now() - t) / 1000),
 	};
 	console.log(JSON.stringify(result));
-	const tag = buckets ? `buckets${buckets}` : Object.entries(rule).map(([k, v]) => `${k}${v}`).join('-');
+	const tag = [buckets ? `buckets${buckets}` : '', ...Object.entries(rule ?? {}).map(([k, v]) => `${k}${v}`)].filter(Boolean).join('-');
 	writeFileSync(new URL(`${name}-${tag}.json`, dir), JSON.stringify(result, null, 1));
 }
