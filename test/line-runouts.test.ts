@@ -97,7 +97,8 @@ describe('line runouts', () => {
 		const truth = one.trueExploitabilityPercent();
 		expect(truth).toBeGreaterThan(0);
 		expect(truth).toBeLessThan(5);
-		expect(four.trueExploitabilityPercent()).toBeCloseTo(truth, 6);
+		// Thread count reassociates sums, as without line runouts.
+		expect(four.trueExploitabilityPercent()).toBeCloseTo(truth, 4);
 		four.close();
 	});
 
@@ -112,7 +113,7 @@ describe('line runouts', () => {
 	});
 
 	it('read boards per line', () => {
-		const spot = defineSpot({ ...flop, lineRunouts: { raises: 1 } });
+		const spot = defineSpot({ ...flop, lineRunouts: { aggressions: 1 } });
 		const { tree, runouts } = spot;
 		const lines = runouts.lines!;
 		const coarseNode = Array.from(tree.decisionNodes).find((n) => lines.families[lines.family[n]].coarse && tree.round[n] === 1)!;
@@ -132,13 +133,67 @@ describe('line runouts', () => {
 		const plain = spot.resolveBoard('As Kh 7d 5c', fineNode);
 		expect(plain.board).toBeGreaterThanOrEqual(fine.from);
 		expect(plain.board).toBeLessThan(fine.to);
+		// Past the node's round, its line carries on as it is.
+		const river = spot.resolveBoard('As Kh 7d 5c 9h', 0);
+		expect(river.round).toBe(2);
+		expect(runouts.parent[2][river.board]).toBe(spot.resolveBoard('As Kh 7d 5c', 0).board);
+		expect(() => spot.resolveBoard('As Kh 7d 5c', tree.nodeCount)).toThrow(/not a node/);
 		run.close();
+	});
+
+	it('view each parent\'s own line in childStart, every child its own', () => {
+		const spot = defineSpot({ ...flop, lineRunouts: { raises: 1 } });
+		const { runouts } = spot;
+		for (let round = 1; round < runouts.rounds; round++) {
+			const starts = runouts.childStart[round];
+			for (let p = 0; p < runouts.counts[round - 1]; p++) {
+				expect(starts[p + 1]).toBeGreaterThanOrEqual(starts[p]);
+				for (let c = starts[p]; c < starts[p + 1]; c++) expect(runouts.parent[round][c]).toBe(p);
+			}
+		}
+		// The fine turns' own children are their fine rivers.
+		const fine = runouts.lines!.families.find((f) => f.round === 2 && !f.coarse)!;
+		expect(runouts.childStart[2][0]).toBe(fine.childStart[0]);
+	});
+
+	it('value hands against one opposing hand, as the walk with every hand apart does', () => {
+		const spot = defineSpot({ ...flop, lineRunouts: { aggressions: 1 } });
+		const run = createRun(spot, { engine: 'js' });
+		run.step(3);
+		const { solver } = run;
+		const theirs = new Float64Array(1326);
+		const one = spot.players[1].combos[0];
+		theirs[one] = 1;
+		const values = solver.valuesAt(0, 0, 0, spot.players[0].weights, theirs, solver.rootLive, solver.rootCount);
+		const rows = solver.pairValuesAt(0, 0, 0, Uint16Array.of(one), Float64Array.of(1), solver.rootLive, solver.rootCount);
+		for (const combo of spot.players[0].combos) expect(values[combo]).toBeCloseTo(rows[combo], 9);
+		expect(values.some((v) => v !== 0)).toBe(true);
+		run.close();
+	});
+
+	it('split threads by the boards below each', async () => {
+		const { planShards } = await import('../src/parallel.ts');
+		const spot = defineSpot({ ...flop, lineRunouts: { raises: 1 } });
+		const plan = planShards(spot.tree, spot.runouts, 4)!;
+		const weight = (from: number, to: number): number => {
+			let sum = 0;
+			for (const fam of spot.runouts.lines!.families) {
+				if (fam.round !== 2) continue;
+				const above = spot.runouts.lines!.families[fam.parent];
+				for (let b = Math.max(from, above.from); b < Math.min(to, above.to); b++) sum += fam.childStart[b + 1] - fam.childStart[b];
+			}
+			return sum;
+		};
+		const shares = [0, 1, 2, 3].map((w) => weight(plan.bounds[w], plan.bounds[w + 1]));
+		expect(Math.min(...shares) / Math.max(...shares)).toBeGreaterThan(0.8);
+		expect(plan.bounds[4]).toBe(spot.runouts.counts[1]);
 	});
 
 	it('refuse what they do not combine with', () => {
 		const spot = defineSpot({ ...turn, lineRunouts: { raises: 1 } });
 		expect(createRun(spot).engine).toBe('js');
 		expect(() => createRun(spot, { approximations: { chanceSampling: {} } })).toThrow(/lineRunouts/);
+		expect(() => createRun(spot, { approximations: { coarseStart: { iterations: 5 } } })).toThrow(/lineRunouts/);
 		expect(() => defineSpot({ ...turn, lineRunouts: { raises: 1, band: 0 } })).toThrow(/band/);
 	});
 });

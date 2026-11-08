@@ -81,6 +81,13 @@ export interface Runouts {
 export interface RunoutLines {
 	/** Each node's family at its round; see `families`. */
 	readonly family: Int32Array;
+	/** Per chance node, the family its deal makes; else -1. */
+	readonly chance: Int32Array;
+	/**
+	 * Each family's own continuation at the next round — the child family
+	 * coarse after coarse and fine after fine, or else any — or -1.
+	 */
+	readonly continuation: Int32Array;
 	/** Per chance node, the children table its deal uses, as `childStart[round]`; else null. */
 	readonly chanceStart: readonly (Int32Array | null)[];
 	readonly families: readonly RunoutFamily[];

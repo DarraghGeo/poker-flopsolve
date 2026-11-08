@@ -362,7 +362,9 @@ export function defineSpot(config: SpotConfig): Spot {
 		config.runoutBuckets && board.length < 5
 			? rangeRankMerge(players, config.runoutBuckets === true ? DEFAULT_BUCKET_GAP : config.runoutBuckets)
 			: undefined;
-	let runouts = enumerateRunouts(board, symmetries, merge);
+	// The tree needs only the number of rounds; line runouts need the tree.
+	const lineRule = config.lineRunouts && board.length < 5 ? config.lineRunouts : null;
+	let runouts: Runouts | null = lineRule ? null : enumerateRunouts(board, symmetries, merge);
 
 	const tree = buildTree(
 		{
@@ -378,13 +380,9 @@ export function defineSpot(config: SpotConfig): Spot {
 			chipScale,
 			minRaiseUnits: chipScale,
 		},
-		runouts,
+		runouts ?? { rounds },
 	);
-	// The tree needs only the number of rounds; the line runouts need the tree.
-	if (config.lineRunouts && board.length < 5) {
-		const rule = config.lineRunouts === true ? DEFAULT_LINE_RUNOUTS : config.lineRunouts;
-		runouts = enumerateLineRunouts(board, symmetries, merge, tree, rule);
-	}
+	runouts ??= enumerateLineRunouts(board, symmetries, merge, tree, lineRule === true ? DEFAULT_LINE_RUNOUTS : lineRule!);
 	const boards = runouts.lines ? lineBoards(runouts.lines, tree) : undefined;
 
 	const layout = buildLayout(tree, runouts, players, 4, boards);
@@ -1192,6 +1190,10 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		: options.precision ??
 			(bytes <= maxBytes ? 'f32' : 'i16');
 
+	const lines = spot.runouts.lines;
+	if (lines && (options.approximations?.chanceSampling || options.approximations?.coarseStart || options.warmStart)) {
+		throw new Error('lineRunouts does not combine with chanceSampling, coarseStart or a warmStart');
+	}
 	// Planned before anything is allocated, so a bad option or a coarse spot
 	// that does not fit fails here; solved only once the real run exists.
 	const coarsePlan = planCoarseStart(spot, options, precision, maxBytes);
@@ -1202,7 +1204,6 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 	const showdown = buildShowdownTable(spot.runouts, relevant);
-	const lines = spot.runouts.lines;
 	const layout = buildLayout(
 		spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], lines ? lineBoards(lines, spot.tree) : undefined,
 	);
@@ -1213,9 +1214,6 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// browser build can only thread the engine.
 	const wantsEngine =
 		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false && !lines;
-	if (lines && (options.approximations?.chanceSampling || options.approximations?.coarseStart || options.warmStart)) {
-		throw new Error('lineRunouts does not combine with chanceSampling, coarseStart or a warmStart');
-	}
 	// Sampling's state is one thread's; see `Approximations.chanceSampling`.
 	const samplingOptions = options.approximations?.chanceSampling;
 	const requested = samplingOptions ? 1 : resolveWorkers(options, wantsEngine);

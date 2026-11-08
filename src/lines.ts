@@ -187,9 +187,16 @@ export function enumerateLineRunouts(
 		const memberCard: number[] = [];
 		const memberResolve: number[] = [];
 		const nextStabilisers: number[][] = [];
-		for (let f = 0; f < drafts.length; f++) {
+		// Each parent family's own continuation first, coarse after coarse
+		// and fine after fine, in parent order, so that `childStart` can view
+		// them as one table; then the rest.
+		const isDefault = (f: number): boolean => drafts[f].coarse === drafts[drafts[f].parent].coarse;
+		const order = drafts
+			.map((_, f) => f)
+			.filter((f) => drafts[f].round === round)
+			.sort((a, b) => Number(isDefault(b)) - Number(isDefault(a)) || families[drafts[a].parent].from - families[drafts[b].parent].from || a - b);
+		for (const f of order) {
 			const draft = drafts[f];
-			if (draft.round !== round) continue;
 			const from = parents.length;
 			const above = families[draft.parent];
 			const starts = new Int32Array(counts[round - 1] + 1);
@@ -259,22 +266,36 @@ export function enumerateLineRunouts(
 		recordStabilisers(stabilisers);
 	}
 
-	// `childStart` as one view: each parent's children in the family that
-	// continues its own, coarse after coarse and fine after fine.
+	// Each family's own continuation, or -1: the family a parent's children
+	// are in when nothing in the betting says otherwise.
+	const continuation = new Int32Array(families.length).fill(-1);
+	for (let f = 0; f < families.length; f++) {
+		const fam = families[f];
+		if (fam.round === 0) continue;
+		if (fam.coarse === families[fam.parent].coarse) continuation[fam.parent] = f;
+		else if (continuation[fam.parent] < 0) continuation[fam.parent] = -2 - f;
+	}
+	for (let f = 0; f < families.length; f++) if (continuation[f] < -1) continuation[f] = -2 - continuation[f];
+
+	// `childStart` as one view: each parent's children in its family's own
+	// continuation. Those are laid out first and in parent order, so the view
+	// is one ascending table; a parent family with none has empty ranges.
 	const childStart: Int32Array[] = [new Int32Array(0)];
 	for (let round = 1; round < rounds; round++) {
 		const starts = new Int32Array(counts[round - 1] + 1);
-		for (const fam of families) {
-			if (fam.round !== round) continue;
-			const above = families[fam.parent];
-			if (fam.coarse !== above.coarse && families.some((f) => f.parent === fam.parent && f.coarse === above.coarse)) continue;
-			for (let p = above.from; p <= above.to; p++) starts[p] = fam.childStart[p];
+		const above = families.filter((f) => f.round === round - 1).sort((a, b) => a.from - b.from);
+		let cursor = 0;
+		for (const pf of above) {
+			const own = continuation[families.indexOf(pf)];
+			const fam = own >= 0 && families[own].coarse === pf.coarse ? families[own] : null;
+			for (let p = pf.from; p <= pf.to; p++) starts[p] = fam ? fam.childStart[p] : cursor;
+			cursor = starts[pf.to];
 		}
 		childStart.push(starts);
 	}
 
 	const chanceStart: (Int32Array | null)[] = Array.from(chanceFamily, (f) => (f >= 0 ? families[f].childStart : null));
-	const lines: RunoutLines = { family, chanceStart, families, orbitResolve };
+	const lines: RunoutLines = { family, chance: chanceFamily, chanceStart, continuation, families, orbitResolve };
 	return {
 		rounds, width, counts, cards, childStart, parent, orbitStart, orbitMap, orbitCard,
 		stabiliserStart, stabiliserMap, maps, symmetric, approximate,
@@ -296,10 +317,20 @@ export function lineBoards(lines: RunoutLines, tree: Tree): { from: Int32Array; 
 	return { from, to };
 }
 
-/** The children tables of the line through a node, per round up to its own: for `resolveBoard`. */
+/**
+ * The children tables of the line through a node, per round: for
+ * `resolveBoard`. Up to the node's round they are the line's own; past it,
+ * each family's own continuation, coarse after coarse and fine after fine.
+ * @throws if `node` is not a node of the tree
+ */
 export function lineStarts(lines: RunoutLines, node: number): Int32Array[] {
+	if (!(Number.isInteger(node) && node >= 0 && node < lines.family.length)) {
+		throw new Error(`Node ${node} is not a node of this spot's tree`);
+	}
 	const out: Int32Array[] = [];
-	for (let f = lines.family[node]; f >= 0; f = lines.families[f].parent) out[lines.families[f].round] = lines.families[f].childStart;
+	const own = lines.family[node];
+	for (let f = own; f >= 0; f = lines.families[f].parent) out[lines.families[f].round] = lines.families[f].childStart;
+	for (let f = lines.continuation[own]; f >= 0; f = lines.continuation[f]) out[lines.families[f].round] = lines.families[f].childStart;
 	return out;
 }
 
@@ -357,11 +388,5 @@ export function lineScales(
 		}
 		return exact ? null : { base, values: counted };
 	});
-	const out: (LineScale | null)[] = new Array(tree.nodeCount).fill(null);
-	for (let node = 0; node < tree.nodeCount; node++) {
-		const start = lines.chanceStart[node];
-		if (start === null) continue;
-		out[node] = perFamily[lines.families.findIndex((f) => f.childStart === start)];
-	}
-	return out;
+	return Array.from(lines.chance, (f) => (f >= 0 ? perFamily[f] : null));
 }
