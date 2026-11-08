@@ -34,7 +34,7 @@ for (const [label, coarse] of [
 	['b3', { runoutBuckets: 3 }],
 	['b3nd', { runoutBuckets: 3, noDonk: true }],
 ] as const) {
-	for (const split of [0.1, 0.25, 0.5]) {
+	for (const split of [0.1, 0.25, 0.5, 0.75]) {
 		for (const warmIteration of [undefined, 0, 10]) {
 			for (const averages of [false, true]) {
 				SCHEDULES.push({
@@ -48,7 +48,7 @@ for (const [label, coarse] of [
 		}
 	}
 }
-const chosen = only ? SCHEDULES.filter((s) => only.some((o) => s.name.startsWith(o) || s.name === o)) : SCHEDULES;
+const chosen = only ? SCHEDULES.filter((s) => only.includes(s.name)) : SCHEDULES;
 
 const results: Record<string, Sample[]> = browser
 	? await runInBrowser<Record<string, Sample[]>>(
