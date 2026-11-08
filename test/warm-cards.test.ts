@@ -78,6 +78,8 @@ describe('warm start across boards', () => {
 			notPermutation[0] = notPermutation[1];
 			expect(make(notPermutation)).toThrow(/permutation/);
 			expect(make(new Uint8Array(DECK - 1))).toThrow(/all 52 cards/);
+			// A relabelling with nothing to relabel is a mistake, not a cold start.
+			expect(() => createRun(defineSpot(flop), { ...ONE, warmCards: rankSwap(rank('4'), rank('5')) })).toThrow(/warmCards.*warmStart/);
 		} finally {
 			source.close();
 		}

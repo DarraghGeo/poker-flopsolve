@@ -161,8 +161,11 @@ export function warmStart(to: Context, from: Context, averages: boolean, cards?:
 	// its order, then the dealt cards relabelled.
 	const asSource = (real: number[]): number[] =>
 		cards ? [...b, ...real.slice(a.length).map((card) => cards[card])] : real;
-	const comboOf = (combo: number): number =>
-		cards ? comboIndex(cards[COMBO_CARDS[combo * 2]], cards[COMBO_CARDS[combo * 2 + 1]]) : combo;
+	// Each hand of `to` as the hand of `from` it plays as.
+	const comboOf = new Uint16Array(COMBOS);
+	for (let combo = 0; combo < COMBOS; combo++) {
+		comboOf[combo] = cards ? comboIndex(cards[COMBO_CARDS[combo * 2]], cards[COMBO_CARDS[combo * 2 + 1]]) : combo;
+	}
 	const match = matchNodes(to.tree, from.tree);
 	const { tree } = to;
 	const width = to.layout.maxActions * COMBOS;
@@ -211,7 +214,7 @@ export function warmStart(to: Context, from: Context, averages: boolean, cards?:
 			newRegret.fill(0, 0, length);
 			newSum.fill(0, 0, length);
 			for (let i = 0; i < count; i++) {
-				const j = position[resolved.combos[comboOf(to.active.list[newFrom + i])]];
+				const j = position[resolved.combos[comboOf[to.active.list[newFrom + i]]]];
 				if (j < 0) continue;
 				for (let e = 0; e < actions; e++) {
 					const action = actionOf[e];

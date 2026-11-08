@@ -216,7 +216,7 @@ const seven = solve(defineSpot({ ...config, board: 'As Kh 7d' }), {
 ```
 
 On the bench flop that reaches 0.5% of pot in 8 iterations instead of 52 (from AsQh7d,
-20). It needs the whole old solve: seeding only the flop's decisions saved nothing.
+20). It needs the whole old solve: seeding only the flop's decisions saved at most 15%.
 
 ## Re-solving from a node
 

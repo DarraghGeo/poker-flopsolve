@@ -8,10 +8,11 @@
  *
  * - The reference: the target solved to 0.1% of pot on every core.
  * - The library entry: the neighbour solved to 0.1% the same way.
- * - At t = 0, the root EV of every combination three ways: the neighbour's
- *   per-combo EVs relabelled (a pure lookup); the neighbour's average strategy
- *   relabelled and evaluated in the target game; and its regrets relabelled
- *   (the current strategy a warm start begins from), evaluated the same way.
+ * - At t = 0, the root EV of every combination two ways: the neighbour's
+ *   per-combo EVs relabelled (a pure lookup), and the neighbour's average
+ *   strategy relabelled and evaluated in the target game. Each warm trace's
+ *   first checkpoint is the third: the relabelled regrets, the strategy the
+ *   warm start begins from.
  * - Then single-threaded solving, cold and warm from the neighbour, checked
  *   every few iterations: iterations and time to 1%, 0.5% and 0.3%, and the
  *   EV errors along the way, so equal-time comparisons can be read off
@@ -100,8 +101,9 @@ for (const [name, entry] of Object.entries(SPOTS)) {
 		);
 
 		// What a library could actually ship: the whole tree is far too big
-		// (the bench flop's regrets are ~250 MB), so also seed only the flop's
-		// decisions, or the flop's and turn's, and leave the rest cold.
+		// (the bench flop's is 28M values, ~113 MB of 32-bit regrets; see
+		// size.ts), so also seed only the flop's decisions, or the flop's and
+		// turn's, and leave the rest cold.
 		const variants: { label: string; keep: number; warmIteration?: number }[] = [
 			{ label: 'all streets', keep: 3 },
 			{ label: 'flop+turn', keep: 2 },

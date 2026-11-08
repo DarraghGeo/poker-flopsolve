@@ -16,8 +16,7 @@
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRun, defineSpot, solve } from '../../src/index.ts';
-import type { Spot } from '../../src/index.ts';
-import { COMBO_CARDS, COMBOS } from '../../src/cards.ts';
+import { COMBOS } from '../../src/cards.ts';
 import { SPOTS as COMPARE } from '../compare/spots.ts';
 import type { ComboEv, Trace } from './measure.ts';
 import { comboEvs, evError, fmt, forget, trace } from './measure.ts';
@@ -31,49 +30,6 @@ const CUSTOM: Record<string, string> = {
 };
 
 const BOARDS: Record<string, string> = { flop: COMPARE.flop.board, monotone: COMPARE.monotone.board };
-
-/**
- * OOP's root EV per hand against a reweighted IP range, under the archetype's
- * strategy. A library would store one value per OOP hand per IP hand and take
- * the reweighted average; values are linear in the opponent's reach, so one
- * `valuesAt` with the new weights is exactly that average, without the table.
- * (`pairValuesAt`, which would build the table, is only exact at nodes where
- * its traverser acts after a bet: see #42.)
- */
-function reweighted(archetype: Spot, solver: ReturnType<typeof solve>['solver'], custom: Spot): ComboEv {
-	const oop = archetype.players[0];
-	const me = new Float64Array(COMBOS);
-	const opp = new Float64Array(COMBOS);
-	for (let i = 0; i < oop.count; i++) me[oop.combos[i]] = oop.weights[oop.combos[i]];
-	const ip = custom.players[1];
-	for (let i = 0; i < ip.count; i++) opp[ip.combos[i]] = ip.weights[ip.combos[i]];
-	const values = solver.valuesAt(0, 0, 0, me, opp, solver.rootLive, solver.rootCount);
-	const runoutWeight = solver.ctx.runoutWeight[0];
-	const ev = new Float64Array(COMBOS).fill(Number.NaN);
-	const mass = new Float64Array(COMBOS);
-	const weight = new Float64Array(COMBOS);
-	let total = 0;
-	let totalMass = 0;
-	for (let i = 0; i < oop.count; i++) {
-		const combo = oop.combos[i];
-		const a = COMBO_CARDS[combo * 2];
-		const b = COMBO_CARDS[combo * 2 + 1];
-		let facing = 0;
-		for (let j = 0; j < ip.count; j++) {
-			const h = ip.combos[j];
-			const c = COMBO_CARDS[h * 2];
-			const d = COMBO_CARDS[h * 2 + 1];
-			if (c !== a && c !== b && d !== a && d !== b) facing += opp[h];
-		}
-		if (facing <= 0) continue;
-		ev[combo] = values[combo] / (facing * runoutWeight);
-		weight[combo] = me[combo];
-		mass[combo] = weight[combo] * facing;
-		total += mass[combo] * ev[combo];
-		totalMass += mass[combo];
-	}
-	return { ev, mass, weight, rangeEv: total / totalMass };
-}
 
 const wanted = process.argv.slice(2);
 for (const [name, board] of Object.entries(BOARDS)) {
@@ -92,7 +48,12 @@ for (const [name, board] of Object.entries(BOARDS)) {
 		const referenceEvs: [ComboEv, ComboEv] = [comboEvs(custom, reference.solver, 0), comboEvs(custom, reference.solver, 1)];
 
 		const started = performance.now();
-		const oop = reweighted(archetype, library.solver, custom);
+		// The archetype's strategy against the new IP range. A library would store
+		// one value per OOP hand per IP hand and take their reweighted average;
+		// values are linear in the opponent's reach, so this is that average.
+		// (`pairValuesAt`, which would build the table, is only exact where its
+		// traverser acts after a bet: see #42.)
+		const oop = comboEvs(archetype, library.solver, 0, custom);
 		const precomputeMs = performance.now() - started;
 		// IP's hands face the same OOP range, so the archetype's own values stand.
 		const ipEv: ComboEv = { ...archetypeIp, mass: referenceEvs[1].mass, weight: referenceEvs[1].weight };

@@ -474,13 +474,15 @@ export interface SolveOptions {
 	 * `7` in every suit, say) carries a solve of AsKh6d onto AsKh7d with every
 	 * hand keeping its role: 66 there is 77 here (`rankSwap` builds that map).
 	 * Hands and runouts relabel through it; whatever the old ranges lacked
-	 * starts cold. Unset, a warm start must come from the same board.
+	 * starts cold. Unset, a warm start must come from the same board. The
+	 * average strategy never carries over through it, even for a relabelling
+	 * that leaves the game unchanged: only regrets do.
 	 *
 	 * Measured on the bench flop (AsKh7d, single-threaded, to 0.5% of pot):
 	 * 52 iterations cold, 8 warm from a 0.1% solve of AsKh6d, 20 from AsQh7d.
 	 * It pays only when the whole old solve is at hand: seeding the flop's
-	 * decisions alone, as a downloadable library could, saved nothing (see
-	 * `Approximations`).
+	 * decisions alone, as a downloadable library could, saved at most 15%
+	 * (see `Approximations`).
 	 */
 	readonly warmCards?: Uint8Array;
 	/**
@@ -784,6 +786,9 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// Seeded before any worker starts, so they all see the inherited values.
 	let warm: WarmStartReport | null = null;
 	let offset = 0;
+	if (options.warmCards && !options.warmStart) {
+		throw new Error('`warmCards` relabels a warm start, so it needs `warmStart` too');
+	}
 	if (options.warmStart) {
 		const source = options.warmStart;
 		warm = options.warmCards

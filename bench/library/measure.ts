@@ -29,12 +29,15 @@ export interface ComboEv {
 /**
  * Per-combination root EV under whatever strategy the solver holds (average
  * strategy, falling back to the regret-matched one where no sums exist).
+ * The opponent's range is `against`'s, by default the spot's own; values are
+ * linear in it, so this is also the reweighted average of every per-matchup
+ * value a library would store.
  */
-export function comboEvs(spot: Spot, solver: Solution['solver'], player: 0 | 1): ComboEv {
+export function comboEvs(spot: Spot, solver: Solution['solver'], player: 0 | 1, against: Spot = spot): ComboEv {
 	const me = new Float64Array(COMBOS);
 	const opp = new Float64Array(COMBOS);
 	const own = spot.players[player];
-	const other = spot.players[1 - player];
+	const other = against.players[1 - player];
 	for (let i = 0; i < own.count; i++) me[own.combos[i]] = own.weights[own.combos[i]];
 	for (let i = 0; i < other.count; i++) opp[other.combos[i]] = other.weights[other.combos[i]];
 	const values = solver.valuesAt(0, 0, player, me, opp, solver.rootLive, solver.rootCount);
