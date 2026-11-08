@@ -108,6 +108,9 @@ export interface EngineWorkerSetup {
 /** How a pool starts its workers; the platform layer supplies it. */
 export type SpawnEngineWorker = (setup: EngineWorkerSetup, onError: (error: Error) => void) => { terminate(): void };
 
+/** The most memory the engine lays out: just under wasm32's 4 GB. */
+const MAX_MEMORY = 0xffff0000;
+
 /** Control slots shared with engine workers. */
 export const ENGINE_CONTROL = { generation: 0, done: 1, command: 2, mode: 3, traverser: 4, ready: 5, size: 8 } as const;
 
@@ -125,6 +128,9 @@ export function createEngine(
 	const compiledModule = compiledEngine(shared ? 'shared' : 'plain');
 	if (!compiledModule || !wasm) return null;
 	const { tree, runouts, layout, active, hands } = input;
+	// Its two 32-bit accumulators alone would pass wasm32's 4 GB, and its
+	// 32-bit offsets would wrap; the solve falls back to JavaScript.
+	if (layout.totalSlots * 8 > MAX_MEMORY) return null;
 	const threads = pool ? pool.threads : 1;
 
 	const flatten = (parts: readonly Int32Array[]): [Int32Array, Int32Array] => {
@@ -152,7 +158,7 @@ export function createEngine(
 	// Shared by every thread, in header order.
 	const common = [
 		add(tree.kind), add(tree.round), add(Uint8Array.from(tree.player, (p) => (p < 0 ? 255 : p))), add(tree.firstEdge),
-		add(tree.numEdges), add(tree.edgeChild), add(tree.payoff), add(layout.offset), add(layout.rowStart),
+		add(tree.numEdges), add(tree.edgeChild), add(tree.payoff), add(Int32Array.from(layout.offset)), add(layout.rowStart),
 		add(active.roundBase), add(active.start), add(Int32Array.from(active.count)), add(active.cardA), add(active.cardB),
 		add(active.strength), add(active.packed), add(Float32Array.from(active.multiplicity)), add(active.memberStart),
 		add(active.memberA), add(active.memberB), add(upRound), add(upStart), add(hands.up),
@@ -193,7 +199,7 @@ export function createEngine(
 		offsets.push(total);
 		total += piece.bytes;
 	}
-	if (total > 0xffff0000) return null; // past wasm32's 4 GB
+	if (total > MAX_MEMORY) return null;
 	const pages = Math.ceil(total / 65536) + 1;
 	const memory = shared ? new wasm.Memory({ initial: pages, maximum: pages, shared: true }) : new wasm.Memory({ initial: pages });
 	const bytes = new Uint8Array(memory.buffer);

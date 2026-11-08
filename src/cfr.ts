@@ -74,9 +74,10 @@ export interface Layout {
 	 * Where each decision node's storage starts. Its block on a board is
 	 * `actions` rows of the owner's hands live there, in hand-list order —
 	 * entry `i` of their active list — so a row is as long as that list and
-	 * blocked hands take no room. See `blockBase`.
+	 * blocked hands take no room. See `blockBase`. Float64, which is exact to
+	 * 2^53: a big tree's storage passes 2^31 slots, where 32-bit offsets wrap.
 	 */
-	readonly offset: Int32Array;
+	readonly offset: Float64Array;
 	/** For each list slot `(roundBase[r] + board) * 2 + p`: rows before this board's. */
 	readonly rowStart: Int32Array;
 	/** First list index of each round, as `ActiveLists.roundBase`. */
@@ -132,7 +133,7 @@ export function buildLayout(
 		}
 	}
 
-	const offset = new Int32Array(tree.nodeCount).fill(-1);
+	const offset = new Float64Array(tree.nodeCount).fill(-1);
 	const blockOffset = new Int32Array(tree.nodeCount).fill(-1);
 	let total = 0;
 	let blocks = 0;
