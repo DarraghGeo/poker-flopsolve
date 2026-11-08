@@ -16,7 +16,7 @@ for (const name of process.argv.slice(2)) {
 	const { tree, runouts, players } = spot;
 	const slots = spot.estimate.totalSlots;
 	const showdown = spot.estimate.bytes - buildLayout(tree, runouts, players, 4).bytes;
-	const perHand = buildLayout(tree, runouts, players, 4, { from: 0, steps: 127, perHand: true, stochastic: true, float: false, chunkBytes: 2 ** 30 });
+	const perHand = buildLayout(tree, runouts, players, 4, { from: 0, steps: 127, perHand: true, stochastic: true, float: false, chunkBytes: 2 ** 30, sums: false });
 	const hands = perHand.compactHands;
 	const blocks = perHand.blocks;
 	const rows: [string, number][] = [

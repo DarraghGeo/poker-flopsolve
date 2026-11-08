@@ -158,8 +158,8 @@ export interface SpotConfig {
 	 */
 	readonly runoutBuckets?: boolean | number;
 	/**
-	 * Store the later rounds compactly — an approximation, off by default.
-	 * See `CompactStorage`. Set here rather than on the solve because it
+	 * Store regrets and strategy sums at 8 bits — an approximation, off by
+	 * default. See `CompactStorage`. Set here rather than on the solve because it
 	 * decides how much memory the spot needs, which `maxBytes` is checked
 	 * against when the spot is defined.
 	 */
@@ -167,44 +167,83 @@ export interface SpotConfig {
 }
 
 /**
- * Compact storage (issue #50). From round `from` on — by default the turn of
- * a flop spot — a decision keeps only its regrets, as 8-bit integers with one
- * power-of-two scale per hand, and no strategy sums. Its strategy, wherever
- * one is read (`strategyAt`, `reachAt`, EVs, exploitability), is then the
- * current profile, the regret-matched strategy the next iteration plays; the
- * rounds before `from` keep 32-bit regrets and the average strategy. Training
- * reads only regrets, so the iterates differ from an exact solve's only by
- * the rounding of the stored regrets, which is at random and right on
- * average.
+ * Compact storage (issue #50): accumulators as 8-bit integers, each hand on
+ * each board scaled by its own power of two, instead of 32- or 16-bit
+ * values. Regret matching and the average strategy both divide a hand's
+ * values by their own total, so a per-hand scale cancels wherever a strategy
+ * is read and costs only a byte per hand. Rounding is at random, with odds
+ * set by the remainder, so every stored value is right on average; the
+ * randomness is a hash of the slot and iteration, so a solve is deterministic
+ * at any thread count.
  *
- * Exploitability is measured exactly, in the full tree, of that mixed
- * profile: the average before `from`, the current profile after.
+ * Two modes:
  *
- * Runs on the JavaScript engine (and its Node worker threads), not the
- * WebAssembly one; not with `warmStart`, `coarseStart`, `chanceSampling`,
- * `analysisOnly` or a `precision`.
+ * - With strategy sums (the default): regrets and sums at 8 bits, about 2.75
+ *   bytes a slot against 16-bit storage's 4 and 32-bit's 8. Measured, it
+ *   converges like the full solve: on the bench flop (AsKh7d, one size) 0.18%
+ *   of pot at 80 iterations against 0.18%, 0.058% at 160 against 0.052%; on
+ *   the monotone flop with three sizes (Ks9s4s, issue #20's T₀) 1.87% at 160
+ *   against 1.85%. Rounding the sums leaves a floor, near 0.03% of pot on the
+ *   bench flop and 0.1% on a small, narrow-range spot.
+ * - `sums: false`: no strategy sums, so each node's strategy, wherever one is
+ *   read (`strategyAt`, `reachAt`, EVs, exploitability), is the current
+ *   profile, the regret-matched strategy the next iteration plays. About 1.4
+ *   bytes a slot, 1.03 with `blockScale`. Per-hand root EVs stay as close as
+ *   the average's, as `currentProfileEv` found, but the strategy is far more
+ *   exploitable: 2 times at equal iterations on the bench flop, 5 to 8 times
+ *   on deeper or narrower spots (T₀ monotone: 4.0% of pot at 320 iterations
+ *   against 0.71%), and the bet size each hand prefers at the root agreed with
+ *   the reference for 62-70% of the hands where it was clear, against all of
+ *   them for the average. `algorithm: 'cfr+'`, whose current profile swings
+ *   less, is the better rule here.
+ *
+ * Rounding regrets to 8 bits costs training almost nothing: with 32-bit
+ * regrets and no sums (`float`) the same runs were no better.
+ *
+ * Training is otherwise the exact solve's; exploitability is measured
+ * exactly, in the full tree. Storage is split in chunks under `chunkBytes`,
+ * because browsers refuse a buffer of 2 GiB. Runs on the JavaScript engine
+ * and its Node worker threads, not the WebAssembly one, so an iteration
+ * costs about as much as at 16 bits; not with `warmStart`, `coarseStart`,
+ * `chanceSampling`, `analysisOnly` or a `precision`.
+ *
+ * What was measured and left out is with the other approximations, in the
+ * comment inside `Approximations`.
  */
 export interface CompactStorage {
 	/**
-	 * First round stored compactly, from the spot's first (0). Default 0:
-	 * measured, an earlier round's average strategy above the current
-	 * profile is worse than the current profile throughout.
+	 * Keep 8-bit strategy sums, and with them the average strategy. Default
+	 * true; false stores only regrets and plays the current profile.
+	 */
+	readonly sums?: boolean;
+	/**
+	 * With `sums: false`, one scale per node and board instead of one per
+	 * hand: about 1.03 bytes a slot instead of 1.4. Under CFR+ it measured
+	 * nearly as accurate (0.077% of pot against 0.064% on the bench flop at
+	 * 320 iterations); under DCFR, whose large negative regrets then crowd
+	 * the scale, clearly less (0.16% against 0.08%).
+	 */
+	readonly blockScale?: boolean;
+	/**
+	 * First round stored compactly, from the spot's first (0); earlier rounds
+	 * keep 32-bit regrets and sums. Default 0. With `sums: false`, an earlier
+	 * round's average above the current profile measured worse than the
+	 * current profile throughout (0.053% of pot against 0.035% on the bench
+	 * flop): the two come from different iterations.
 	 */
 	readonly from?: number;
-	/** For measurement: the largest magnitude stored, at most 127. Default 127. */
-	readonly steps?: number;
-	/** For measurement: one float64 scale per node and board instead of per hand. */
-	readonly blockScale?: boolean;
-	/** For measurement: round to nearest instead of at random. */
-	readonly nearest?: boolean;
-	/** For measurement: keep 32-bit regrets there, dropping only the sums. */
-	readonly float?: boolean;
 	/**
 	 * Largest single buffer to allocate, in bytes; storage is split in chunks
-	 * no bigger. Default 1 GiB: Chromium refuses an ArrayBuffer of 2 GiB, but
-	 * gives several smaller ones.
+	 * no bigger, a node never split. Default 1 GiB: Chromium refuses an
+	 * ArrayBuffer of 2 GiB, but gives several smaller ones.
 	 */
 	readonly chunkBytes?: number;
+	/** For measurement: the largest regret magnitude stored, at most 127. */
+	readonly steps?: number;
+	/** For measurement: round regrets to nearest instead of at random. */
+	readonly nearest?: boolean;
+	/** For measurement, with `sums: false`: keep 32-bit regrets, dropping only the sums. */
+	readonly float?: boolean;
 }
 
 /** Projected cost of solving a spot. */
@@ -782,6 +821,30 @@ export interface Approximations {
 	 *   52–68. At most 15% fewer iterations on some spots and more on others,
 	 *   for thousands of precomputed solves per tree and archetype, rebuilt
 	 *   whenever the defaults change.
+	 *
+	 * Of the storage compressions issue #50 measured, `compactStorage` offers
+	 * 8-bit regrets and sums; these were left out. Against the bench flop's
+	 * 0.016% of pot at 320 iterations with the full average:
+	 *
+	 * - Dropping strategy sums on the turn and river only, the flop keeping
+	 *   its average: 0.053% (river only, 0.063%), worse than dropping them
+	 *   everywhere (0.035%), since an average above a current profile mixes
+	 *   strategies from different iterations. Offered only as `from`.
+	 * - Fewer bits: at 6 bits a floor near 0.15% of pot, at 4 bits near
+	 *   0.4-0.6%, so packing two regrets a byte, which the target spot would
+	 *   need to reach 2 GiB on this alone, does not pay.
+	 * - A log (µ-law) scale per block, 127 levels over 16 or 24 octaves:
+	 *   0.14% and 0.44%. Its few-percent steps sit at the top of the range,
+	 *   which is what regret matching reads; a per-hand linear scale puts the
+	 *   precision there and costs a byte per hand.
+	 * - Sparse regrets, only positive ones stored: 57-68% of regrets were
+	 *   positive at every checkpoint on every spot, so any index costs more
+	 *   than the dense byte.
+	 * - Recomputing the strategy at fold-or-call nodes (facing an all-in or
+	 *   the raise cap, 37-41% of the slots of the 3-size trees): no decision
+	 *   is choice-free, and those call frequencies are mixed bluff-catching
+	 *   choices that a best response recomputed each iteration does not
+	 *   converge to.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
@@ -1072,6 +1135,8 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 					compact.float ? new Float32Array(allocate(slots * 4)) : new Int8Array(allocate(slots)),
 				),
 		handShift: compact?.perHand ? layout.chunkHands.map((hands) => new Uint8Array(allocate(hands))) : null,
+		compactSum: compact?.sums ? layout.chunkSlots.map((slots) => new Uint8Array(allocate(slots))) : null,
+		sumShift: compact?.sums ? layout.chunkHands.map((hands) => new Uint8Array(allocate(hands))) : null,
 		compactScale:
 			compact && !compact.perHand && !compact.float ? new Float64Array(allocate(layout.blocks * 8)) : null,
 		scratch: makeTerminalScratch(),
@@ -1199,9 +1264,12 @@ function compactPlan(settings: CompactStorage, rounds: number): CompactPlan {
 	if (!Number.isInteger(steps) || steps < 1 || steps > 127) {
 		throw new Error(`compactStorage.steps must be an integer from 1 to 127; got ${steps}`);
 	}
+	if (settings.sums !== false && (settings.blockScale || settings.float)) {
+		throw new Error('compactStorage.sums keeps a scale per hand, so blockScale and float need sums: false');
+	}
 	return {
 		from, steps, perHand: !settings.blockScale && !settings.float, stochastic: !settings.nearest,
-		float: settings.float === true, chunkBytes: settings.chunkBytes ?? 2 ** 30,
+		float: settings.float === true, chunkBytes: settings.chunkBytes ?? 2 ** 30, sums: settings.sums ?? true,
 	};
 }
 

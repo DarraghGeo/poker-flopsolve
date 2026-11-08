@@ -40,7 +40,7 @@ describe('compact storage', () => {
 	for (const algorithm of ['dcfr', 'cfr+'] as const) {
 		it(`with 32-bit regrets trains exactly as the full solve (${algorithm})`, () => {
 			const exact = createRun(defineSpot(flop), { workers: 1, engine: 'js', algorithm });
-			const compact = createRun(defineSpot(withStorage({ from: 1, float: true })), { workers: 1, algorithm });
+			const compact = createRun(defineSpot(withStorage({ from: 1, float: true, sums: false })), { workers: 1, algorithm });
 			exact.step(15);
 			compact.step(15);
 			expect(compact.engine).toBe('js');
@@ -73,7 +73,7 @@ describe('compact storage', () => {
 	}
 
 	it('reads the current profile where it keeps no sums', () => {
-		const run = createRun(defineSpot(withStorage({ from: 1 })), { workers: 1 });
+		const run = createRun(defineSpot(withStorage({ from: 1, sums: false })), { workers: 1 });
 		run.step(10);
 		const { tree } = run.spot;
 		const river = tree.decisionNodes.find((n) => tree.round[n] === 2)!;
@@ -87,27 +87,47 @@ describe('compact storage', () => {
 		run.close();
 	});
 
-	it('at 8 bits converges about as the full solve does', () => {
+	it('at 8 bits trains about as at 32', () => {
+		// The current profile is far more exploitable than the average on
+		// this spot either way; rounding regrets to 8 bits adds little.
+		const wide = createRun(defineSpot(withStorage({ float: true, sums: false })), { workers: 1 });
+		const compact = createRun(defineSpot(withStorage({ sums: false })), { workers: 1 });
+		wide.step(150);
+		compact.step(150);
+		expect(compact.exploitabilityPercent()).toBeLessThan(wide.exploitabilityPercent() * 1.5 + 0.2);
+		wide.close();
+		compact.close();
+	});
+
+	it('with 8-bit sums keeps the average, and converges about as the full solve does', () => {
 		const exact = createRun(defineSpot(flop), { workers: 1, engine: 'js' });
-		const compact = createRun(defineSpot(withStorage({})), { workers: 1 });
+		const compact = createRun(defineSpot(withStorage({ sums: true })), { workers: 1 });
+		expect(compact.solver.ctx.compactSum!.length).toBe(1);
 		exact.step(150);
 		compact.step(150);
-		const full = exact.exploitabilityPercent();
-		const small = compact.exploitabilityPercent();
-		// The current profile is about twice as exploitable as the average at
-		// equal iterations, and rounding adds a floor well under 0.3% of pot.
-		expect(small).toBeLessThan(0.3);
-		expect(small).toBeLessThan(full * 4 + 0.05);
+		// Rounding the sums leaves a floor, here near 0.1% of pot.
+		expect(compact.exploitabilityPercent()).toBeLessThan(0.3);
 		const ev = exact.snapshot().ev(0);
-		expect(Math.abs(compact.snapshot().ev(0) - ev)).toBeLessThan(0.01 * flop.pot);
+		expect(Math.abs(compact.snapshot().ev(0) - ev)).toBeLessThan(0.005 * flop.pot);
+		// Strategies read the average, which no longer equals the current profile.
+		const { tree } = compact.spot;
+		const river = tree.decisionNodes.find((n) => tree.round[n] === 2)!;
+		const ctx = compact.solver.ctx;
+		const view = compact.snapshot().strategyAt(river, 0);
+		const chunk = ctx.layout.compactChunk![river];
+		const sums = ctx.compactSum![chunk];
+		const base = ctx.layout.offset[river];
+		let any = 0;
+		for (let i = 0; i < view.combos.length * view.actions.length; i++) any += sums[base + i];
+		expect(any).toBeGreaterThan(0);
 		exact.close();
 		compact.close();
 	});
 
 	for (const blockScale of [false, true]) {
 		it(`splits into chunks without changing anything (${blockScale ? 'block' : 'hand'} scale)`, () => {
-			const whole = createRun(defineSpot(withStorage({ blockScale })), { workers: 1 });
-			const split = createRun(defineSpot(withStorage({ blockScale, chunkBytes: 100_000 })), { workers: 1 });
+			const whole = createRun(defineSpot(withStorage({ blockScale, sums: false })), { workers: 1 });
+			const split = createRun(defineSpot(withStorage({ blockScale, sums: false, chunkBytes: 100_000 })), { workers: 1 });
 			expect(whole.solver.ctx.compactRegret!.length).toBe(1);
 			const chunks = split.solver.ctx.compactRegret!.length;
 			expect(chunks).toBeGreaterThan(3);
@@ -142,20 +162,27 @@ describe('compact storage', () => {
 	});
 
 	it('takes far less memory, and maxBytes is checked against it', () => {
+		const layoutOf = (storage: CompactStorage) => {
+			const run = createRun(defineSpot(withStorage(storage)), { workers: 1 });
+			const { layout } = run.solver.ctx;
+			run.close();
+			return layout;
+		};
 		const spot = defineSpot(withStorage({}));
 		const { totalSlots, compressedBytes, compactBytes } = spot.estimate;
-		// A byte per slot and a byte per hand: under 1.5 bytes a slot here,
-		// where 16-bit storage takes 4 and 32-bit 8, beside showdown tables.
-		const run = createRun(spot, { workers: 1 });
-		const { layout } = run.solver.ctx;
-		run.close();
-		expect(layout.totalSlots).toBe(0);
-		expect(layout.compactSlots).toBe(totalSlots);
-		expect(layout.bytes).toBe(totalSlots + layout.compactHands);
-		expect(layout.bytes).toBeLessThanOrEqual(totalSlots * 1.5);
+		// A byte per slot and a byte per hand, for regrets and again for sums,
+		// where 16-bit storage takes 4 a slot and 32-bit 8; a byte per slot
+		// and per hand with no sums; a byte per slot and 8 per block with a
+		// block scale.
+		const withSums = layoutOf({});
+		expect(withSums.totalSlots).toBe(0);
+		expect(withSums.compactSlots).toBe(totalSlots);
+		expect(withSums.bytes).toBe(2 * (totalSlots + withSums.compactHands));
+		expect(layoutOf({ sums: false }).bytes).toBe(totalSlots + withSums.compactHands);
+		expect(layoutOf({ sums: false, blockScale: true }).bytes).toBe(totalSlots + withSums.blocks * 8);
 		expect(compactBytes!).toBeLessThan(compressedBytes);
 		expect(() => defineSpot({ ...flop, maxBytes: compactBytes! })).toThrow(SpotTooLargeError);
-		expect(defineSpot(withStorage({})).estimate.fits).toBe(true);
+		expect(spot.estimate.fits).toBe(true);
 		expect(() => defineSpot({ ...withStorage({}), maxBytes: compactBytes! })).not.toThrow();
 		expect(() => defineSpot({ ...withStorage({}), maxBytes: compactBytes! - 1 })).toThrow(SpotTooLargeError);
 	});
@@ -169,5 +196,6 @@ describe('compact storage', () => {
 		for (const options of clashes) expect(() => createRun(spot, { workers: 1, ...options })).toThrow(/compactStorage/);
 		expect(() => defineSpot(withStorage({ from: 3 }))).toThrow(/from/);
 		expect(() => defineSpot(withStorage({ steps: 200 }))).toThrow(/steps/);
+		expect(() => defineSpot(withStorage({ blockScale: true }))).toThrow(/sums/);
 	});
 });
