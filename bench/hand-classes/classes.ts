@@ -35,8 +35,16 @@ export interface Classes {
 	readonly classOf: Int32Array;
 	/** Each list's first class in `weight`, indexed by list slot; one past the end last. */
 	readonly classStart: Int32Array;
+	/**
+	 * Each entry's weight in its class's regret: the hands it stands for times
+	 * their range weight, the chance of being dealt them, which counterfactual
+	 * regrets leave out. Beside `active.list`.
+	 */
+	readonly prior: Float64Array;
 	/** Hands each class stands for, summed over its members' multiplicities. */
 	readonly weight: Float64Array;
+	/** Each class's `prior` summed. */
+	readonly priorWeight: Float64Array;
 	/** Entries (packed) and classes on the final round's boards, both players. */
 	readonly riverEntries: number;
 	readonly riverClasses: number;
@@ -62,14 +70,17 @@ export function buildClasses(ctx: Context, reference: Reference): Classes {
 	const slots = active.roundBase[runouts.rounds] * 2;
 	const classOf = new Int32Array(active.list.length);
 	const classStart = new Int32Array(slots + 1);
+	const prior = new Float64Array(active.list.length);
 	const weights: number[] = [];
+	const priorWeights: number[] = [];
 	const suitCount = new Int32Array(4);
 	let riverEntries = 0;
 	let riverClasses = 0;
 	for (let round = 0; round < runouts.rounds; round++) {
 		const width = runouts.width[round];
 		const cards = runouts.cards[round];
-		const counted = reference === 'flop' ? runouts.width[0] : width;
+		// The board as given starts with the flop, whichever round it opens on.
+		const counted = reference === 'flop' ? 3 : width;
 		for (let board = 0; board < runouts.counts[round]; board++) {
 			suitCount.fill(0);
 			for (let i = 0; i < counted; i++) suitCount[suitOf(cards[board * width + i])]++;
@@ -85,9 +96,12 @@ export function buildClasses(ctx: Context, reference: Reference): Classes {
 						c = index.size;
 						index.set(key, c);
 						weights.push(0);
+						priorWeights.push(0);
 					}
 					classOf[e] = c;
+					prior[e] = active.multiplicity[e] * ctx.players[player].weights[combo];
 					weights[classStart[slot] + c] += active.multiplicity[e];
+					priorWeights[classStart[slot] + c] += prior[e];
 				}
 				if (round === runouts.rounds - 1) {
 					riverEntries += active.count[slot];
@@ -97,18 +111,30 @@ export function buildClasses(ctx: Context, reference: Reference): Classes {
 		}
 	}
 	classStart[slots] = weights.length;
-	return { classOf, classStart, weight: Float64Array.from(weights), riverEntries, riverClasses };
+	return {
+		classOf, classStart, prior, weight: Float64Array.from(weights), priorWeight: Float64Array.from(priorWeights),
+		riverEntries, riverClasses,
+	};
 }
 
 /**
- * Set every hand's regrets and strategy sums to its class's weighted mean,
- * at every decision node on every stored board.
+ * Set every hand's regrets and strategy sums to its class's mean, at every
+ * decision node on every stored board. Regrets are weighted by `prior`, as
+ * one information set's regret sums its hands' counterfactual regrets, each
+ * by its chance of being dealt. Strategy sums already carry each hand's own
+ * reach, so they are weighted by the hands each entry stands for.
  */
 export function tie(ctx: Context, classes: Classes): void {
 	const { tree, layout, active, runouts } = ctx;
-	const regret = ctx.regret as Float32Array | Float64Array;
-	const sum = ctx.strategySum as Float32Array | Float64Array;
-	if (ctx.regretScale) throw new Error('tie needs float storage');
+	const regret = ctx.regret;
+	const sum = ctx.strategySum;
+	if (!(regret instanceof Float32Array || regret instanceof Float64Array) || !(sum instanceof Float32Array || sum instanceof Float64Array)) {
+		throw new Error('tie needs float storage');
+	}
+	const passes = [
+		{ store: regret, weight: classes.prior, total: classes.priorWeight },
+		{ store: sum, weight: active.multiplicity, total: classes.weight },
+	];
 	const acc = new Float64Array(1326);
 	for (const node of tree.decisionNodes) {
 		const round = tree.round[node];
@@ -122,12 +148,12 @@ export function tie(ctx: Context, classes: Classes): void {
 			const nClasses = classes.classStart[slot + 1] - cBase;
 			if (nClasses === n) continue;
 			const base = layout.offset[node] + actions * layout.rowStart[slot];
-			for (const store of [regret, sum]) {
+			for (const { store, weight, total } of passes) {
 				for (let a = 0; a < actions; a++) {
 					const row = base + a * n;
 					acc.fill(0, 0, nClasses);
-					for (let i = 0; i < n; i++) acc[classes.classOf[first + i]] += store[row + i] * active.multiplicity[first + i];
-					for (let c = 0; c < nClasses; c++) acc[c] /= classes.weight[cBase + c];
+					for (let i = 0; i < n; i++) acc[classes.classOf[first + i]] += store[row + i] * weight[first + i];
+					for (let c = 0; c < nClasses; c++) acc[c] /= total[cBase + c];
 					for (let i = 0; i < n; i++) store[row + i] = acc[classes.classOf[first + i]];
 				}
 			}

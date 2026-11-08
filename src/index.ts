@@ -633,12 +633,15 @@ export interface Approximations {
 	 *   monotone), needed twice the iterations to reach 0.1%, and stalled
 	 *   near 0.09%. On Ks 9s 4s only spades can flush, so the classes cost
 	 *   little: the same iterations to 0.3%, 10–15% more to 0.1%, and
-	 *   0.024% after 500 iterations where the exact solve had 0.005%. In pairs and broadway they cost nothing, because
-	 *   the exact solve already plays every member of a class alike.
+	 *   0.024% after 500 iterations where the exact solve had 0.005%. In
+	 *   pairs and broadway they cost nothing, because the exact solve already
+	 *   plays every member of a class alike.
 	 * - Speed. Only the decision rows shrink. The fold and showdown kernels
 	 *   must still read each hand's own two cards to keep card removal
-	 *   exact, and they are about 70% of an iteration (Ks 9s 4s: 93 ms, 27
-	 *   ms with them stubbed out; As Kh 7d: 358 and 116 ms). So the bound is
+	 *   exact, and they are about 70% of an iteration: single-threaded in a
+	 *   cloud container, Ks 9s 4s took 93 ms, and 27 ms with the engine's
+	 *   fold and showdown calls replaced by zeros; As Kh 7d took 358 and 116
+	 *   ms. So the bound is
 	 *   1.15 to 1.2 times, before the cost of expanding classes into hands at
 	 *   every terminal. Kernels at class length would need each class's
 	 *   blocked mass averaged over its members. That is only approximate, and
