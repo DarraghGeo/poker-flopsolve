@@ -316,6 +316,7 @@ export function createDepthLimitedRun(config: SpotConfig, options: DepthLimitedO
 	const strength = options.bias ?? 5;
 	const betting = options.blueprint ?? DEFAULT_BLUEPRINT;
 	const model = options.leafModel ?? 'additive';
+	if (config.runoutBuckets) throw new Error('A depth-limited solve deals every card; leave runoutBuckets off');
 
 	// The real spot's tree, cut at the turn deal. Its full storage is never
 	// allocated, so its size does not matter.

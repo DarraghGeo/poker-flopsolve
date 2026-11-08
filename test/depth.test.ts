@@ -138,5 +138,6 @@ describe('createDepthLimitedRun', () => {
 
 	it('refuses a spot that does not start on the flop', () => {
 		expect(() => createDepthLimitedRun({ ...flop, board: 'Ts 9s 4h 2c' })).toThrow(/flop/);
+		expect(() => createDepthLimitedRun({ ...flop, runoutBuckets: true })).toThrow(/runoutBuckets/);
 	});
 });
