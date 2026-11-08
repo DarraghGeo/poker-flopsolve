@@ -547,6 +547,28 @@ export interface Approximations {
 	 * 1–8% per iteration. Half of it, at opponent nodes, could be skipped
 	 * without changing any value, but the traverser's own nodes below would
 	 * then miss their discount and strategy-sum update.
+	 *
+	 * Depth-limited solving (Brown, Sandholm & Amos, 2018) was built and
+	 * measured too: the tree stopped at the deal of the river (or the turn),
+	 * and at each leaf both players chose per hand, unseen by the other, one
+	 * of k fixed continuations: check down; value-bet the top 30% with
+	 * balanced bluffs and call by MDF; that betting ×1.5; that calling ×1.5;
+	 * top-half bet and call. CFR trained the choice. It cut flop memory about
+	 * tenfold (246 MB to 22 MB) but lost on accuracy and did not win on speed.
+	 * Against an exact solve to 0.1% of pot, the depth-limited game's own
+	 * equilibrium kept per-combination root EVs 2–5% of pot off on average
+	 * (8–20% for single combos), with draws and made hands worst and air
+	 * nearly right. That is the implied-odds and value-extraction play a fixed
+	 * continuation keyed on starting-range percentile cannot follow once the
+	 * flop and turn have narrowed the ranges. The exact solver stopped at 15 s,
+	 * single-threaded in Chromium, was closer on every spot measured: 0.02% on
+	 * the monotone flop, 0.3–0.6% on the wide one, 2.0–2.4% on AsKh7d at pot
+	 * 100, where the best depth-limited run was 4.2%. It was not faster either.
+	 * These trees' river betting is one size with no raise, already as cheap
+	 * as a leaf's five terminal passes, so with k ≥ 2 an iteration cost as
+	 * much as the full tree. Cutting at the turn was cheaper still, and worse:
+	 * 3–14% mean error. The implementation is in this repository's history
+	 * (commit 32e8424, issue #21).
 	 */
 }
 
