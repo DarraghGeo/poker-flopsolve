@@ -216,6 +216,21 @@ resumes a solve exactly. Measured on a river spot to 0.1% of pot:
 | Stack 120 → 100 | 125 | 75 |
 | Pot 60 → 72 | 125 | 100 |
 
+A solve of a nearby flop can seed one too, through a card relabelling that takes its board
+onto this one. A rank swap keeps every hand's role, so a solve of AsKh6d read through
+`rankSwap` of the 6 and the 7 plays 66 as 77:
+
+```ts
+import { rankSwap } from 'poker-flopsolve';
+const six = solve(defineSpot({ ...config, board: 'As Kh 6d' }), { targetPercent: 0.1 });
+const seven = solve(defineSpot({ ...config, board: 'As Kh 7d' }), {
+  targetPercent: 0.5, warmStart: six, warmCards: rankSwap(4, 5),   // ranks 0 = deuce … 12 = ace
+});
+```
+
+On the bench flop that reaches 0.5% of pot in 8 iterations instead of 52 (from AsQh7d,
+20). It needs the whole old solve: seeding only the flop's decisions saved at most 15%.
+
 ## Re-solving from a node
 
 Solve the whole spot with a coarse tree, then re-solve the street you are looking at
