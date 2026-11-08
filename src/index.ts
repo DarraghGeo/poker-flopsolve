@@ -519,6 +519,26 @@ export interface Approximations {
 	 * cost more iterations than it saved: a flop spot on 4 threads reached
 	 * 0.3% of pot in 14.1 s exact, 23.1 s at p = 0.5, and not within 400
 	 * iterations at p = 0.25; at best it broke even to 1%.
+	 *
+	 * Cheaper EV estimates (issue #27) were measured offline with bench/ev on
+	 * three flops, against each solve run on to 0.045% of pot, and none is
+	 * offered here. The idea was that per-hand EVs settle before
+	 * exploitability does; they do not. The range-weighted mean error of
+	 * per-hand root EVs runs at 1 to 2.5 times the exploitability throughout,
+	 * so getting under 1% of pot takes about 47 iterations on every spot.
+	 * Stopping on EV stability stopped too early: the change between checks
+	 * understates the error left, and at ε 0.5% it stopped with 2.2–2.6% of
+	 * pot still wrong. `targetPercent` already tracks the error. Bracketing
+	 * with the best-response values did not help either: their midpoint with
+	 * the average was worse than the average alone, and the best blend, fitted
+	 * in hindsight, gained at most 10% with a weight that drifted from 0.1 to
+	 * 0.85 over a run. Extrapolating the EV sequence was unstable because
+	 * DCFR's average values do not follow a clean C/T^p. Richardson on the
+	 * whole vector sometimes helped and sometimes left 5–9% of pot error, and
+	 * per-hand Aitken diverged. The one win was evaluating EVs under the
+	 * current profile rather than the average: at equal iterations its error
+	 * was lower at 62 of 65 checkpoints, often by 2 to 4 times. Issue #35 takes
+	 * that up as its own opt-in.
 	 */
 }
 
