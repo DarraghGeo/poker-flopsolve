@@ -160,6 +160,19 @@ dropped from both, which suits imported ranges full of hands at a percent or two
 
 ## Reading a solved spot
 
+`solution.handEvs(player)` gives each combination's root EV in chips, indexed like
+`COMBO_CARDS` (0 outside the range, on the board, or with no opponent hand to face). Weighted by range weight times the
+opponent mass each hand can face, it averages to `solution.ev(player)`, and one pass serves
+both.
+
+Both read the average strategy by default. With `approximations: { currentProfileEv: true }`
+they read the current (regret-matched) profile instead: the strategy the next iteration would
+play. Its per-hand EVs settle sooner. After 15 s single-threaded in a browser, their mean error
+against a 0.045%-of-pot reference was 1.23% of pot against the average's 2.18% on As Kh 7d,
+0.11% against 0.37% on Ks 9s 4s, and 1.40% against 2.02% on a wide Qs Jh 2c. The cost is the
+same. `strategyAt` and `reachAt` still show the average, so the EVs then belong to a
+different profile from the strategy you read.
+
 `createRun` returns the solver itself as `run.solver`, for analysis after (or between)
 iterations, without changing anything:
 
@@ -235,7 +248,7 @@ earlier streets any more accurate than their coarse model of the future.
 
 The package also runs in a browser, for the small solves a page wants: river spots and
 narrow turn spots. Bundlers pick the browser build (`dist/browser.js`) automatically
-through the `browser` export condition. It is the same solver, single-threaded:
+through the `browser` export condition. It is the same solver, single-threaded by default:
 
 - no worker threads, so `workers` resolves to 1 (asking for more logs one warning);
 - no `SharedArrayBuffer`, so the page needs no cross-origin isolation headers;
@@ -245,10 +258,54 @@ through the `browser` export condition. It is the same solver, single-threaded:
 A solve blocks the thread it runs on, so host it in a Web Worker and step it in chunks;
 [`examples/browser-worker.ts`](examples/browser-worker.ts) does that with progress and a
 stop message in about sixty lines. Flop spots and wide turn spots belong in Node, where
-`workers` splits the runouts across cores.
+`workers` splits the runouts across cores, or in a browser with threads turned on.
 
-`npm test` checks the browser build in headless Chromium against Node (skipped where
-Playwright is not installed), and `npm run bench:browser` times it beside Node.
+### Threads in the browser (opt-in)
+
+A page can split a solve across cores as Node does, with no approximation. Import
+`enableThreads` from `poker-flopsolve/threads` and await it once, in the Web Worker that
+solves, before solving:
+
+```ts
+import { createRun, defineSpot } from 'poker-flopsolve';
+import { enableThreads } from 'poker-flopsolve/threads';
+
+const threads = await enableThreads();   // navigator.hardwareConcurrency, or 1 if unavailable
+const run = createRun(defineSpot(config), { workers: threads });
+```
+
+It starts `threads − 1` engine workers that share the WebAssembly engine's memory, exactly
+as Node's threads do, so a fixed thread count gives the same answer as Node at that count
+(bit for bit where the browser's V8 agrees with Node's on `Math.pow`, as it did in every
+measurement here). They stay started between solves; a solve borrows them and gives them back on
+`close()`. `enableThreads(1)` stops every thread no open run holds. Only the WebAssembly engine (the default) is
+threaded; `engine: 'js'` or `precision: 'f64'`/`'i16'` solve on one thread.
+
+Threads need:
+
+- a **cross-origin isolated** page, which gives `SharedArrayBuffer`. Serve the page
+  with these headers, and every script it loads from the same origin or with CORS:
+
+  ```
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  ```
+
+- the solve to run in a **Web Worker**, since a page's main thread may not block on
+  `Atomics.wait`;
+- `blob:` workers allowed, if the page sets a Content Security Policy (`worker-src blob:`).
+
+Where any of these is missing, `enableThreads` resolves to 1 and solves stay on one
+thread; `threadsUnavailable()` says why. Without the import nothing changes: the main
+bundle carries only a lookup for the threads, and a solve gives the same results as
+before. The UI's dev server (`npm run ui`) sends the two headers.
+
+On a 4-core container, headless Chromium, a flop solve to 0.3% of pot took 24.0 s on one
+thread and 8.7 s on four (`npm run bench:browser:threads`).
+
+`npm test` checks the browser build in headless Chromium against Node, single-threaded and
+threaded (skipped where Playwright is not installed). `npm run bench:browser` times it
+beside Node, and `npm run bench:browser:threads` times flop solves at each thread count.
 
 ## Performance
 
@@ -293,8 +350,21 @@ Chromium, exploitability checks ~8%.
 When swapping suits leaves the board and both ranges unchanged, a deal in one of those
 suits is the mirror image of a deal in another, and only one is solved. On a two-tone flop
 the two absent suits are interchangeable; on a monotone flop, all three. This is exact —
-the solver keeps mirrored hands' strategies tied together, so a stored runout stands for
-its mirrors with nothing lost — and it is on by default (`isomorphism: false` turns it off).
+mirrored hands play alike, so a stored runout stands for its mirrors with nothing lost —
+and it is on by default (`isomorphism: false` turns it off).
+
+The same symmetry is used a second time inside each stored board: hands that mirror each
+other there (on Ks9s4s, AhAd, AhAc and AdAc) are stored once, and every vector, regret and
+strategy sum on that board shrinks with them. Card removal stays exact, because the fold and
+showdown kernels still count each opposing hand's own cards. Measured single-threaded, ms
+per iteration with the same iterations to every target:
+
+| Flop | Hands stored on the river | ms per iteration | Memory |
+|---|---|---|---|
+| Ks9s4s, monotone, bench ranges | 245,916 → 171,442 | 78 → 62 | 38 → 27 MB |
+| Ks9s4s, pairs and broadway | 264,184 → 177,944 | 80 → 59 | 41 → 28 MB |
+| Ts9s4h, two-tone | 522,944 → 458,484 | 154 → 143 | 81 → 71 MB |
+| AsKh7d, rainbow | 784,806 → 784,806 | unchanged | unchanged |
 
 | Flop, 4 threads | Runouts stored | To 0.3% of pot |
 |---|---|---|

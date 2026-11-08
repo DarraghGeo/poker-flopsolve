@@ -25,8 +25,8 @@ import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
-import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, THREADS_AVAILABLE } from './platform/node.ts';
-import type { Context, PlayerIndex, RegretStore, Solver, SumStore } from './cfr.ts';
+import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit } from './platform/node.ts';
+import type { Context, PlayerIndex, RegretStore, RootValues, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
@@ -34,6 +34,7 @@ import {
 	makeSolver,
 	makeTerminalScratch,
 	matchupMass,
+	Mode,
 	runoutWeights,
 } from './cfr.ts';
 
@@ -427,7 +428,9 @@ export interface SolveOptions {
 	 * exploitability, so never the largest error in the answer, but do not
 	 * expect two worker counts to agree bit for bit.
 	 *
-	 * The browser build is single-threaded: any count resolves to 1 there.
+	 * The browser build is single-threaded unless `enableThreads` from
+	 * `poker-flopsolve/threads` has started its workers; any count above what
+	 * is available resolves to what is, with one warning.
 	 */
 	readonly workers?: number | 'auto';
 	/**
@@ -525,8 +528,8 @@ export interface Approximations {
 	 * The coarse iterations count toward `totalIterations`, not `completed`
 	 * or `Solution.iterations`; DCFR carries on counting from them unless
 	 * `warmIteration` says otherwise. Both solves are in memory at the
-	 * switch, the coarse one about 60% the size of the real one on a flop. Where bucketing folds no runouts
-	 * together — a river spot, ranges with no rank symmetry — it does
+	 * switch, the coarse one about 60% the size of the real one on a flop.
+	 * Where bucketing folds no runouts together — a river spot, ranges with no rank symmetry — it does
 	 * nothing. Not with `warmStart`, which it already is. The coarse solve
 	 * runs inside `createRun`, all at once and without progress reports, so
 	 * a caller stepping a run to stay responsive should keep it short; it
@@ -534,6 +537,28 @@ export interface Approximations {
 	 * not 32, or `createRun` refuses.
 	 */
 	readonly coarseStart?: CoarseStart;
+	/**
+	 * Report `Solution.ev` and `Solution.handEvs` under the current profile —
+	 * the regret-matched strategy the next iteration would play — instead of
+	 * the average strategy. Default off. Measured under DCFR, the default
+	 * update rule; it applies to CFR+ alike.
+	 *
+	 * Measured against a solve to 0.045% of pot, after a 15 s single-threaded
+	 * browser budget, the current profile's per-hand root EVs had a mean error
+	 * of 1.23% of pot where the average's had 2.18% (flop As Kh 7d), 0.11%
+	 * against 0.37% (monotone Ks 9s 4s) and 1.40% against 2.02% (wide Qs Jh
+	 * 2c). Across those three spots it was the closer one at 62 of 65
+	 * checkpoints from 15 s down to 0.1% exploitability, often by 2–4 times.
+	 * It costs the same one pass per player as reading the average's EVs.
+	 *
+	 * Those EVs then belong to a different profile from the strategy
+	 * `strategyAt` and `reachAt` show, which stays the average: the average is
+	 * what converges to equilibrium and what exploitability measures, while
+	 * the current profile's values happen to settle sooner. Read them as the
+	 * better estimate of the equilibrium's EVs, not as the EVs of the strategy
+	 * on screen. A run with `analysisOnly` has no regrets and cannot use this.
+	 */
+	readonly currentProfileEv?: boolean;
 	/*
 	 * Threshold pruning — skipping opponent actions taken with negligible
 	 * reach — was built and measured, and is deliberately not offered: a
@@ -558,6 +583,96 @@ export interface Approximations {
 	 * cost more iterations than it saved: a flop spot on 4 threads reached
 	 * 0.3% of pot in 14.1 s exact, 23.1 s at p = 0.5, and not within 400
 	 * iterations at p = 0.25; at best it broke even to 1%.
+	 *
+	 * Hand classes at the flop root — each player's flop vector shortened to
+	 * weighted classes of nearly equivalent combos (rank pair, suitedness, and
+	 * how many flop cards share each hole card's suit), expanded back to
+	 * combos at the turn deal — were counted and not built, because they
+	 * cannot pay: the flop round is 0.005% to 0.02% of the decision slots and
+	 * terminal work of the bench flop spots (rainbow, monotone, and the
+	 * same in pairs-and-broadway form), the river 99%, so shortening the flop
+	 * vectors 2 to 3 times (198 combos to 92 classes on As Kh 7d, 217 to 75 on
+	 * Ks 9s 4s) bounds the speed-up at 0.02%. Carried through to the river
+	 * the same classes would shorten vectors 2.0 to 3.1 times, but members of
+	 * a class block different cards on each runout, so that is the rejected
+	 * river buckets above with blocker detail averaged away as well.
+	 *
+	 * Regret-based pruning — skipping the subtree below an action no hand of
+	 * the actor plays (Brown & Sandholm, 2015) — was measured before building
+	 * and is not offered either; `bench/prune-census.ts` counts the work it
+	 * could skip. The provably safe form cannot skip anything under this DCFR:
+	 * with β = 0 a negative regret is halved every iteration, so it never
+	 * falls below twice the largest one-iteration regret, and the skip it
+	 * proves safe is zero iterations. The unsafe form's ceiling is small too.
+	 * Below actions played by no hand sat 4–10% of the work to reach 0.5% and
+	 * 0.3% of pot, on the bench flop, monotone, wide-flop and turn spots and
+	 * on pairs-and-broadway ranges. Most of that was iterations 2–5, before
+	 * every board has a hand that likes each action, and after them it was
+	 * 1–8% per iteration. Half of it, at opponent nodes, could be skipped
+	 * without changing any value, but the traverser's own nodes below would
+	 * then miss their discount and strategy-sum update.
+	 *
+	 * Depth-limited solving (Brown, Sandholm & Amos, 2018) was built and
+	 * measured too: the tree stopped at the deal of the river (or the turn),
+	 * and at each leaf both players chose per hand, unseen by the other, one
+	 * of k fixed continuations: check down; value-bet the top 30% with
+	 * balanced bluffs and call by MDF; that betting ×1.5; that calling ×1.5;
+	 * top-half bet and call. CFR trained the choice. It cut flop memory about
+	 * tenfold (246 MB to 22 MB) but lost on accuracy and did not win on speed.
+	 * Against an exact solve to 0.1% of pot, the depth-limited game's own
+	 * equilibrium kept per-combination root EVs 2–5% of pot off on average
+	 * (8–20% for single combos), with draws and made hands worst and air
+	 * nearly right. That is the implied-odds and value-extraction play a fixed
+	 * continuation keyed on starting-range percentile cannot follow once the
+	 * flop and turn have narrowed the ranges. The exact solver stopped at 15 s,
+	 * single-threaded in Chromium, was closer on every spot measured: 0.02% on
+	 * the monotone flop, 0.3–0.6% on the wide one, 2.0–2.4% on AsKh7d at pot
+	 * 100, where the best depth-limited run was 4.2%. It was not faster either.
+	 * These trees' river betting is one size with no raise, already as cheap
+	 * as a leaf's five terminal passes, so with k ≥ 2 an iteration cost as
+	 * much as the full tree. Cutting at the turn was cheaper still, and worse:
+	 * 3–14% mean error. The implementation is in this repository's history
+	 * (commit 32e8424, issue #21).
+	 *
+	 * Cheaper EV estimates (issue #27) were measured offline with bench/ev on
+	 * three flops, against each solve run on to 0.045% of pot, and none is
+	 * offered here. The idea was that per-hand EVs settle before
+	 * exploitability does; they do not. The range-weighted mean error of
+	 * per-hand root EVs runs at 1 to 2.5 times the exploitability throughout,
+	 * so getting under 1% of pot takes about 47 iterations on every spot.
+	 * Stopping on EV stability stopped too early: the change between checks
+	 * understates the error left, and at ε 0.5% it stopped with 2.2–2.6% of
+	 * pot still wrong. `targetPercent` already tracks the error. Bracketing
+	 * with the best-response values did not help either: their midpoint with
+	 * the average was worse than the average alone, and the best blend, fitted
+	 * in hindsight, gained at most 10% with a weight that drifted from 0.1 to
+	 * 0.85 over a run. Extrapolating the EV sequence was unstable because
+	 * DCFR's average values do not follow a clean C/T^p. Even with each
+	 * correction capped at three times the last step, Richardson on the
+	 * whole vector beat the plain average at only 11 of 51 checkpoints and
+	 * was up to 8 times worse; per-hand Aitken beat it at 17 of 51 and was
+	 * up to 4 times worse. The one win was evaluating EVs under the
+	 * current profile rather than the average: at equal iterations its error
+	 * was lower at 62 of 65 checkpoints, often by 2 to 4 times. Issue #35 takes
+	 * that up as its own opt-in.
+	 *
+	 * Learned turn-leaf values — solving only the flop betting and asking a
+	 * model for each hand's value where the turn is dealt, as DeepStack does —
+	 * were measured too (`bench/leaf/`), and are not offered: no model came
+	 * near the accuracy the exact solve already reaches in the time budget.
+	 * Fitted on turn spots solved to 0.3% of pot and scored on the real turn
+	 * leaves of 0.1% flop solves, per-hand EV was off by 9–17% of the leaf pot
+	 * for equity times a realisation factor per hand class (a hand's value at
+	 * a stack-to-pot ratio of 2 is not bounded by its share of the pot: strong
+	 * hands win stacks, weak ones fold), 3–5% for a cubic in equity per class,
+	 * and 1.7–2.7% for an MLP on equity-distribution features trained on
+	 * 10,000 spots. Errors move together across turn cards, so averaging them
+	 * into the flop barely cancels them: 1.1–4.2% of the flop pot with the
+	 * flop strategy held at the reference, where the exact solve stopped at
+	 * 15 s, single-threaded in Chromium, is within 0.1–1.7% at the root. Nor
+	 * would it be faster: the network over one leaf's turn cards took about
+	 * 140 ms, three leaves more than an exact flop iteration (about 350 ms),
+	 * before the range-dependent features it needs.
 	 */
 }
 
@@ -602,8 +717,22 @@ export interface Solution {
 	readonly workers: number;
 	/** The solver behind this solution, for analysis and warm starts. */
 	readonly solver: Solver;
-	/** Chips per hand for a player, under the average strategy. */
+	/**
+	 * Chips per hand for a player, under the average strategy — or under the
+	 * current profile with `approximations.currentProfileEv`.
+	 */
 	ev(player: 0 | 1): number;
+	/**
+	 * Root EV in chips for each combination a player can hold, indexed like
+	 * `COMBO_CARDS` (as `reachAt` is): what that hand wins on average, over
+	 * the opponent hands it can be dealt against. Zero for combinations outside
+	 * the range or blocked by the board, and for a hand no opponent hand can be
+	 * dealt against, which has no EV to give. Weighted by range weight times
+	 * compatible opponent mass, the mean is `ev(player)`, and the same pass
+	 * serves both. Under the average strategy, or the current profile with
+	 * `approximations.currentProfileEv`. Returns a fresh copy.
+	 */
+	handEvs(player: 0 | 1): Float64Array;
 	/** Distance from equilibrium, in chips per hand. */
 	exploitability(): number;
 	/**
@@ -705,6 +834,9 @@ export interface SolveRun {
  * @param options solver setup
  */
 export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
+	if (options.analysisOnly && options.approximations?.currentProfileEv) {
+		throw new Error('approximations.currentProfileEv needs regrets, and an analysisOnly run has none');
+	}
 	// A saved strategy is loaded as float32 sums, so analysis stays there.
 	const maxBytes = spot.source.maxBytes ?? DEFAULT_MAX_BYTES;
 	const { totalSlots, bytes } = spot.estimate;
@@ -726,7 +858,12 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
 	const weights = runoutWeights(spot.runouts);
 
-	const requested = resolveWorkers(options);
+	// The WebAssembly engine, where it applies: 32-bit storage and a platform
+	// with WebAssembly SIMD. Decided before the thread count, because the
+	// browser build can only thread the engine.
+	const wantsEngine =
+		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false;
+	const requested = resolveWorkers(options, wantsEngine);
 	const plan = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
 
 	// Workers need the accumulators in shared memory. Allocating shared for a
@@ -738,19 +875,16 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 
 	const active = buildActiveLists(spot.runouts, spot.players, showdown);
 	const hands = buildHandSpace(spot.runouts, spot.players, active);
-	// The WebAssembly engine, where it applies: one thread, 32-bit storage,
-	// a platform with WebAssembly SIMD. It owns the storage; the context sees
-	// it through views.
-	const engine =
-		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false
-			? createEngine(
-					{
-						tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
-						runoutWeight: weights, chipScale: spot.chipScale,
-					},
-					plan ? { plan, threads: requested, spawn: spawnEngineWorker } : undefined,
-				)
-			: null;
+	// The engine owns the storage; the context sees it through views.
+	const engine = wantsEngine
+		? createEngine(
+				{
+					tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
+					runoutWeight: weights, chipScale: spot.chipScale,
+				},
+				plan ? { plan, threads: requested, spawn: spawnEngineWorker } : undefined,
+			)
+		: null;
 	const ctx: Context = {
 		tree: spot.tree,
 		runouts: spot.runouts,
@@ -790,37 +924,35 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// Seeded before any worker starts, so they all see the inherited values.
 	let warm: WarmStartReport | null = null;
 	let offset = 0;
-	let coarse: SolveRun | null = null;
+	let solver: Solver;
+	let pool: Pool | null;
 	try {
-		coarse = coarsePlan ? solveCoarse(coarsePlan, options) : null;
+		if (options.warmStart) {
+			const source = options.warmStart;
+			warm = warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
+			offset = options.warmIteration ?? source.totalIterations;
+		} else if (coarsePlan && coarsePlan.iterations > 0) {
+			// Regrets only: the bucketed game's average would have to be outweighed.
+			const coarse = solveCoarse(coarsePlan, options);
+			try {
+				warm = warmStart(ctx, coarse.solver.ctx, false);
+			} finally {
+				coarse.close();
+			}
+			offset = options.warmIteration ?? coarse.totalIterations;
+		}
+
+		solver = makeSolver(ctx);
+		if (warm && coarsePlan) coarseMs.set(solver, coarsePlan.elapsed);
+		// The engine runs its own threads; the JavaScript pool is for the rest.
+		pool = plan && !engine
+			? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
+			: null;
 	} catch (error) {
+		// The engine's threads would otherwise stay parked on this run for good.
 		engine?.close();
 		throw error;
 	}
-	if (options.warmStart) {
-		const source = options.warmStart;
-		warm = warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
-		offset = options.warmIteration ?? source.totalIterations;
-	} else if (coarse) {
-		// Regrets only: the bucketed game's average would have to be outweighed.
-		try {
-			warm = warmStart(ctx, coarse.solver.ctx, false);
-		} catch (error) {
-			engine?.close();
-			throw error;
-		} finally {
-			coarse.close();
-		}
-		offset = options.warmIteration ?? coarse.totalIterations;
-
-	}
-
-	const solver = makeSolver(ctx);
-	if (coarse) coarseMs.set(solver, coarsePlan!.elapsed);
-	// The engine runs its own threads; the JavaScript pool is for the rest.
-	const pool: Pool | null = plan && !engine
-		? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
-		: null;
 	if (pool) solver.useRoot(pool.traverse);
 	if (engine) solver.useRoot(engine.root(ctx.dcfr));
 	const threadCount = pool ? pool.workers : engine ? engine.threads : 1;
@@ -866,7 +998,10 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			}
 		},
 		snapshot(history = [], stoppedAt = 'iterations') {
-			return makeSolution(spot, ctx, solver, completed, offset + completed, [...history], stoppedAt, threadCount);
+			return makeSolution(
+				spot, ctx, solver, completed, offset + completed, [...history], stoppedAt, threadCount,
+				options.approximations?.currentProfileEv === true,
+			);
 		},
 	};
 }
@@ -985,21 +1120,27 @@ function rangeRankMerge(players: readonly [PlayerIndex, PlayerIndex], maxGap: nu
 	return { ranks: (a, b) => allowed[a * 13 + b] === 1, maxGap };
 }
 
-let warnedThreads = false;
+const threadWarnings = new Set<string>();
 
 /**
- * Threads a run will use. The browser build has none to offer, so anything
- * above one falls back to the calling thread, with a single warning.
+ * Threads a run will use. Anything above what the platform can run now falls
+ * back to what it can, with one warning per reason: the browser build threads
+ * only the WebAssembly engine, and only after `enableThreads` from
+ * `poker-flopsolve/threads` has started its workers.
+ * @param options solver tuning
+ * @param engine whether the WebAssembly engine is to run
  */
-function resolveWorkers(options: SolveOptions): number {
+function resolveWorkers(options: SolveOptions, engine: boolean): number {
 	if (options.analysisOnly) return 1;
 	const asked = options.workers === 'auto' ? defaultWorkerCount() : (options.workers ?? 1);
-	if (asked > 1 && !THREADS_AVAILABLE) {
-		if (!warnedThreads) {
-			warnedThreads = true;
-			console.warn(`poker-flopsolve: worker threads are Node-only; solving on one thread (${PLATFORM} build)`);
+	const limit = threadLimit(engine);
+	if (asked > limit) {
+		const advice = threadAdvice(engine);
+		if (!threadWarnings.has(advice)) {
+			threadWarnings.add(advice);
+			console.warn(`poker-flopsolve: ${asked} threads asked for, solving on ${limit} (${PLATFORM} build): ${advice}`);
 		}
-		return 1;
+		return limit;
 	}
 	return asked;
 }
@@ -1142,6 +1283,7 @@ function makeSolution(
 	history: Progress[],
 	stoppedAt: 'target' | 'iterations',
 	workers: number,
+	currentProfileEv: boolean,
 ): Solution {
 	const { tree } = spot;
 	const parent = new Int32Array(tree.nodeCount).fill(-1);
@@ -1177,7 +1319,11 @@ function makeSolution(
 		return reach;
 	};
 
-	let cachedEv: [number, number] | null = null;
+	// One pass per player serves `ev` and `handEvs` alike.
+	let cachedEv: RootValues | null = null;
+	const rootValues = (): RootValues =>
+		(cachedEv ??= solver.rootValues(currentProfileEv ? Mode.Current : Mode.Average));
+	const cachedHands: [Float64Array | null, Float64Array | null] = [null, null];
 	let cachedExploit: number | null = null;
 
 	return {
@@ -1189,8 +1335,11 @@ function makeSolution(
 		solver,
 		history,
 		ev(player) {
-			cachedEv ??= solver.expectedValue();
-			return cachedEv[player];
+			return rootValues().totals[player];
+		},
+		handEvs(player) {
+			cachedHands[player] ??= solver.handEvs(player, rootValues().values[player]);
+			return cachedHands[player].slice();
 		},
 		exploitability() {
 			cachedExploit ??= solver.exploitability();
