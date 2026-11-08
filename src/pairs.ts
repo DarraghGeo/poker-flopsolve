@@ -203,7 +203,6 @@ function walk(
 	}
 
 	if (kind === NodeKind.Chance) {
-		if (ctx.lineStarts !== undefined) throw new Error('Per-hand pair values are not available with lineRunouts');
 		const nextRound = tree.round[node] + 1;
 		const child = tree.edgeChild[tree.firstEdge[node]];
 		const width = runouts.width[nextRound];

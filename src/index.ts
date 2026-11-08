@@ -18,9 +18,6 @@ export { rankSwap } from './runouts.ts';
 import type { RunoutMerge } from './runouts.ts';
 import { boardAtRound, enumerateRunouts, rankSwap, resolveBoard } from './runouts.ts';
 import { suitSymmetries } from './abstraction.ts';
-import type { LineRunouts } from './lines.ts';
-import { enumerateLineRunouts, lineBoards, lineScales } from './lines.ts';
-export type { LineRunouts } from './lines.ts';
 import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
 import { buildHandSpace } from './hands.ts';
@@ -160,14 +157,6 @@ export interface SpotConfig {
 	 * strategy in the real game, every card dealt. Default false.
 	 */
 	readonly runoutBuckets?: boolean | number;
-	/**
-	 * Experimental (issue #53): deal coarser turn and river cards in the
-	 * betting lines the rule names — one card per class of cards that pair,
-	 * flush and straight alike — and every card elsewhere. An approximation;
-	 * see `lines.ts`. JavaScript engine only; not with `chanceSampling`,
-	 * `coarseStart` or a `warmStart` into it. Unset, off.
-	 */
-	readonly lineRunouts?: LineRunouts;
 }
 
 /** Projected cost of solving a spot. */
@@ -315,11 +304,13 @@ export function defineSpot(config: SpotConfig): Spot {
 		config.isomorphism === false || board.length === 5
 			? undefined
 			: suitSymmetries(board, [players[0].weights, players[1].weights]);
-	const merge =
+	const runouts = enumerateRunouts(
+		board,
+		symmetries,
 		config.runoutBuckets && board.length < 5
 			? rangeRankMerge(players, config.runoutBuckets === true ? DEFAULT_BUCKET_GAP : config.runoutBuckets)
-			: undefined;
-	let runouts = enumerateRunouts(board, symmetries, merge);
+			: undefined,
+	);
 
 	const tree = buildTree(
 		{
@@ -337,15 +328,12 @@ export function defineSpot(config: SpotConfig): Spot {
 		},
 		runouts,
 	);
-	// The tree needs only the number of rounds; the line runouts need the tree.
-	if (config.lineRunouts && board.length < 5) runouts = enumerateLineRunouts(board, symmetries, merge, tree, config.lineRunouts);
-	const boards = runouts.lines ? lineBoards(runouts.lines, tree) : undefined;
 
-	const layout = buildLayout(tree, runouts, players, 4, boards);
+	const layout = buildLayout(tree, runouts, players, 4);
 	const last = runouts.rounds - 1;
 	const showdownBytes = runouts.counts[last] * (2 * COMBOS + COMBOS + 1) * 2;
 	const bytes = layout.bytes + showdownBytes;
-	const compressedBytes = buildLayout(tree, runouts, players, 2, boards).bytes + showdownBytes;
+	const compressedBytes = buildLayout(tree, runouts, players, 2).bytes + showdownBytes;
 
 	const suggestions: string[] = [];
 	if (compressedBytes > maxBytes) {
@@ -994,20 +982,14 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 	const showdown = buildShowdownTable(spot.runouts, relevant);
-	const lines = spot.runouts.lines;
-	const layout = buildLayout(
-		spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], lines ? lineBoards(lines, spot.tree) : undefined,
-	);
+	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
 	const weights = runoutWeights(spot.runouts);
 
 	// The WebAssembly engine, where it applies: 32-bit storage and a platform
 	// with WebAssembly SIMD. Decided before the thread count, because the
 	// browser build can only thread the engine.
 	const wantsEngine =
-		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false && !lines;
-	if (lines && (options.approximations?.chanceSampling || options.approximations?.coarseStart || options.warmStart)) {
-		throw new Error('lineRunouts does not combine with chanceSampling, coarseStart or a warmStart');
-	}
+		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false;
 	// Sampling's state is one thread's; see `Approximations.chanceSampling`.
 	const samplingOptions = options.approximations?.chanceSampling;
 	const requested = samplingOptions ? 1 : resolveWorkers(options, wantsEngine);
@@ -1078,11 +1060,6 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		dcfr: (options.algorithm ?? 'dcfr') === 'dcfr',
 	};
 	if (samplingPlan) ctx.sampling = makeSampling(samplingPlan, engine?.sampling ?? undefined);
-	if (lines) {
-		const writable = ctx as { lineStarts?: Context['lineStarts']; lineScales?: Context['lineScales'] };
-		writable.lineStarts = lines.chanceStart;
-		writable.lineScales = lineScales(spot.runouts, spot.tree, active, hands);
-	}
 
 	// Seeded before any worker starts, so they all see the inherited values.
 	let warm: WarmStartReport | null = null;
@@ -1156,7 +1133,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		},
 		trueExploitabilityPercent() {
 			if (!spot.runouts.approximate) return this.exploitabilityPercent();
-			const real = createRun(defineSpot({ ...spot.source, runoutBuckets: false, lineRunouts: undefined }), {
+			const real = createRun(defineSpot({ ...spot.source, runoutBuckets: false }), {
 				workers: threadCount,
 				precision,
 			});
