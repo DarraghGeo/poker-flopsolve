@@ -615,7 +615,33 @@ export interface Approximations {
 	 * 140 ms, three leaves more than an exact flop iteration (about 350 ms),
 	 * before the range-dependent features it needs.
 	 */
-	/** EXPERIMENT (#25): chance sampling with last-value baselines. */
+	/**
+	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
+	 * training iteration walks each turn and river deal with probability `p`
+	 * (default 0.35, both rounds). A deal left out adds the per-hand values it
+	 * returned when last walked, its baseline; a walked deal adds
+	 * `b + (v - b) / p` and its values become the new baseline. DCFR discounts
+	 * a skipped subtree missed are applied when it is next walked. This is
+	 * what made sampling pay where the plain 1/p weighting above did not:
+	 * the correction only carries how much a deal's values moved since its
+	 * last walk, which is small.
+	 *
+	 * Iterations get several times cheaper and take 2–5 times as many to a
+	 * target, so the net is about 1.2–1.5 times faster to 0.3% of pot, and
+	 * per-hand root EVs come out closer to the true ones at the same
+	 * exploitability. Measured single-threaded in Node against the exact
+	 * solve, time to 0.3% of pot (to 1%): AsKh7d 23.7 s → 15.9 s (13.3 → 9.0),
+	 * Ks9s4s 6.0 → 4.3 (3.4 → 2.3), the README's wide flop 13.4 → 9.3
+	 * (7.5 → 5.3), and pairs-and-broadway ranges on AsKh7d 16.7 → 12.9 and on
+	 * Ks9s4s 5.5 → 4.5. Exploitability is measured exactly, in the full game.
+	 *
+	 * Costs: one float per hand per stored deal per chance node, 6–31 MB on
+	 * those flops (about 12–20% beside their storage), counted against
+	 * `maxBytes`; always one thread (`workers` is ignored); 32- or 64-bit
+	 * storage only. With `targetPercent`, a sampled solve runs more
+	 * iterations, so it makes a few more exploitability checks.
+	 * Off, nothing changes; at `p: 1` it is the exact solve, bit for bit.
+	 */
 	readonly chanceSampling?: SamplingOptions;
 }
 
