@@ -9,3 +9,4 @@
 {"url":"https://claude.ai/code/session_014RSNFgMcxHP2gJX7hje6N4","title":"Approx EV: compress combos into weighted hand classes (shorter vectors)","issue":28,"state":"active","updated":"2026-11-08T15:01:34.596Z"}
 {"url":"https://claude.ai/code/session_014RSNFhg5zJFCit4txKvH5G","title":"Speed: multi-threaded WASM (and WebGPU prototype) in the browser","issue":29,"state":"active","updated":"2026-11-08T15:01:34.596Z"}
 {"url":"https://claude.ai/code/session_014RSNFgZVpvtuhbZzctuumV","title":"Approx EV: precomputed flop library + nearest-spot warm start","issue":30,"state":"active","updated":"2026-11-08T15:01:34.596Z"}
+{"url":null,"title":"Approx EV: hand classes carried through every street (2–3× shorter river vectors)","issue":31,"state":"active","updated":"2026-11-08T15:02:45.976Z"}
