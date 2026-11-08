@@ -11,7 +11,7 @@
 import { COMBO_CARDS, COMBOS, comboIndex, formatCards, parseCards } from './cards.ts';
 import type { BetSize, RaiseSizes, Tree } from './tree.ts';
 import type { PerPlayer } from './tree.ts';
-import { ACTION_LABELS, ActionKind, buildTree, forPlayer, isPerPlayer, mapPlayers, NodeKind, raisesPerRound } from './tree.ts';
+import { actionLabel, ActionKind, buildTree, forPlayer, isPerPlayer, mapPlayers, NodeKind, raisesPerRound } from './tree.ts';
 import type { Runouts } from './runouts.ts';
 import type { ResolvedBoard } from './runouts.ts';
 export { rankSwap } from './runouts.ts';
@@ -119,6 +119,22 @@ export interface SpotConfig {
 	 * with 0.1, sizes 0.33 and 0.4 become one 0.365. Default 0, none.
 	 */
 	readonly mergeSizes?: number;
+	/**
+	 * Bets, raises and shoves to cut from the tree, with everything below
+	 * them: each the readable path of the node the action leads to, exactly as
+	 * `Solution.path` writes it — `"check bet 18.15"`, `"bet 41.25 raise
+	 * 133.31"`, `"check check / bet 18.15"`, chips being the actor's total
+	 * investment after the action and `/` a deal. Only the line named goes; the
+	 * same size elsewhere stays. Checks, calls and folds cannot be cut, and a
+	 * path that names no such action in the tree is refused.
+	 *
+	 * For a budgeted tree: keep three sizes where they earn their memory, one
+	 * where they do not. A tree's memory is almost all on the river, and each
+	 * flop or turn action multiplies the river subtrees below it, so cutting a
+	 * line saves what its whole subtree stores. Default none; unset, the tree
+	 * is the one the other settings build, unchanged.
+	 */
+	readonly removeActions?: readonly string[];
 	/** Refuse a range wider than this many combinations. */
 	readonly maxCombos?: number;
 	/**
@@ -323,6 +339,7 @@ export function defineSpot(config: SpotConfig): Spot {
 			allInThreshold: config.allInThreshold,
 			noDonk: config.noDonk,
 			mergeSizes: config.mergeSizes,
+			removeActions: config.removeActions,
 			chipScale,
 			minRaiseUnits: chipScale,
 		},
@@ -857,9 +874,23 @@ export interface Solution {
 export type SubgameBetting = Partial<
 	Pick<
 		SpotConfig,
-		'betSizes' | 'raiseSizes' | 'maxRaises' | 'allowAllIn' | 'allInThreshold' | 'noDonk' | 'mergeSizes' | 'maxCombos' | 'maxBytes'
+		| 'betSizes'
+		| 'raiseSizes'
+		| 'maxRaises'
+		| 'allowAllIn'
+		| 'allInThreshold'
+		| 'noDonk'
+		| 'mergeSizes'
+		| 'removeActions'
+		| 'maxCombos'
+		| 'maxBytes'
 	>
 >;
+
+/** Subgame settings that shape the tree, which a carried-over cut would not fit. */
+const TREE_SETTINGS = [
+	'betSizes', 'raiseSizes', 'maxRaises', 'allowAllIn', 'allInThreshold', 'noDonk', 'mergeSizes',
+] as const satisfies readonly (keyof SubgameBetting)[];
 
 export interface StrategyView {
 	readonly node: number;
@@ -1397,11 +1428,7 @@ function makeSolution(
 		}
 	}
 
-	const label = (edge: number): string => {
-		const kind = tree.edgeAction[edge];
-		const amount = tree.edgeTarget[edge] / spot.chipScale;
-		return kind >= ActionKind.Bet ? `${ACTION_LABELS[kind]} ${amount}` : ACTION_LABELS[kind];
-	};
+	const label = (edge: number): string => actionLabel(tree.edgeAction[edge], tree.edgeTarget[edge], spot.chipScale);
 
 	const reachAt = (node: number, board: number, player: 0 | 1): Float64Array => {
 		const index = spot.players[player];
@@ -1493,6 +1520,15 @@ function makeSolution(
 				value === undefined ? undefined : (mapPlayers(value, (side) => later(side, listed(side)) as T) as PerPlayer<T>);
 			const rows = laterEach(source.betSizes, () => true) as SpotConfig['betSizes'];
 			const raiseRows = laterEach(source.raiseSizes, (side) => side !== undefined && raisesPerRound(side));
+			// Cuts below the node carry over, re-rooted at it, while the tree
+			// keeps the old betting; new betting builds a tree they need not fit.
+			const reshaped = TREE_SETTINGS.some((key) => key in betting);
+			const prefix = node === 0 ? '' : `${this.path(node)} `;
+			const cuts = source.removeActions
+				?.filter((line) => line.startsWith(prefix))
+				.map((line) => line.slice(prefix.length));
+			const removeActions =
+				'removeActions' in betting ? betting.removeActions : reshaped || !cuts || cuts.length === 0 ? undefined : cuts;
 
 			return {
 				board: formatCards(cards),
@@ -1507,6 +1543,7 @@ function makeSolution(
 				allInThreshold: 'allInThreshold' in betting ? betting.allInThreshold : laterEach(source.allInThreshold, Array.isArray),
 				noDonk: 'noDonk' in betting ? betting.noDonk : source.noDonk === undefined ? undefined : later(source.noDonk, Array.isArray(source.noDonk)),
 				mergeSizes: 'mergeSizes' in betting ? betting.mergeSizes : source.mergeSizes,
+				...(removeActions ? { removeActions } : {}),
 				minWeight: source.minWeight,
 				isomorphism: source.isomorphism,
 				maxCombos: 'maxCombos' in betting ? betting.maxCombos : source.maxCombos,

@@ -58,7 +58,7 @@ export interface WarmStartReport {
 /**
  * Pair each decision node of `to` with its counterpart in `from`, or -1.
  */
-export function matchNodes(to: Tree, from: Tree): Int32Array {
+export function matchNodes(to: Tree, from: Tree, tolerance = SIZE_TOLERANCE): Int32Array {
 	const match = new Int32Array(to.nodeCount).fill(-1);
 	const walk = (a: number, b: number): void => {
 		if (to.kind[a] !== from.kind[b] || to.round[a] !== from.round[b]) return;
@@ -70,7 +70,7 @@ export function matchNodes(to: Tree, from: Tree): Int32Array {
 		match[a] = b;
 		for (let e = 0; e < to.numEdges[a]; e++) {
 			const edge = to.firstEdge[a] + e;
-			const other = matchEdge(to, edge, a, from, b);
+			const other = matchEdge(to, edge, a, from, b, tolerance);
 			if (other >= 0) walk(to.edgeChild[edge], from.edgeChild[other]);
 		}
 	};
@@ -78,7 +78,7 @@ export function matchNodes(to: Tree, from: Tree): Int32Array {
 	return match;
 }
 
-function matchEdge(to: Tree, edge: number, node: number, from: Tree, other: number): number {
+function matchEdge(to: Tree, edge: number, node: number, from: Tree, other: number, tolerance: number): number {
 	const kind = to.edgeAction[edge];
 	const sized = kind === ActionKind.Bet || kind === ActionKind.Raise;
 	const size = to.edgeTarget[edge] / to.pot[node];
@@ -94,7 +94,7 @@ function matchEdge(to: Tree, edge: number, node: number, from: Tree, other: numb
 			best = candidate;
 		}
 	}
-	return bestGap <= Math.log(SIZE_TOLERANCE) ? best : -1;
+	return bestGap <= Math.log(tolerance) ? best : -1;
 }
 
 /** Read one block — a node on a board — as plain numbers, `actions * count` of them. */
@@ -147,10 +147,19 @@ function realCards(runouts: Runouts, round: number, board: number): number[] {
  * @param cards for a solve of a different board: each card of `to` to the card
  *   of `from` it plays as, a permutation of the deck taking `to`'s board onto
  *   `from`'s. Hands and dealt cards map through it too. Unset, the identity.
+ * @param tolerance largest ratio between two bet sizes still matched; unset,
+ *   `SIZE_TOLERANCE`. `Infinity` maps every bet to the nearest one of its kind,
+ *   which seeds a size the old tree lacked from its neighbour.
  * @returns what matched
  * @throws if the boards differ, or `cards` does not take one onto the other
  */
-export function warmStart(to: Context, from: Context, averages: boolean, cards?: Uint8Array): WarmStartReport {
+export function warmStart(
+	to: Context,
+	from: Context,
+	averages: boolean,
+	cards?: Uint8Array,
+	tolerance = SIZE_TOLERANCE,
+): WarmStartReport {
 	const a = to.runouts.initial;
 	const b = from.runouts.initial;
 	if (cards) checkRelabelling(cards, a, b);
@@ -166,7 +175,7 @@ export function warmStart(to: Context, from: Context, averages: boolean, cards?:
 	for (let combo = 0; combo < COMBOS; combo++) {
 		comboOf[combo] = cards ? comboIndex(cards[COMBO_CARDS[combo * 2]], cards[COMBO_CARDS[combo * 2 + 1]]) : combo;
 	}
-	const match = matchNodes(to.tree, from.tree);
+	const match = matchNodes(to.tree, from.tree, tolerance);
 	const { tree } = to;
 	const width = to.layout.maxActions * COMBOS;
 	const oldRegret = new Float64Array(width);
@@ -190,7 +199,7 @@ export function warmStart(to: Context, from: Context, averages: boolean, cards?:
 		// Which old action each new one continues.
 		const actionOf = new Int32Array(actions).fill(-1);
 		for (let e = 0; e < actions; e++) {
-			const other = matchEdge(tree, tree.firstEdge[node] + e, node, from.tree, old);
+			const other = matchEdge(tree, tree.firstEdge[node] + e, node, from.tree, old, tolerance);
 			if (other >= 0) actionOf[e] = other - from.tree.firstEdge[old];
 		}
 

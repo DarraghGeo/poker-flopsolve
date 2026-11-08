@@ -127,6 +127,12 @@ export interface TreeConfig {
 	 * mean. Unset or 0, none.
 	 */
 	readonly mergeSizes?: number;
+	/**
+	 * Bets, raises and shoves to leave out, each by the readable path of the
+	 * node it leads to — `Solution.path` — with the subtree below it. Unset,
+	 * none. See `SpotConfig.removeActions`.
+	 */
+	readonly removeActions?: readonly string[];
 }
 
 /**
@@ -150,6 +156,15 @@ export function mergeBetSizes(sizes: readonly BetSize[], distance: number): BetS
 	}
 	flush();
 	return [...merged, ...others];
+}
+
+/**
+ * How a path names an action: `check`, `call`, `fold`, or the kind and the
+ * actor's total investment after it in chips — `bet 18.15`, `raise 60`,
+ * `allin 975`. `Solution.path` joins these with spaces, and `/` for a deal.
+ */
+export function actionLabel(action: number, target: number, chipScale: number): string {
+	return action >= ActionKind.Bet ? `${ACTION_LABELS[action]} ${target / chipScale}` : ACTION_LABELS[action];
 }
 
 /** Structure-of-arrays betting tree. */
@@ -235,6 +250,11 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 	});
 	const noDonk = perRound(config.noDonk ?? false, Array.isArray(config.noDonk), rounds, 'noDonk');
 	const half = Math.round(potUnits / 2);
+	// Lines to cut, and which of them were found. Paths are only built when
+	// there is something to cut, so a tree without cuts is built as before.
+	const remove = config.removeActions && config.removeActions.length > 0 ? new Set(config.removeActions) : null;
+	const removed = new Set<string>();
+	const extend = (path: string, step: string): string => (remove ? (path ? `${path} ${step}` : step) : '');
 
 	const addNode = (
 		nodeKind: number,
@@ -254,7 +274,7 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 	};
 
 	/** What follows once a round's betting has closed. */
-	const closeRound = (state: BetState): number => {
+	const closeRound = (state: BetState, path: string): number => {
 		const total = potUnits + state.invested[0] + state.invested[1];
 		const allIn = state.invested[0] >= stackUnits || state.invested[1] >= stackUnits;
 
@@ -278,7 +298,7 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 		};
 		// With someone already all in there is nothing left to decide, so the
 		// remaining streets run out straight to showdown.
-		const child = allIn ? closeRound(next) : buildDecision(next);
+		const child = allIn ? closeRound(next, extend(path, '/')) : buildDecision(next, extend(path, '/'));
 
 		firstEdge[node] = edgeChild.length;
 		numEdges[node] = 1;
@@ -316,7 +336,7 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 		return target;
 	};
 
-	const buildDecision = (state: BetState): number => {
+	const buildDecision = (state: BetState, path: string): number => {
 		const me = state.toAct;
 		const opp = (1 - me) as 0 | 1;
 		const mine = state.invested[me];
@@ -358,10 +378,15 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 				if (target === null || seen.has(target)) continue;
 				seen.add(target);
 				const isShove = target >= stackUnits;
-				actions.push({
-					action: isShove ? ActionKind.AllIn : owed > 0 ? ActionKind.Raise : ActionKind.Bet,
-					target,
-				});
+				const action = isShove ? ActionKind.AllIn : owed > 0 ? ActionKind.Raise : ActionKind.Bet;
+				if (remove) {
+					const line = extend(path, actionLabel(action, target, chipScale));
+					if (remove.has(line)) {
+						removed.add(line);
+						continue;
+					}
+				}
+				actions.push({ action, target });
 			}
 		}
 
@@ -375,6 +400,7 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 		}
 
 		actions.forEach((entry, i) => {
+			const line = extend(path, actionLabel(entry.action, entry.target, chipScale));
 			const invested: [number, number] =
 				me === 0 ? [entry.target, theirs] : [theirs, entry.target];
 			let child: number;
@@ -387,8 +413,8 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 			} else if (entry.action === ActionKind.Check || entry.action === ActionKind.Call) {
 				const closed = invested[0] === invested[1] && state.acted + 1 >= 2;
 				child = closed
-					? closeRound({ ...state, invested, acted: state.acted + 1 })
-					: buildDecision({ ...state, invested, toAct: opp, acted: state.acted + 1 });
+					? closeRound({ ...state, invested, acted: state.acted + 1 }, line)
+					: buildDecision({ ...state, invested, toAct: opp, acted: state.acted + 1 }, line);
 			} else {
 				child = buildDecision({
 					round: state.round,
@@ -400,7 +426,7 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 					base: state.base,
 					aggressor: me,
 					previousAggressor: state.previousAggressor,
-				});
+				}, line);
 			}
 			edgeChild[base + i] = child;
 		});
@@ -418,7 +444,16 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 		base: 0,
 		aggressor: -1,
 		previousAggressor: -1,
-	});
+	}, '');
+
+	if (remove && removed.size < remove.size) {
+		const missing = [...remove].filter((line) => !removed.has(line));
+		throw new Error(
+			`removeActions: no bet, raise or shove in this tree ends the line ${missing.map((m) => `"${m}"`).join(', ')}. ` +
+				'Give each as Solution.path writes the node the action leads to, e.g. "check bet 18.15"; ' +
+				'checks, calls and folds cannot be removed',
+		);
+	}
 
 	const decisionNodes: number[] = [];
 	for (let i = 0; i < kind.length; i++) if (kind[i] === NodeKind.Decision) decisionNodes.push(i);
