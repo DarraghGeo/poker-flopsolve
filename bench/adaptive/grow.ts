@@ -113,7 +113,10 @@ export function indexFull(config: SpotConfig, baseFraction = 0.75): FullTree {
 		}
 		// The base size, or a shove where the base size would be one.
 		const hasBase = infos.some((info) => info.kind !== ActionKind.AllIn && near(info.fraction, baseFraction));
-		const baseShoves = !hasBase && mine + owed + baseFraction * potAfterCall >= stackUnits;
+		// Facing a bet, one size means the one raise the full tree offers when
+		// it has no raise of the base size: its shove, as in T0.
+		const sizedRaise = infos.some((info) => info.kind !== ActionKind.AllIn);
+		const baseShoves = !hasBase && (mine + owed + baseFraction * potAfterCall >= stackUnits || (owed > 0 && !sizedRaise));
 		for (const info of infos) {
 			const base = info.kind === ActionKind.AllIn ? baseShoves : near(info.fraction, baseFraction);
 			const entry = { ...info, base };
