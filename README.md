@@ -278,7 +278,7 @@ const blueprint = solve(
 		allowAllIn: [true, false, false],
 		runoutBuckets: 3,
 	}),
-	{ targetPercent: 0.3, precision: 'i16' },
+	{ targetPercent: 0.3, precision: 'i16' }, // in a browser, leave f32 (see below)
 );
 const turn = resolveSubgame(blueprint, node, board, {
 	player: 0, // whose strategy to refine
@@ -320,7 +320,12 @@ the subgame than in the blueprint the guarantees often cannot all be met. So the
 is `'unsafe'`. A re-solved subgame is a `Solution`, so a river below it can be re-solved
 from it in turn.
 
-CHROMIUM_TIMINGS
+In headless Chromium (`poker-flopsolve/threads`, Ks 9s 4s), the blueprint with buckets at
+f32 solved to 0.3% in 84 s on one thread and 25 s on four, and each re-solved turn took
+21 s and 6.6 s with 40 MiB. Use f32 there: only f32 runs on the WebAssembly engine, so
+the i16 blueprint ran on the JavaScript engine in about 190 s however many threads it had.
+A run holds its engine threads until `close()` (which `solve` calls for you), and
+snapshots stay usable after it, so close the blueprint's run before re-solving.
 
 ## In a browser
 
