@@ -21,6 +21,10 @@ with the full tree, solved as a reference. The spots are in `spots.ts`.
 - `run-*.json`, `run-monotone-*.log`: one per blueprint variant. `-ev` uses blueprint values
   instead of best responses for the gadgets.
 - `sizes-monotone.log`, `browser-*.log`: the other two scripts.
+- `sizes-monotone-current.log`, `run-smoke.log`: blueprints solved again after #8 changed how
+  average strategies are summed. That change merged while the runs above were going, so the
+  runs above, and the reference, predate it. Measured against the same reference, the
+  conclusions hold.
 
 The rainbow board As Kh 7d was not run. Its full tree needs 8.9 GB at i16, which only the
 JavaScript engine can hold, for an estimated 2–3 hours.

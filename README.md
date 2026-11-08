@@ -299,7 +299,11 @@ to 0.093% of pot (99 minutes, 2.3 GB at i16 on four threads):
 | root size agreement, OOP / IP after a check | 98.6% / 65.4% | 100% / 62.0% |
 | EV the root play loses at the full tree's values, OOP / IP | 0.027 / 0.022% of pot | 0.028 / 0.020% |
 
-IP's low size agreement after a check is near-indifference: only 15% of its betting hands
+Size agreement compares which bet size each hand's EVs rank best in the blueprint and in
+the full tree. It is fragile where sizes are near-tied. With the current solver, whose
+average strategy changed while these runs were going, OOP's agreement reads 75%, and the
+root EV error 2.0 / 1.9% of pot. The EV the root play loses held: 0.019 / 0.014% of pot.
+That is the number to go by. IP's low size agreement after a check is near-indifference: only 15% of its betting hands
 prefer one size by 0.5% of pot or more, the blueprint agrees on 89% of those, and its play
 loses 0.02% of pot. The per-action EV errors are largest for the flop shove (11–33% of pot
 for IP), a line neither tree plays. More turn/river sizes did worse here: two sizes
