@@ -6,6 +6,7 @@ export default defineConfig([
 		entry: {
 			index: 'src/index.ts',
 			threads: 'src/threads.ts',
+			depth: 'src/depth.ts',
 			worker: 'src/worker.ts',
 			'engine-worker': 'src/engine-worker.ts',
 		},
@@ -19,7 +20,7 @@ export default defineConfig([
 	{
 		// No Node imports; see src/platform/browser.ts. Single-threaded unless
 		// the separate threads entry is imported and called.
-		entry: { browser: 'src/index.ts', 'browser-threads': 'src/threads.ts' },
+		entry: { browser: 'src/index.ts', 'browser-threads': 'src/threads.ts', 'browser-depth': 'src/depth.ts' },
 		format: ['esm'],
 		target: 'es2022',
 		platform: 'browser',

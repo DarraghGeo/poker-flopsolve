@@ -73,6 +73,12 @@ export const NodeKind = {
 	Chance: 1,
 	TerminalFold: 2,
 	TerminalShowdown: 3,
+	/**
+	 * A depth-limited leaf: the hand goes on past here, but its value comes
+	 * from `Context.leaf` rather than from a subtree. `buildTree` never makes
+	 * one; see src/depth.ts.
+	 */
+	Continuation: 4,
 } as const;
 
 export const ActionKind = {

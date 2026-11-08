@@ -25,6 +25,11 @@
       "types": "./dist/threads.d.ts",
       "browser": "./dist/browser-threads.js",
       "import": "./dist/threads.js"
+    },
+    "./depth": {
+      "types": "./dist/depth.d.ts",
+      "browser": "./dist/browser-depth.js",
+      "import": "./dist/depth.js"
     }
   },
   "files": [
@@ -67,6 +72,7 @@
   },
   "browser": {
     "./dist/index.js": "./dist/browser.js",
-    "./dist/threads.js": "./dist/browser-threads.js"
+    "./dist/threads.js": "./dist/browser-threads.js",
+    "./dist/depth.js": "./dist/browser-depth.js"
   }
 }
