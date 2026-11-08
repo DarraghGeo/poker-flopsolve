@@ -79,6 +79,9 @@ interface Isolated {
 	whileHeld: number;
 	afterDoubleClose: number[];
 	afterFailedCreate: number;
+	brokenError: string;
+	afterBroken: number;
+	afterBrokenSolve: number;
 	solves: Record<string, { one: Outcome; first: Outcome; second: Outcome }>;
 }
 
@@ -95,6 +98,8 @@ beforeAll(async () => {
 	const prelude = `
 		import { createRun, defineSpot } from './src/index.ts';
 		import { enableThreads, threadsUnavailable } from './src/threads.ts';
+		import { spawnEngineWorker } from './src/platform/node.ts';
+		import { brokenEngine } from './test/thread-faults.ts';
 		${SOLVE}
 		const SPOTS = ${JSON.stringify(SPOTS)};
 	`;
@@ -142,8 +147,25 @@ beforeAll(async () => {
 				other.close();
 				const afterFailedCreate = await enableThreads(${THREADS});
 
+				// A thread that fails mid-iteration fails the step instead of
+				// hanging it. Its threads are not lent again; new ones replace them.
+				const broken = brokenEngine(spawnEngineWorker, ${THREADS});
+				let brokenError = '';
+				try {
+					broken.root(true)(0, 0, 1);
+				} catch (error) {
+					brokenError = String(error && error.message);
+				} finally {
+					broken.close();
+				}
+				const afterBroken = await enableThreads(${THREADS});
+				const afterBrokenSolve = solveSpot(createRun, defineSpot, config, 2, ${THREADS}).workers;
+
 				const released = await enableThreads(1);
-				return { reason, threads, again, released, whileHeld, afterDoubleClose, afterFailedCreate, solves };
+				return {
+					reason, threads, again, released, whileHeld, afterDoubleClose, afterFailedCreate,
+					brokenError, afterBroken, afterBrokenSolve, solves,
+				};
 			}`,
 			180_000,
 			{ isolated: true },
@@ -174,6 +196,7 @@ describe('engine thread loop', () => {
 		expect(slot('MODE')).toBe(ENGINE_CONTROL.mode);
 		expect(slot('TRAVERSER')).toBe(ENGINE_CONTROL.traverser);
 		expect(slot('READY')).toBe(ENGINE_CONTROL.ready);
+		expect(slot('FAILED')).toBe(ENGINE_CONTROL.failed);
 	});
 
 	it('stands alone, so it can ship as worker source', () => {
@@ -219,6 +242,16 @@ describe('browser build threads', () => {
 		expect(isolated.whileHeld).toBe(1);
 		expect(isolated.afterDoubleClose).toEqual([THREADS, 1]);
 		expect(isolated.afterFailedCreate).toBe(THREADS);
+	});
+
+	it('fails a step whose thread fails mid-iteration, and replaces that thread', (context) => {
+		if (!isolated) {
+			context.skip();
+			return;
+		}
+		expect(isolated.brokenError).toMatch(/thread failed mid-iteration/);
+		expect(isolated.afterBroken).toBe(THREADS);
+		expect(isolated.afterBrokenSolve).toBe(THREADS);
 	});
 
 	it('falls back to one thread on a page that is not isolated', (context) => {
