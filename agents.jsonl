@@ -2,3 +2,4 @@
 {"url":null,"title":"Approx EV: depth-limited solve with multi-continuation river leaves","issue":21,"state":"active","updated":"2026-11-08T14:54:22.164Z"}
 {"url":null,"title":"Approx EV: learned or analytic leaf values for turn leaves (DeepStack-style)","issue":22,"state":"active","updated":"2026-11-08T14:54:26.651Z"}
 {"url":null,"title":"Approx EV: potential-aware runout clustering (EMD k-means of turn/river cards)","issue":23,"state":"active","updated":"2026-11-08T14:54:29.925Z"}
+{"url":null,"title":"Approx EV: coarse-to-fine solve — abstract spot first, warm-start the real one","issue":24,"state":"active","updated":"2026-11-08T14:54:34.124Z"}
