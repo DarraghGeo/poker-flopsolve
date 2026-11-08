@@ -5,7 +5,7 @@
 {"url":null,"title":"Approx EV: coarse-to-fine solve — abstract spot first, warm-start the real one","issue":24,"state":"active","updated":"2026-11-08T14:54:34.124Z"}
 {"url":null,"title":"Approx EV: variance-reduced chance sampling with last-value baselines","issue":25,"state":"active","updated":"2026-11-08T14:54:37.184Z"}
 {"url":"https://claude.ai/code/session_014RSNFiWz5dRTkeirX512Rf","title":"Approx EV: stop on EV stability, bracket with best response, extrapolate","issue":27,"state":"active","updated":"2026-11-08T15:01:34.596Z"}
-{"url":null,"title":"Approx EV: regret-based pruning of subtrees no hand plays","issue":26,"state":"active","updated":"2026-11-08T14:54:45.040Z"}
+{"url":"https://claude.ai/code/session_014RSNFkor9N54xm35C9nnmA","title":"Approx EV: regret-based pruning of subtrees no hand plays","issue":26,"state":"active","updated":"2026-11-08T15:01:34.596Z"}
 {"url":null,"title":"Approx EV: compress combos into weighted hand classes (shorter vectors)","issue":28,"state":"active","updated":"2026-11-08T14:54:48.586Z"}
 {"url":"https://claude.ai/code/session_014RSNFhg5zJFCit4txKvH5G","title":"Speed: multi-threaded WASM (and WebGPU prototype) in the browser","issue":29,"state":"active","updated":"2026-11-08T15:01:34.596Z"}
 {"url":"https://claude.ai/code/session_014RSNFgZVpvtuhbZzctuumV","title":"Approx EV: precomputed flop library + nearest-spot warm start","issue":30,"state":"active","updated":"2026-11-08T15:01:34.596Z"}
