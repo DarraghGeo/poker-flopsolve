@@ -322,6 +322,12 @@ thread and 8.7 s on four (`npm run bench:browser:threads`).
 threaded (skipped where Playwright is not installed). `npm run bench:browser` times it
 beside Node, and `npm run bench:browser:threads` times flop solves at each thread count.
 
+`npm run bench:gpu` is an experiment, not a feature. It times WebGPU kernels for the
+river's showdowns and regret matching against the WebAssembly engine's, transfers
+included, and projects whether a GPU solve could beat four threads. The package does not
+use the GPU, and these kernels are not in any bundle. Run it on a machine with a real GPU:
+SwiftShader (`--swiftshader`) only shows that it runs.
+
 ## Performance
 
 Measured on an Apple M2, single threaded:

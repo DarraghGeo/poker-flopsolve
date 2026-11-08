@@ -51,7 +51,7 @@ const spotNames = (option('spots') ?? Object.keys(ALL).join(',')).split(',');
 for (const name of spotNames) if (!ALL[name]) throw new Error(`unknown spot ${name}; known: ${Object.keys(ALL).join(', ')}`);
 const iterations = Number(option('iters') ?? 8);
 const flags = ['--enable-unsafe-webgpu', '--enable-features=Vulkan'];
-if (args.includes('--swiftshader')) flags.push('--use-angle=swiftshader');
+if (args.includes('--swiftshader')) flags.push('--use-webgpu-adapter=swiftshader');
 args.forEach((arg, i) => {
 	if (arg === '--browser-arg') flags.push(args[i + 1]);
 });
@@ -178,12 +178,15 @@ for (const [name, t] of Object.entries(result.spots)) {
 console.log('\n## Projected solve iteration (ms) and time to 0.3% of pot (s)\n');
 console.log(
 	'Two traversals per iteration; each runs every river showdown node and regret-matches every river decision node on every river board. ' +
-		'"Per node" keeps one GPU round trip per tree node, as a synchronous solver must; "batched" assumes every node of a traversal shares ' +
-		'one round trip, the best an async restructure could reach. Both assume the rest of the iteration is unchanged and nothing else moves ' +
-		'between CPU and GPU, so they are upper bounds on the gain.\n',
+		'"Per node": one GPU round trip per tree node, as a synchronous solver must. "Batched": GPU time alone plus one round trip per ' +
+		'traversal, not counting the extra data a batch would move (reach and values per node, regrets up and strategies down), so it is ' +
+		'optimistic. "GPU free": these kernels cost nothing at all, the ceiling on any GPU gain. All assume the rest of the iteration is ' +
+		'unchanged and single-threaded. "Clearly beats" means at least 20% under the 4-thread time.\n',
 );
-console.log('| spot | iteration: measured | in these kernels | GPU per node | GPU batched | 1 thread (#29) | 4 threads (#29) | GPU per node | GPU batched | verdict |');
-console.log('|---|---|---|---|---|---|---|---|---|---|');
+console.log(
+	'| spot | iteration: measured | in these kernels | GPU per node | GPU batched | 1 thread (#29) | 4 threads (#29) | GPU per node | GPU batched | GPU free | verdict |',
+);
+console.log('|---|---|---|---|---|---|---|---|---|---|---|');
 for (const [name, t] of Object.entries(result.spots)) {
 	const share = 2 * (t.showdownNodes * t.cpu.showdown + sum(t.cpu.regret));
 	const perNode = 2 * (t.showdownNodes * t.gpu.showdown + sum(t.gpu.regret));
@@ -192,10 +195,15 @@ for (const [name, t] of Object.entries(result.spots)) {
 	const rest = Math.max(0, t.solveIteration - share);
 	const [one, four] = ALL[name].seconds;
 	const project = (gpu: number): number => (one * (rest + gpu)) / t.solveIteration;
-	const best = project(batched);
-	const verdict = best < four * 0.8 ? 'beats 4 threads' : best < four ? 'marginal' : 'loses to 4 threads';
+	const best = project(Math.min(perNode, batched));
+	const ceiling = project(0);
+	const verdict =
+		ceiling >= four * 0.8 ? 'cannot clearly beat 4 threads, even free'
+		: best < four * 0.8 ? 'clearly beats 4 threads'
+		: best < four ? 'marginal'
+		: 'loses to 4 threads';
 	console.log(
 		`| ${name} | ${ms(t.solveIteration)} | ${ms(share)} (${((100 * share) / t.solveIteration).toFixed(0)}%) | ${ms(rest + perNode)} | ${ms(rest + batched)} | ` +
-			`${one} | ${four} | ${project(perNode).toFixed(1)} | ${best.toFixed(1)} | ${verdict} |`,
+			`${one} | ${four} | ${project(perNode).toFixed(1)} | ${project(batched).toFixed(1)} | ${ceiling.toFixed(1)} | ${verdict} |`,
 	);
 }

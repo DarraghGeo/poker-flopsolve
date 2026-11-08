@@ -30,6 +30,11 @@ export interface RiverLists {
 	readonly boards: number;
 	/** Entries in the whole active list: vectors are this long, indexed by entry. */
 	readonly entries: number;
+	/**
+	 * The first river entry. The river is the last round, so its lists run
+	 * from here to `entries`; only that range of a vector moves to the GPU.
+	 */
+	readonly first: number;
 	/** Each board's list per player, at `board * 2 + player`: first entry, entries, whether packed. */
 	readonly start: Int32Array;
 	readonly count: Int32Array;
@@ -63,7 +68,7 @@ export function riverLists(active: ActiveLists, runouts: Runouts): RiverLists {
 		}
 	}
 	return {
-		boards, entries: active.list.length, start, count, packed, maxCount,
+		boards, entries: active.list.length, first: active.start[active.roundBase[last] * 2], start, count, packed, maxCount,
 		strength: active.strength, cardA: active.cardA, cardB: active.cardB,
 		memberStart: active.memberStart, memberA: active.memberA, memberB: active.memberB,
 	};
@@ -134,9 +139,14 @@ export async function requestGpu(): Promise<{ device: GpuDevice; info: GpuInfo }
 		requestDevice(options?: object): Promise<GpuDevice>;
 	} | null;
 	if (!adapter) return null;
-	const device = await adapter.requestDevice({
-		requiredLimits: { maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize },
-	});
+	let device: GpuDevice;
+	try {
+		device = await adapter.requestDevice({
+			requiredLimits: { maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize },
+		});
+	} catch {
+		return null;
+	}
 	const info = adapter.info ?? {};
 	return {
 		device,
@@ -147,7 +157,7 @@ export async function requestGpu(): Promise<{ device: GpuDevice; info: GpuInfo }
 const WORKGROUP = 64;
 
 const SHOWDOWN_WGSL = /* wgsl */ `
-struct Params { scale: f32, me: u32, pad0: u32, pad1: u32 }
+struct Params { scale: f32, me: u32, first: u32, pad: u32 }
 
 @group(0) @binding(0) var<uniform> params: Params;
 // Per board and player: first entry, entries, first member, end of members.
@@ -157,6 +167,7 @@ struct Params { scale: f32, me: u32, pad0: u32, pad1: u32 }
 @group(0) @binding(3) var<storage, read> cards: array<u32>;
 // By member: its cards as above, and the entry standing for it.
 @group(0) @binding(4) var<storage, read> members: array<vec2<u32>>;
+// From the first river entry, params.first.
 @group(0) @binding(5) var<storage, read> reach: array<f32>;
 @group(0) @binding(6) var<storage, read_write> values: array<f32>;
 
@@ -187,7 +198,7 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
 			let member = members[m];
 			tileCards[lane] = member.x;
 			tileStrength[lane] = strength[member.y];
-			tileReach[lane] = reach[member.y];
+			tileReach[lane] = reach[member.y - params.first];
 		}
 		workgroupBarrier();
 		let n = min(${WORKGROUP}u, theirs.w - tile);
@@ -204,7 +215,7 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
 		workgroupBarrier();
 	}
 	if (live) {
-		values[mine.x + i] = params.scale * total;
+		values[mine.x + i - params.first] = params.scale * total;
 	}
 }
 `;
@@ -237,8 +248,10 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
 /** The river kernels on one device, with the spot's lists uploaded once. */
 export interface RiverGpu {
 	/**
-	 * Showdown values on every river board: upload the opponent's reach, run,
-	 * read back. Only the traverser's lists of the result mean anything.
+	 * Showdown values on every river board: upload the river part of the
+	 * opponent's reach, run, read the river part back. The result holds the
+	 * river entries, from `lists.first`: value of entry `e` at `e - first`.
+	 * Only the traverser's lists in it mean anything.
 	 *
 	 * @param traverser whose values
 	 * @param reach the opponent's reach, by entry
@@ -266,21 +279,33 @@ export interface RiverGpu {
  *   would otherwise only report to the console while every result read zero
  */
 export async function createRiverGpu(device: GpuDevice, lists: RiverLists): Promise<RiverGpu> {
+	const maxRows = device.limits.maxComputeWorkgroupsPerDimension;
+	if (lists.boards > maxRows) throw new Error(`${lists.boards} river boards is past this GPU's ${maxRows} workgroups per dimension`);
 	device.pushErrorScope('out-of-memory');
 	device.pushErrorScope('validation');
-	const kernels = setUp(device, lists);
+	let kernels: RiverGpu | null = null;
+	let thrown: unknown = null;
+	const owned: GpuBuffer[] = [];
+	try {
+		kernels = setUp(device, lists, owned);
+	} catch (error) {
+		thrown = error;
+	}
+	// Popped whatever happened, so the scopes never swallow later errors.
 	const invalid = await device.popErrorScope();
 	const exhausted = await device.popErrorScope();
 	const error = invalid ?? exhausted;
-	if (error) {
-		kernels.destroy();
-		throw new Error(`WebGPU river kernels: ${error.message}`);
+	if (thrown || error) {
+		if (kernels) kernels.destroy();
+		else for (const buffer of owned) buffer.destroy();
+		if (thrown) throw thrown;
+		throw new Error(`WebGPU river kernels: ${error!.message}`);
 	}
-	return kernels;
+	return kernels!;
 }
 
-function setUp(device: GpuDevice, lists: RiverLists): RiverGpu {
-	const owned: GpuBuffer[] = [];
+/** The kernels; every static buffer goes into `owned` as it is made, so a failure part way can free them. */
+function setUp(device: GpuDevice, lists: RiverLists, owned: GpuBuffer[]): RiverGpu {
 	const upload = (data: ArrayBufferView, usage = STORAGE): GpuBuffer => {
 		const buffer = device.createBuffer({ size: Math.max(16, Math.ceil(data.byteLength / 4) * 4), usage: usage | COPY_DST });
 		device.queue.writeBuffer(buffer, 0, data);
@@ -310,7 +335,7 @@ function setUp(device: GpuDevice, lists: RiverLists): RiverGpu {
 			members[m * 2 + 1] = e;
 		}
 	}
-	const vectorBytes = lists.entries * 4;
+	const vectorBytes = (lists.entries - lists.first) * 4;
 	const listBuffer = upload(listData);
 	const strengthBuffer = upload(lists.strength);
 	const cardBuffer = upload(cards);
@@ -337,13 +362,13 @@ function setUp(device: GpuDevice, lists: RiverLists): RiverGpu {
 	});
 	const columns = Math.ceil(Math.max(1, lists.maxCount) / WORKGROUP);
 	const maxRows = device.limits.maxComputeWorkgroupsPerDimension;
-	if (lists.boards > maxRows) throw new Error(`${lists.boards} river boards is past this GPU's ${maxRows} workgroups per dimension`);
 
 	const read = async (source: GpuBuffer, target: GpuBuffer, bytes: number, encoder: GpuEncoder): Promise<Float32Array> => {
 		encoder.copyBufferToBuffer(source, 0, target, 0, bytes);
 		device.queue.submit([encoder.finish()]);
 		await target.mapAsync(1);
-		const out = new Float32Array(target.getMappedRange().slice(0, bytes));
+		const out = new Float32Array(bytes / 4);
+		out.set(new Float32Array(target.getMappedRange(), 0, bytes / 4));
 		target.unmap();
 		return out;
 	};
@@ -351,7 +376,7 @@ function setUp(device: GpuDevice, lists: RiverLists): RiverGpu {
 	const setParams = (traverser: 0 | 1, scale: number): void => {
 		const data = new ArrayBuffer(16);
 		new Float32Array(data, 0, 1)[0] = scale;
-		new Uint32Array(data, 4, 1)[0] = traverser;
+		new Uint32Array(data, 4, 2).set([traverser, lists.first]);
 		device.queue.writeBuffer(params, 0, new Uint8Array(data));
 	};
 	const showdownPass = (encoder: GpuEncoder, reps: number): void => {
@@ -364,10 +389,14 @@ function setUp(device: GpuDevice, lists: RiverLists): RiverGpu {
 
 	// Regret batches change size; their buffers grow as needed.
 	let regretBatch: { blocks: GpuBuffer; regret: GpuBuffer; strategy: GpuBuffer; read: GpuBuffer; group: unknown; bytes: number; rows: number; columns: number } | null = null;
+	const destroyBatch = (): void => {
+		if (regretBatch) for (const buffer of [regretBatch.blocks, regretBatch.regret, regretBatch.strategy, regretBatch.read]) buffer.destroy();
+		regretBatch = null;
+	};
 	const regretBuffers = (floats: number, blockCount: number) => {
 		const bytes = floats * 4;
 		if (regretBatch && regretBatch.regret.size >= bytes && regretBatch.blocks.size >= blockCount * 16) return regretBatch;
-		if (regretBatch) for (const buffer of [regretBatch.blocks, regretBatch.regret, regretBatch.strategy, regretBatch.read]) buffer.destroy();
+		destroyBatch();
 		const blocks = device.createBuffer({ size: Math.max(16, blockCount * 16), usage: STORAGE | COPY_DST });
 		const regret = device.createBuffer({ size: Math.max(16, bytes), usage: STORAGE | COPY_DST });
 		const strategy = device.createBuffer({ size: Math.max(16, bytes), usage: STORAGE | COPY_SRC });
@@ -387,23 +416,24 @@ function setUp(device: GpuDevice, lists: RiverLists): RiverGpu {
 		for (let r = 0; r < reps; r++) pass.dispatchWorkgroups(batch.columns, batch.rows);
 		pass.end();
 	};
+	const submit = async (pass: (encoder: GpuEncoder, reps: number) => void, reps: number): Promise<number> => {
+		const encoder = device.createCommandEncoder();
+		pass(encoder, reps);
+		const started = performance.now();
+		device.queue.submit([encoder.finish()]);
+		await device.queue.onSubmittedWorkDone();
+		return performance.now() - started;
+	};
 	const timed = async (pass: (encoder: GpuEncoder, reps: number) => void, reps: number): Promise<number> => {
-		// One warm-up submission, then the timed one.
-		for (const count of [1, reps]) {
-			const encoder = device.createCommandEncoder();
-			pass(encoder, count);
-			const started = performance.now();
-			device.queue.submit([encoder.finish()]);
-			await device.queue.onSubmittedWorkDone();
-			if (count === reps) return (performance.now() - started) / reps;
-		}
-		return 0;
+		if (!(reps >= 1)) throw new Error('reps must be at least 1');
+		await submit(pass, 1); // warm-up
+		return (await submit(pass, Math.floor(reps))) / Math.floor(reps);
 	};
 
 	return {
 		async showdown(traverser, reach, scale) {
 			setParams(traverser, scale);
-			device.queue.writeBuffer(reachBuffer, 0, reach);
+			device.queue.writeBuffer(reachBuffer, 0, reach.subarray(lists.first, lists.entries));
 			const encoder = device.createCommandEncoder();
 			showdownPass(encoder, 1);
 			return read(valueBuffer, valueRead, vectorBytes, encoder);
@@ -434,8 +464,7 @@ function setUp(device: GpuDevice, lists: RiverLists): RiverGpu {
 		},
 		destroy() {
 			for (const buffer of owned) buffer.destroy();
-			if (regretBatch) for (const buffer of [regretBatch.blocks, regretBatch.regret, regretBatch.strategy, regretBatch.read]) buffer.destroy();
-			regretBatch = null;
+			destroyBatch();
 		},
 	};
 }

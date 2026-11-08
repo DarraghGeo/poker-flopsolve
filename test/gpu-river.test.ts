@@ -119,48 +119,52 @@ interface GpuOutcome {
 	spots: Record<string, { showdown: [number[], number[]]; strategy: number[] }>;
 }
 
-let gpu: GpuOutcome | null = null;
-
-beforeAll(async () => {
-	const source = `
-		import { createRiverGpu, requestGpu } from './src/gpu/river.ts';
-		import { makeBlocks, makeReach, riverFixture } from './bench/gpu/fixture.ts';
-		const SPOTS = ${JSON.stringify(SPOTS)};
-		export default async function run() {
-			const found = await requestGpu();
-			if (!found) return { adapter: null, spots: {} };
-			const spots = {};
-			for (const [name, config] of Object.entries(SPOTS)) {
-				const fixture = riverFixture(config);
-				const kernels = await createRiverGpu(found.device, fixture.lists);
-				const showdown = [];
-				for (const me of [0, 1]) {
-					showdown.push(Array.from(await kernels.showdown(me, makeReach(fixture.lists, 11 + me), fixture.scale)));
-				}
-				const decision = fixture.decisions[0];
-				const { blocks, regret } = makeBlocks(fixture.lists, decision.player, decision.actions, 7);
-				const strategy = Array.from(await kernels.regretMatch(regret, blocks));
-				kernels.destroy();
-				spots[name] = { showdown, strategy };
-			}
-			found.device.destroy();
-			return { adapter: found.info.vendor + ' ' + found.info.architecture, spots };
-		}
-	`;
-	try {
-		gpu = await runInBrowser<GpuOutcome>(source, 170_000, {
-			launch: { args: ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-angle=swiftshader'] },
-		});
-	} catch (error) {
-		if (!(error instanceof NoBrowserError)) throw error;
-		console.warn(`Skipping GPU checks: ${error.message}`);
-	}
-	if (gpu && !gpu.adapter) console.warn('Skipping GPU checks: Chromium offers no WebGPU adapter');
-}, 180_000);
-
 describe('WebGPU river kernels', () => {
+	let gpu: GpuOutcome | null = null;
+	// Anything but a missing browser fails these tests, not the file.
+	let failure: unknown = null;
+
+	beforeAll(async () => {
+		const source = `
+			import { createRiverGpu, requestGpu } from './src/gpu/river.ts';
+			import { makeBlocks, makeReach, riverFixture } from './bench/gpu/fixture.ts';
+			const SPOTS = ${JSON.stringify(SPOTS)};
+			export default async function run() {
+				const found = await requestGpu();
+				if (!found) return { adapter: null, spots: {} };
+				const spots = {};
+				for (const [name, config] of Object.entries(SPOTS)) {
+					const fixture = riverFixture(config);
+					const kernels = await createRiverGpu(found.device, fixture.lists);
+					const showdown = [];
+					for (const me of [0, 1]) {
+						showdown.push(Array.from(await kernels.showdown(me, makeReach(fixture.lists, 11 + me), fixture.scale)));
+					}
+					const decision = fixture.decisions[0];
+					const { blocks, regret } = makeBlocks(fixture.lists, decision.player, decision.actions, 7);
+					const strategy = Array.from(await kernels.regretMatch(regret, blocks));
+					kernels.destroy();
+					spots[name] = { showdown, strategy };
+				}
+				found.device.destroy();
+				return { adapter: found.info.vendor + ' ' + found.info.architecture, spots };
+			}
+		`;
+		try {
+			// SwiftShader's WebGPU, which needs no GPU: correct, but slow.
+			gpu = await runInBrowser<GpuOutcome>(source, 170_000, {
+				launch: { args: ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader'] },
+			});
+		} catch (error) {
+			if (error instanceof NoBrowserError) console.warn(`Skipping GPU checks: ${error.message}`);
+			else failure = error;
+		}
+		if (gpu && !gpu.adapter) console.warn('Skipping GPU checks: Chromium offers no WebGPU adapter');
+	}, 180_000);
+
 	for (const [name, config] of Object.entries(SPOTS)) {
 		it(`match the definitions on the ${name} turn`, (context) => {
+			if (failure) throw failure;
 			if (!gpu?.adapter) {
 				context.skip();
 				return;
@@ -171,8 +175,11 @@ describe('WebGPU river kernels', () => {
 			for (const me of [0, 1] as const) {
 				const reach = makeReach(lists, 11 + me);
 				const want = referenceShowdown(lists, me, reach, fixture.scale);
+				// The GPU returns the river entries only, from the first.
+				const got = new Float64Array(lists.entries);
+				got.set(there.showdown[me], lists.first);
 				// Single-precision sums over a few hundred hands.
-				expect(showdownError(lists, me, reach, fixture.scale, there.showdown[me], want)).toBeLessThan(1e-5);
+				expect(showdownError(lists, me, reach, fixture.scale, got, want)).toBeLessThan(1e-5);
 			}
 			const decision = fixture.decisions[0];
 			const { blocks, regret } = makeBlocks(lists, decision.player, decision.actions, 7);
