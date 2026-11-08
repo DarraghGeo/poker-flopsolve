@@ -22,3 +22,4 @@
 {"url":null,"title":"Tree size: grow bet sizes adaptively to a byte budget","issue":51,"state":"active","updated":"2026-11-08T16:23:38.949Z"}
 {"url":null,"title":"Tree size: best-response pruning that frees subtree memory","issue":52,"state":"active","updated":"2026-11-08T16:23:42.982Z"}
 {"url":null,"title":"Tree size: coarser runouts in rare betting lines (history-dependent card abstraction)","issue":53,"state":"active","updated":"2026-11-08T16:23:47.004Z"}
+{"url":null,"title":"Tree size: action translation — shared response subtrees across bet sizes","issue":54,"state":"active","updated":"2026-11-08T16:23:51.128Z"}
