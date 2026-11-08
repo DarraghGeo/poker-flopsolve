@@ -1,8 +1,8 @@
 /**
- * Compact storage (`SpotConfig.compactStorage`, issue #50): later rounds keep
- * 8-bit regrets and no strategy sums, and play the current profile. With
- * 32-bit regrets kept it trains exactly as the full solve; at 8 bits it still
- * converges; unset, nothing changes.
+ * Compact storage (`SpotConfig.compactStorage`, issue #50): regrets and
+ * strategy sums at 8 bits, scaled per hand; or, with `sums: false`, regrets
+ * only and the current profile. With 32-bit regrets kept it trains exactly
+ * as the full solve; at 8 bits it still converges; unset, nothing changes.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -187,6 +187,23 @@ describe('compact storage', () => {
 		expect(() => defineSpot({ ...withStorage({}), maxBytes: compactBytes! - 1 })).toThrow(SpotTooLargeError);
 	});
 
+	it('reads current-profile EVs, which need regrets it does have', () => {
+		const run = createRun(defineSpot(withStorage({})), { workers: 1, approximations: { currentProfileEv: true } });
+		run.step(5);
+		expect(Number.isFinite(run.snapshot().ev(0))).toBe(true);
+		run.close();
+	});
+
+	it('carries over to a subgame', () => {
+		const run = createRun(defineSpot(withStorage({ sums: false })), { workers: 1 });
+		run.step(3);
+		const { tree } = run.spot;
+		const turn = tree.decisionNodes.find((n) => tree.round[n] === 1)!;
+		const sub = run.snapshot().subgameAt(turn, 0);
+		expect(sub.compactStorage).toEqual({ sums: false });
+		run.close();
+	});
+
 	it('refuses what it does not combine with', () => {
 		const spot = defineSpot(withStorage({}));
 		const clashes: SolveOptions[] = [
@@ -197,5 +214,14 @@ describe('compact storage', () => {
 		expect(() => defineSpot(withStorage({ from: 3 }))).toThrow(/from/);
 		expect(() => defineSpot(withStorage({ steps: 200 }))).toThrow(/steps/);
 		expect(() => defineSpot(withStorage({ blockScale: true }))).toThrow(/sums/);
+		for (const chunkBytes of [0, -1, NaN, 1.5]) expect(() => defineSpot(withStorage({ chunkBytes }))).toThrow(/chunkBytes/);
+		// A node bigger than a chunk would need a buffer over the cap.
+		expect(() => createRun(defineSpot(withStorage({ chunkBytes: 1000 })), { workers: 1 })).toThrow(/chunkBytes/);
+		// Bucketed runouts measure the real game by warm-starting it, which compact storage cannot feed.
+		expect(() => createRun(defineSpot({ ...withStorage({}), runoutBuckets: true }), { workers: 1 })).toThrow(/runoutBuckets/);
+		// Nor can a compact run seed a warm start.
+		const compact = createRun(spot, { workers: 1 });
+		expect(() => createRun(defineSpot(flop), { workers: 1, warmStart: compact })).toThrow(/compactStorage/);
+		compact.close();
 	});
 });

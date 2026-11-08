@@ -118,9 +118,9 @@ export interface Layout {
 }
 
 /**
- * Compact storage for the later rounds, for `Approximations.compactStorage`:
- * regrets only, as 8-bit integers, with each hand's strategy there read as
- * the current profile. The fields past `from` are for measurement.
+ * Compact storage, for `SpotConfig.compactStorage`: from round `from` on,
+ * regrets and (with `sums`) strategy sums as 8-bit integers; without sums,
+ * each hand's strategy there is read as the current profile.
  */
 export interface CompactPlan {
 	/** First round stored compactly, counted from the spot's first. */
@@ -204,6 +204,11 @@ export function buildLayout(
 		if (tree.round[node] >= compactFrom) {
 			const slots = actions * hands;
 			let chunk = chunkSlots.length - 1;
+			if (slots * width > compact!.chunkBytes) {
+				throw new Error(
+					`compactStorage.chunkBytes is ${compact!.chunkBytes}, but one decision needs ${slots * width} bytes`,
+				);
+			}
 			if (chunk < 0 || (chunkSlots[chunk] + slots) * width > compact!.chunkBytes || chunkHands[chunk] + hands > compact!.chunkBytes) {
 				chunk++;
 				chunkSlots.push(0);
@@ -1076,7 +1081,8 @@ function traverse(
 	// Laid out as storage is: `strategy[a * stride + i]`.
 	const strategy = buffers.strategy[depth];
 	const length = actions * stride;
-	// A compactly stored node has no average: it always plays the current profile.
+	// A compactly stored node without sums has no average: it plays the
+	// current profile wherever a strategy is read.
 	const compactNode = round >= ctx.layout.compactFrom;
 	const chunk = compactNode ? ctx.layout.compactChunk![node] : 0;
 	const regrets: AnyRegrets = compactNode ? ctx.compactRegret![chunk] : ctx.regret;
@@ -1360,13 +1366,15 @@ const SHIFT_BIAS = 160;
 const SHIFT_SCALE = Float64Array.from({ length: 256 }, (_, e) => (e === 0 ? 0 : 2 ** (e - SHIFT_BIAS)));
 
 /**
- * The regret update for a compactly stored node: decode, update in float as
- * the rule says, re-encode, with no strategy sum. Each hand is scaled by its
- * own power of two, chosen so its largest regret uses the top of the range;
- * regret matching only compares a hand's own regrets, so a hand whose
- * regrets are small beside the block's keeps all its precision. Rounding is
- * at random with odds set by the remainder (unless `stochastic` is off), so
- * each stored regret is right on average, from a hash as `dither`'s.
+ * The update for a compactly stored node: decode, update in float as the rule
+ * says, re-encode; with `sums`, the strategy sum too. Each hand is scaled by
+ * its own power of two, chosen so its largest value uses the top of the
+ * range; regret matching and the average only compare a hand's own values,
+ * so a hand whose values are small beside the block's keeps all its
+ * precision. Rounding is at random with odds set by the remainder (unless
+ * `stochastic` is off), so each stored value is right on average; the
+ * randomness is a hash of the slot's place in all of compact storage and the
+ * iteration, so it does not depend on threads or chunks.
  */
 function updateCompact(
 	ctx: Context,
@@ -1428,14 +1436,12 @@ function updateCompact(
 		// One hash per row, stepped on for each hand.
 		for (let a = 0; a < actions; a++) {
 			const row = a * count;
-			let h = stochastic ? Math.imul((hashBase + row) ^ Math.imul(iterWeight, 0x9e3779b1) ^ 0x5bd1e995, 0x85ebca6b) : 0;
+			let h = stochastic ? streamSeed(hashBase + row, iterWeight) : 0;
 			for (let i = 0; i < count; i++) {
 				const value = actionValues[row + i] * step;
 				let rounded: number;
 				if (stochastic) {
-					h ^= h >>> 15;
-					h = Math.imul(h, 0x2c1b3c6d);
-					h ^= h >>> 12;
+					h = nextState(h);
 					rounded = Math.floor(value + (h >>> 0) / 4294967296);
 				} else {
 					rounded = Math.round(value);
@@ -1467,15 +1473,13 @@ function updateCompact(
 		shifts[handBase + i] = exponent;
 		const inverse = exponent === 0 ? 0 : 1 / SHIFT_SCALE[exponent];
 		// One hash per hand, stepped on for each action.
-		let h = stochastic || sums !== null ? Math.imul((hashBase + i) ^ Math.imul(iterWeight, 0x9e3779b1) ^ 0x5bd1e995, 0x85ebca6b) : 0;
+		let h = stochastic || sums !== null ? streamSeed(hashBase + i, iterWeight) : 0;
 		for (let a = 0; a < actions; a++) {
 			const k = a * count + i;
 			const value = actionValues[k] * inverse;
 			let rounded: number;
 			if (stochastic) {
-				h ^= h >>> 15;
-				h = Math.imul(h, 0x2c1b3c6d);
-				h ^= h >>> 12;
+				h = nextState(h);
 				rounded = Math.floor(value + (h >>> 0) / 4294967296);
 			} else {
 				rounded = Math.round(value);
@@ -1500,9 +1504,7 @@ function updateCompact(
 		const sumInverse = sumExponent === 0 ? 0 : 1 / SHIFT_SCALE[sumExponent];
 		for (let a = 0; a < actions; a++) {
 			const k = a * count + i;
-			h ^= h >>> 15;
-			h = Math.imul(h, 0x2c1b3c6d);
-			h ^= h >>> 12;
+			h = nextState(h);
 			const rounded = Math.floor(strategy[k] * sumInverse + (h >>> 0) / 4294967296);
 			sums[slotBase + k] = rounded < COMPACT_SUM_STEPS ? rounded : COMPACT_SUM_STEPS;
 		}
@@ -1524,6 +1526,21 @@ function scaleExponent(largest: number, steps: number): number {
 	let exponent = ((high >>> 20) & 0x7ff) - 1023 + SHIFT_BIAS;
 	if ((high & 0xfffff) !== 0 || EXPONENT_BITS[0] !== 0) exponent++;
 	return exponent < 1 ? 0 : exponent > 255 ? 255 : exponent;
+}
+
+/**
+ * Start of a slot's random stream on an iteration, for rounding a run of
+ * values with `nextState`. Never zero, the stream's fixed point.
+ */
+function streamSeed(slot: number, iteration: number): number {
+	return Math.imul(slot ^ Math.imul(iteration, 0x9e3779b1) ^ 0x5bd1e995, 0x85ebca6b) | 1;
+}
+
+/** One step of a random stream: the next state, whose `(h >>> 0) / 2^32` is uniform in [0, 1). */
+function nextState(h: number): number {
+	h ^= h >>> 15;
+	h = Math.imul(h, 0x2c1b3c6d);
+	return h ^ (h >>> 12);
 }
 
 /** Scratch for reading a float's exponent bits (little-endian: the high word second). */
@@ -1723,7 +1740,7 @@ export function makeSolver(ctx: Context): Solver {
 			return [total(root(Mode.Average, 0, 0), 0), total(root(Mode.Average, 1, 0), 1)];
 		},
 		rootValues(mode) {
-			if (mode === Mode.Current && ctx.regret.length === 0) {
+			if (mode === Mode.Current && ctx.regret.length === 0 && !ctx.compactRegret) {
 				throw new Error('The current profile needs regrets, and an analysis-only run has none');
 			}
 			// Each root vector is a buffer the next traversal reuses, so it is

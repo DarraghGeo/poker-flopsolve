@@ -1044,18 +1044,20 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const { totalSlots, bytes } = spot.estimate;
 	const compact = spot.source.compactStorage ? compactPlan(spot.source.compactStorage, spot.runouts.rounds) : null;
 	if (compact) {
-		const clash = options.analysisOnly
-			? 'analysisOnly'
-			: options.warmStart
-				? 'warmStart'
-				: options.approximations?.coarseStart
-					? 'coarseStart'
-					: options.approximations?.chanceSampling
-						? 'chanceSampling'
-						: options.precision
-							? 'precision'
-							: null;
+		const clashes: [unknown, string][] = [
+			[options.analysisOnly, 'analysisOnly'],
+			[options.warmStart, 'warmStart'],
+			[options.approximations?.coarseStart, 'coarseStart'],
+			[options.approximations?.chanceSampling, 'chanceSampling'],
+			[options.precision, 'precision'],
+			// Measuring a bucketed spot in the real game warm-starts that from this one.
+			[spot.runouts.approximate, 'runoutBuckets'],
+		];
+		const clash = clashes.find(([set]) => set)?.[1];
 		if (clash) throw new Error(`compactStorage does not combine with ${clash}`);
+	}
+	if (options.warmStart?.solver.ctx.compact) {
+		throw new Error('A run with compactStorage cannot seed a warm start');
 	}
 	const precision: Precision = compact
 		? 'f32'
@@ -1262,6 +1264,10 @@ function compactPlan(settings: CompactStorage, rounds: number): CompactPlan {
 	if (!Number.isInteger(from) || from < 0 || from >= rounds) {
 		throw new Error(`compactStorage.from must be a round of this spot, 0 to ${rounds - 1}; got ${from}`);
 	}
+	const chunkBytes = settings.chunkBytes ?? 2 ** 30;
+	if (!Number.isInteger(chunkBytes) || chunkBytes < 1) {
+		throw new Error(`compactStorage.chunkBytes must be a positive whole number of bytes; got ${chunkBytes}`);
+	}
 	const steps = settings.steps ?? 127;
 	if (!Number.isInteger(steps) || steps < 1 || steps > 127) {
 		throw new Error(`compactStorage.steps must be an integer from 1 to 127; got ${steps}`);
@@ -1271,7 +1277,7 @@ function compactPlan(settings: CompactStorage, rounds: number): CompactPlan {
 	}
 	return {
 		from, steps, perHand: !settings.blockScale && !settings.float, stochastic: !settings.nearest,
-		float: settings.float === true, chunkBytes: settings.chunkBytes ?? 2 ** 30, sums: settings.sums ?? true,
+		float: settings.float === true, chunkBytes, sums: settings.sums ?? true,
 	};
 }
 
@@ -1680,6 +1686,7 @@ function makeSolution(
 				maxCombos: 'maxCombos' in betting ? betting.maxCombos : source.maxCombos,
 				maxBytes: 'maxBytes' in betting ? betting.maxBytes : source.maxBytes,
 				chipScale: spot.chipScale,
+				compactStorage: source.compactStorage,
 			};
 		},
 	};

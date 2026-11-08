@@ -22,9 +22,9 @@ export const VARIANTS: Record<string, { storage?: CompactStorage; options?: Solv
 	wasm: {},
 	i16: { options: { precision: 'i16' } },
 	// Option 1 alone: sums dropped, regrets kept at 32 bits.
-	'nosums-turn': { storage: { from: 1, float: true } },
-	'nosums-river': { storage: { from: 2, float: true } },
-	'nosums-all': { storage: { from: 0, float: true } },
+	'nosums-turn': { storage: { from: 1, float: true, sums: false } },
+	'nosums-river': { storage: { from: 2, float: true, sums: false } },
+	'nosums-all': { storage: { from: 0, float: true, sums: false } },
 	// Option 2: 8-bit regrets, with the sums dropped from the same round.
 	'i8-turn': { storage: { from: 1, sums: false } },
 	'i8-river': { storage: { from: 2, sums: false } },
@@ -40,7 +40,7 @@ export const VARIANTS: Record<string, { storage?: CompactStorage; options?: Solv
 	'i8-all-block': { storage: { from: 0, blockScale: true, sums: false } },
 	'i8-all-block-nearest': { storage: { from: 0, blockScale: true, nearest: true, sums: false } },
 	'cfr+': { options: { engine: 'js', algorithm: 'cfr+' } },
-	'nosums-all-cfr+': { storage: { from: 0, float: true }, options: { algorithm: 'cfr+' } },
+	'nosums-all-cfr+': { storage: { from: 0, float: true, sums: false }, options: { algorithm: 'cfr+' } },
 	'i8-all-cfr+': { storage: { from: 0, sums: false }, options: { algorithm: 'cfr+' } },
 	'i8-all-block-cfr+': { storage: { from: 0, blockScale: true, sums: false }, options: { algorithm: 'cfr+' } },
 	'i8s-all': { storage: { from: 0, sums: true } },
