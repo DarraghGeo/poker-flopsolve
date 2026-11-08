@@ -11,7 +11,7 @@
 {"url":"https://claude.ai/code/session_014RSNFgZVpvtuhbZzctuumV","title":"Approx EV: precomputed flop library + nearest-spot warm start","issue":30,"state":"active","updated":"2026-11-08T15:01:34.596Z"}
 {"url":"https://claude.ai/code/session_014RSNFido7DC5Nexn75QfNJ","title":"Approx EV: hand classes carried through every street (2–3× shorter river vectors)","issue":31,"state":"active","updated":"2026-11-08T15:10:31.451Z"}
 {"url":"https://claude.ai/code/session_014RSNFkUKQ89FbGd831AEqp","title":"Per-hand root EV accessor, with an opt-in current-profile estimate","issue":35,"state":"active","updated":"2026-11-08T15:25:48.594Z"}
-{"url":null,"title":"Average strategy is near-uniform for hands that rarely reach a node (own-reach-weighted sums)","issue":8,"state":"active","updated":"2026-11-08T16:22:55.833Z"}
+{"url":"https://claude.ai/code/session_014RSNFkPkJb1hAjpfQAhYKU","title":"Average strategy is near-uniform for hands that rarely reach a node (own-reach-weighted sums)","issue":8,"state":"active","updated":"2026-11-08T16:23:23.592Z"}
 {"url":"https://claude.ai/code/session_014RSNFiPXN7eg6VFwV99p4z","title":"Threaded solves hang if a worker thread dies mid-iteration","issue":37,"state":"active","updated":"2026-11-08T16:23:23.592Z"}
 {"url":null,"title":"Speed: WebGPU kernel prototype for the river showdown (route 2 of #29)","issue":39,"state":"active","updated":"2026-11-08T16:23:08.581Z"}
 {"url":null,"title":"Approx EV: lossy hand classes on every street, measured against packed lists","issue":40,"state":"active","updated":"2026-11-08T16:23:12.501Z"}
