@@ -2,7 +2,7 @@
  * Measurements shared by `reference.ts` and `run.ts` (issue #47).
  */
 
-import { openMass as solverOpenMass } from '../../src/resolve.ts';
+import { bestResponseAt, openMass as solverOpenMass } from '../../src/resolve.ts';
 import { COMBO_CARDS, COMBOS, NodeKind, parseCards } from '../../src/index.ts';
 import type { Solution, SpotConfig } from '../../src/index.ts';
 import { Mode } from '../../src/cfr.ts';
@@ -46,7 +46,10 @@ export function nodeEvs(
 	mode: typeof Mode.Average | typeof Mode.BestResponse = Mode.Average,
 ): Float64Array {
 	const live = liveOf(reachMe, reachOpp);
-	const values = sol.solver.valuesAt(node, board, player, reachMe, reachOpp, live, live.length, mode);
+	const values =
+		mode === Mode.Average
+			? sol.solver.valuesAt(node, board, player, reachMe, reachOpp, live, live.length)
+			: bestResponseAt(sol.solver.ctx, node, board, player, reachMe, reachOpp);
 	const open = openMass(reachOpp);
 	const deals = sol.solver.ctx.runoutWeight[sol.spot.tree.round[node]];
 	const out = new Float64Array(COMBOS).fill(Number.NaN);

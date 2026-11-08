@@ -2,10 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { COMBO_CARDS, COMBOS, createRun, defineSpot, NodeKind, parseCards, solve } from '../src/index.ts';
 import type { Solution, SolveRun } from '../src/index.ts';
 import type { Tree } from '../src/tree.ts';
-import { Mode } from '../src/cfr.ts';
-import { openMass, resolveSubgame } from '../src/resolve.ts';
+import { bestResponseAt, openMass, resolveSubgame } from '../src/resolve.ts';
 import type { Gadget } from '../src/resolve.ts';
-import { matchNodes, warmStart } from '../src/warm.ts';
+import { copySubtree, matchSubtree } from '../src/subtree.ts';
 
 /**
  * Safe and nested subgame re-solving (issue #47): a blueprint with one bet
@@ -60,11 +59,11 @@ describe('resolveSubgame', () => {
 	it("copies a solve's subtree into a subgame exactly", () => {
 		for (const board of [0, 20]) {
 			const sub = createRun(defineSpot(blueprint.subgameAt(checked, board)), { analysisOnly: true });
-			const report = warmStart(sub.solver.ctx, run.solver.ctx, true, undefined, checked);
+			const report = copySubtree(sub.solver.ctx, run.solver.ctx, true, checked);
 			expect(report.matchedNodes).toBe(report.decisionNodes);
 			const copy = sub.snapshot();
 			const subTree = copy.spot.tree;
-			const match = matchNodes(subTree, tree, checked);
+			const match = matchSubtree(subTree, tree, checked);
 			for (const node of subTree.decisionNodes) {
 				const original = match[node];
 				expect(original).toBeGreaterThanOrEqual(0);
@@ -88,10 +87,10 @@ describe('resolveSubgame', () => {
 		const sol = deep.snapshot();
 		const start = riverAfter(sol, 'bet 30 call /');
 		const sub = createRun(defineSpot(sol.subgameAt(start, 5)), { analysisOnly: true });
-		const report = warmStart(sub.solver.ctx, deep.solver.ctx, true, undefined, start);
+		const report = copySubtree(sub.solver.ctx, deep.solver.ctx, true, start);
 		expect(report.matchedNodes).toBe(report.decisionNodes);
 		const copy = sub.snapshot();
-		const match = matchNodes(copy.spot.tree, sol.spot.tree, start);
+		const match = matchSubtree(copy.spot.tree, sol.spot.tree, start);
 		for (const node of copy.spot.tree.decisionNodes) {
 			const a = copy.strategyAt(node, 0);
 			const b = sol.strategyAt(match[node], 5);
@@ -111,7 +110,7 @@ describe('resolveSubgame', () => {
 		const w = blueprint.spot.players;
 		const live = Uint16Array.from({ length: COMBOS }, (_, i) => i).filter((c) => w[0].weights[c] > 0 || w[1].weights[c] > 0);
 		const avg = run.solver.valuesAt(0, 0, 1, w[1].weights, w[0].weights, live, live.length);
-		const br = run.solver.valuesAt(0, 0, 1, w[1].weights, w[0].weights, live, live.length, Mode.BestResponse);
+		const br = bestResponseAt(run.solver.ctx, 0, 0, 1, w[1].weights, w[0].weights);
 		let sumAvg = 0;
 		let sumBr = 0;
 		for (const combo of live) {
@@ -224,8 +223,8 @@ describe('resolveSubgame', () => {
 		// Investments are only level, and so known, where a round opens.
 		const midRound = tree.edgeChild[tree.firstEdge[checked]];
 		const sub = createRun(defineSpot(blueprint.subgameAt(checked, 0)), { analysisOnly: true });
-		expect(() => warmStart(sub.solver.ctx, run.solver.ctx, true, undefined, midRound)).toThrow(/opens a betting round/);
-		expect(() => matchNodes(sub.spot.tree, tree, midRound)).toThrow(/opens a betting round/);
+		expect(() => copySubtree(sub.solver.ctx, run.solver.ctx, true, midRound)).toThrow(/opens a betting round/);
+		expect(() => matchSubtree(sub.spot.tree, tree, midRound)).toThrow(/opens a betting round/);
 	});
 
 	it('refuses a node that does not open a betting round', () => {

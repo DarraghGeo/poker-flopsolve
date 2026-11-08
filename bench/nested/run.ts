@@ -13,7 +13,7 @@ import { COMBOS, createRun, defineSpot, NodeKind, solve } from '../../src/index.
 import type { Solution, SolveRun, SpotConfig } from '../../src/index.ts';
 import { Mode, matchupMass } from '../../src/cfr.ts';
 import { resolveSubgame } from '../../src/resolve.ts';
-import { warmStart } from '../../src/warm.ts';
+import { copySubtree } from '../../src/subtree.ts';
 import type { Gadget } from '../../src/resolve.ts';
 import { configFromJson, fromJson, lineNode, nodeEvs, openMass, rootActionEvs, rootEvs, toJson, turnBoard } from './lib.ts';
 import { blueprint, small, target, VARIANTS, type BoardName } from './spots.ts';
@@ -298,7 +298,7 @@ for (const key of keys) {
 	const subBp = defineSpot(bp.subgameAt(node, board));
 	// The blueprint's own play at the node, as a subgame for comparing.
 	const bpSub = createRun(subBp, { analysisOnly: true });
-	warmStart(bpSub.solver.ctx, bp.solver.ctx, true, undefined, node);
+	copySubtree(bpSub.solver.ctx, bp.solver.ctx, true, node);
 	const bpSol = bpSub.snapshot();
 	const refPot = ref.spot.potUnits / ref.spot.chipScale;
 	const row: Record<string, unknown> = {

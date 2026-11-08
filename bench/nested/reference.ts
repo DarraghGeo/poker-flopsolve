@@ -13,7 +13,7 @@
 import { closeSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync, writeSync } from 'node:fs';
 import { createRun, defineSpot, solve } from '../../src/index.ts';
 import type { Precision } from '../../src/index.ts';
-import { warmStart } from '../../src/warm.ts';
+import { copySubtree } from '../../src/subtree.ts';
 import { NodeKind } from '../../src/index.ts';
 import { matchupMass } from '../../src/cfr.ts';
 import { configToJson, lineNode, rootActionEvs, rootEvs, toJson, turnBoard } from './lib.ts';
@@ -124,7 +124,7 @@ for (const { line, mass } of lines.slice(0, LINE_COUNT)) {
 		const board = turnBoard(solution, turn);
 		const sub = solution.subgameAt(node, board);
 		const run = createRun(defineSpot(sub), { analysisOnly: true });
-		warmStart(run.solver.ctx, solution.solver.ctx, true, undefined, node);
+		copySubtree(run.solver.ctx, solution.solver.ctx, true, node);
 		const key = `${line.replaceAll(' ', '_').replaceAll('/', '')}-${turn}`;
 		const sums = run.solver.ctx.strategySum as Float32Array;
 		writeFileSync(new URL(`${key}.sums`, OUT), new Uint8Array(sums.buffer, sums.byteOffset, sums.byteLength));

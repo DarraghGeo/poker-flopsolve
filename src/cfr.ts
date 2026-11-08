@@ -679,7 +679,7 @@ interface Buffers {
 	readonly cardSums: Float64Array;
 }
 
-function makeBuffers(tree: Tree, maxActions: number, simd: boolean): Buffers {
+export function makeBuffers(tree: Tree, maxActions: number, simd: boolean): Buffers {
 	const depth = treeDepth(tree) + 2;
 	const make = <T>(factory: () => T): T[] => Array.from({ length: depth }, factory);
 	const kernels = simd ? loadKernels(depth, maxActions * COMBOS) : null;
@@ -872,7 +872,7 @@ export function averageStrategy(
  * their active list there — and `reachOpp` likewise for the opponent. The
  * result is valid for the traverser's `count` hands on this board.
  */
-function traverse(
+export function traverse(
 	ctx: Context,
 	buffers: Buffers,
 	mode: Mode,
@@ -1387,11 +1387,6 @@ export interface Solver {
 	/**
 	 * Counterfactual values under the average strategy from any node, for
 	 * reach vectors the caller supplies. Returns a fresh copy.
-	 *
-	 * With `mode` `Mode.BestResponse` the traverser best-responds below the
-	 * node to the other player's average strategy instead. That is not
-	 * linear in the opponent's reach, so it needs reach that mirrored hands
-	 * share, as any reach the solve produces does, and throws otherwise.
 	 */
 	valuesAt(
 		node: number,
@@ -1401,7 +1396,6 @@ export interface Solver {
 		reachOpp: Float64Array,
 		live: Uint16Array,
 		liveCount: number,
-		mode?: typeof Mode.Average | typeof Mode.BestResponse,
 	): Float64Array;
 	/**
 	 * The whole-tree traversal `iterate` and the other passes run now: this
@@ -1555,7 +1549,7 @@ export function makeSolver(ctx: Context): Solver {
 			const br1 = total(root(Mode.BestResponse, 1, 0), 1);
 			return (br0 + br1) / 2;
 		},
-		valuesAt(node, board, traverser, reachMe, reachOpp, live, liveCount, mode = Mode.Average) {
+		valuesAt(node, board, traverser, reachMe, reachOpp, live, liveCount) {
 			void live;
 			void liveCount;
 			const round = ctx.tree.round[node];
@@ -1575,9 +1569,6 @@ export function makeSolver(ctx: Context): Solver {
 				const [from, count] = listOf(round, board, player);
 				return lists.memberCombo.slice(lists.memberStart[from], lists.memberStart[from + count]);
 			};
-			if (!symmetric && mode !== Mode.Average) {
-				throw new Error('Best-response values need reach that mirrored hands share');
-			}
 			if (!symmetric) {
 				// Values are linear in the opponent's reach, so they are the
 				// sum of the values against each opposing hand alone, which
@@ -1602,7 +1593,7 @@ export function makeSolver(ctx: Context): Solver {
 				const opp = new Float64Array(COMBOS);
 				gather(reachMe, round, board, traverser, me);
 				gather(reachOpp, round, board, opponent, opp);
-				const value = traverse(ctx, buffers, mode, traverser, 0, node, board, me, opp, 0);
+				const value = traverse(ctx, buffers, Mode.Average, traverser, 0, node, board, me, opp, 0);
 				const result = new Float64Array(COMBOS);
 				const [from, count] = listOf(round, board, traverser);
 				for (let i = 0; i < count; i++) {

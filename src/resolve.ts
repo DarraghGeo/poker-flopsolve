@@ -61,7 +61,8 @@ import { COMBO_CARDS, COMBOS } from './cards.ts';
 import type { Solution, SolveOptions, SubgameBetting } from './index.ts';
 import { createRun, defineSpot } from './index.ts';
 import { boardAtRound } from './runouts.ts';
-import { Mode } from './cfr.ts';
+import type { Context } from './cfr.ts';
+import { makeBuffers, Mode, traverse } from './cfr.ts';
 import { NodeKind } from './tree.ts';
 
 /** How a re-solve guards the refined player; see the module comment. */
@@ -155,7 +156,7 @@ export function resolveSubgame(blueprint: Solution, node: number, board: number,
 	// The blueprint's values below the node, worked out before the
 	// subgame's storage and threads are taken.
 	const live = liveCombos(spot.players);
-	const blueprintValues = open ? blueprint.solver.valuesAt(node, board, opponent, base, mine, live, live.length, mode) : null;
+	const blueprintValues = open ? valuesBelow(blueprint, node, board, opponent, base, mine, live, mode) : null;
 	const gifts = open && gadget === 'reach-maxmargin' ? pathGifts(blueprint, node, board, opponent, mode) : null;
 
 	const run = createRun(spot, { ...options.solve });
@@ -302,6 +303,67 @@ export function resolveSubgame(blueprint: Solution, node: number, board: number,
 	}
 }
 
+/**
+ * Each of `traverser`'s hands' value below `node`, in raw units: under the
+ * blueprint's average strategy, or best-responding to the other player's.
+ */
+function valuesBelow(
+	blueprint: Solution,
+	node: number,
+	board: number,
+	traverser: 0 | 1,
+	reachMe: Float64Array,
+	reachOpp: Float64Array,
+	live: Uint16Array,
+	mode: typeof Mode.Average | typeof Mode.BestResponse,
+): Float64Array {
+	if (mode === Mode.Average) return blueprint.solver.valuesAt(node, board, traverser, reachMe, reachOpp, live, live.length);
+	return bestResponseAt(blueprint.solver.ctx, node, board, traverser, reachMe, reachOpp);
+}
+
+/**
+ * Best-response values below `node`, as `Solver.valuesAt` gives average
+ * ones. A best response is not linear in the opponent's reach, so the reach
+ * must be the same for mirrored hands, as any reach a solve produces is.
+ */
+export function bestResponseAt(ctx: Context, node: number, board: number, traverser: 0 | 1, reachMe: Float64Array, reachOpp: Float64Array): Float64Array {
+	const lists = ctx.active;
+	const round = ctx.tree.round[node];
+	const listOf = (player: 0 | 1): [number, number] => {
+		const slot = (lists.roundBase[round] + board) * 2 + player;
+		return [lists.start[slot], lists.count[slot]];
+	};
+	const gather = (source: Float64Array, player: 0 | 1): Float64Array => {
+		const [from, count] = listOf(player);
+		const into = new Float64Array(COMBOS);
+		for (let i = 0; i < count; i++) into[i] = source[lists.list[from + i]];
+		return into;
+	};
+	const opponent = (1 - traverser) as 0 | 1;
+	const [oppFrom, oppCount] = listOf(opponent);
+	for (let j = 0; j < oppCount; j++) {
+		const own = reachOpp[lists.list[oppFrom + j]];
+		for (let m = lists.memberStart[oppFrom + j] + 1; m < lists.memberStart[oppFrom + j + 1]; m++) {
+			if (reachOpp[lists.memberCombo[m]] !== own) throw new Error('Best-response values need reach that mirrored hands share');
+		}
+	}
+	// Mirrored deals below need not see symmetric reach, so they are walked.
+	const expanded = ctx.expandOrbits;
+	ctx.expandOrbits = true;
+	try {
+		const buffers = makeBuffers(ctx.tree, ctx.layout.maxActions, ctx.simd);
+		const value = traverse(ctx, buffers, Mode.BestResponse, traverser, 0, node, board, gather(reachMe, traverser), gather(reachOpp, opponent), 0);
+		const result = new Float64Array(COMBOS);
+		const [from, count] = listOf(traverser);
+		for (let i = 0; i < count; i++) {
+			for (let m = lists.memberStart[from + i]; m < lists.memberStart[from + i + 1]; m++) result[lists.memberCombo[m]] = value[i];
+		}
+		return result;
+	} finally {
+		ctx.expandOrbits = expanded;
+	}
+}
+
 /** Combinations either player holds. */
 function liveCombos(players: readonly { readonly weights: Float64Array }[]): Uint16Array {
 	const live: number[] = [];
@@ -361,7 +423,6 @@ function pathGifts(
 	mode: typeof Mode.Average | typeof Mode.BestResponse,
 ): Float64Array {
 	const { tree, runouts } = blueprint.spot;
-	const { solver } = blueprint;
 	const player = (1 - opponent) as 0 | 1;
 	const gifts = new Float64Array(COMBOS);
 	// The path, child by child, from the root.
@@ -385,7 +446,7 @@ function pathGifts(
 		let taken: Float64Array | null = null;
 		for (let e = 0; e < tree.numEdges[at]; e++) {
 			const next = tree.edgeChild[tree.firstEdge[at] + e];
-			const values = solver.valuesAt(next, atBoard, opponent, theirs, mine, live, live.length, mode);
+			const values = valuesBelow(blueprint, next, atBoard, opponent, theirs, mine, live, mode);
 			for (const combo of live) if (values[combo] > best[combo]) best[combo] = values[combo];
 			if (next === child) taken = values;
 		}
