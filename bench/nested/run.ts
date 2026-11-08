@@ -297,7 +297,8 @@ function rangeTv(a: Float64Array, b: Float64Array): number {
 }
 
 const keys = readdirSync(REF)
-	.filter((f) => f.endsWith('.sums'))
+	// Turn subgames only, not the whole saved strategy.
+	.filter((f) => f.endsWith('.sums') && f !== 'strategy.sums')
 	.map((f) => f.slice(0, -5));
 const nodeResults: unknown[] = [];
 for (const key of keys) {
