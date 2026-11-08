@@ -140,4 +140,38 @@ describe('history merging', () => {
 			expect(four.exploitability).toBeCloseTo(one.exploitability, options.precision === 'f64' ? 9 : 3);
 		}
 	});
+
+	it('refuses settings it cannot honour', () => {
+		expect(() => defineSpot({ ...flop, shareHistories: { fromRound: 1.5 } })).toThrow(/fromRound/);
+		expect(() => defineSpot({ ...flop, shareHistories: { fromRound: Number.NaN } })).toThrow(/fromRound/);
+		expect(() => defineSpot({ ...flop, shareHistories: { fromRound: 0 } })).toThrow(/fromRound/);
+		expect(() => defineSpot({ ...flop, shareHistories: { fromRound: 3 } })).toThrow(/fromRound/);
+		expect(() => defineSpot({ ...flop, shareHistories: { weighting: 'cfr' as never } })).toThrow(/weighting/);
+		expect(() => defineSpot({ ...flop, shareHistories: { spr: 0 } })).toThrow(/spr/);
+		const spot = defineSpot(flop);
+		expect(() => aliasHistories(spot.tree, spot.runouts, { key: { kind: 'spr', width: 1 }, fromRound: 1 })).toThrow(/stack/);
+	});
+
+	it('warm-starts shared storage only from shared storage', () => {
+		const plain = createRun(defineSpot(flop), { workers: 1 });
+		const shared = createRun(defineSpot({ ...flop, shareHistories: true }), { workers: 1 });
+		try {
+			plain.step(5);
+			shared.step(5);
+			// One history's regrets would overwrite the others' in every shared block.
+			expect(() => createRun(defineSpot({ ...flop, shareHistories: true }), { workers: 1, warmStart: plain })).toThrow(
+				/shareHistories/,
+			);
+			// The other way each node takes its owner's block: the shared strategy itself.
+			const expanded = createRun(defineSpot(flop), { workers: 1, warmStart: shared, warmIteration: 5 });
+			try {
+				expect(expanded.warmStart?.matchedNodes).toBe(expanded.spot.tree.decisionNodes.length);
+			} finally {
+				expanded.close();
+			}
+		} finally {
+			plain.close();
+			shared.close();
+		}
+	});
 });

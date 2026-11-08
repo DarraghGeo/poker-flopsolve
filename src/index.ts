@@ -188,6 +188,13 @@ export interface SpotConfig {
 	 * equilibrium: expect a strategy several percent of the pot from it, in
 	 * a spot that otherwise does not fit.
 	 *
+	 * Two consequences of one block serving several histories, both part of
+	 * the approximation: within an iteration, a history visited later plays
+	 * the regrets an earlier one has already updated, so the result depends a
+	 * little on the order of the tree; and under `algorithm: 'cfr+'` each
+	 * history's update is clamped at zero on its own, rather than their sum.
+	 * A spot with it can warm-start only from a solve that shares too.
+	 *
 	 * `true` shares the river. See `ShareHistories` for the turn and for
 	 * lossier buckets.
 	 */
@@ -200,14 +207,15 @@ export interface ShareHistories {
 	 * Also share subtrees of the same actions whose stack-to-pot ratio falls
 	 * in one bucket of this log-width, their amounts and payoffs different.
 	 * Measured, it saves nothing over exact meetings up to a width of 1 on
-	 * one-size trees, 1.5 times more on the three-size target at 0.1, and at
-	 * 4 left 20% of pot exploitability; unset, exact meetings only.
+	 * one-size trees; on the three-size target, 1.5 times more storage at
+	 * 0.1 and 2 times at 4, where a one-size tree was left 20% of pot
+	 * exploitable. Unset, exact meetings only.
 	 */
 	readonly spr?: number;
 	/**
 	 * First round shared, counted from the spot's first: from a flop, 1
-	 * shares the turn too. Default the river alone. The turn is about 2% of a
-	 * flop spot's storage, and sharing it measured less accurate (9.4% of pot
+	 * shares the turn too. Default the river alone. Sharing the turn as well
+	 * saves about 1% more storage on a flop spot, and measured less accurate (9.4% of pot
 	 * exploitability against 8.0%, and 5.7% against 4.0%), so it is rarely
 	 * worth it.
 	 */
@@ -399,7 +407,7 @@ export function defineSpot(config: SpotConfig): Spot {
 	const bytes = layout.bytes + showdownBytes;
 	const compressedBytes = buildLayout(tree, runouts, players, 2, historyAlias).bytes + showdownBytes;
 	// Shared storage is walked once per history all the same.
-	const walkedSlots = historyAlias ? buildLayout(tree, runouts, players, 4).totalSlots : layout.totalSlots;
+	const walkedSlots = layout.walkedSlots;
 
 	const suggestions: string[] = [];
 	if (compressedBytes > maxBytes) {
@@ -455,12 +463,21 @@ function shareHistories(
 	config: SpotConfig,
 	chipScale: number,
 ): Int32Array {
-	const asked = config.shareHistories === true ? {} : config.shareHistories || {};
+	const asked: ShareHistories = config.shareHistories === true ? {} : config.shareHistories || {};
 	const width = asked.spr;
 	if (width !== undefined && !(width > 0)) throw new Error(`shareHistories.spr must be positive, got ${width}`);
+	const from = asked.fromRound;
+	if (from !== undefined && !(Number.isInteger(from) && from >= 1 && from < runouts.rounds)) {
+		throw new Error(
+			`shareHistories.fromRound must be a later round of this spot, 1 to ${runouts.rounds - 1}; got ${from}`,
+		);
+	}
+	if (asked.weighting !== undefined && asked.weighting !== 'reach' && asked.weighting !== 'counterfactual') {
+		throw new Error(`shareHistories.weighting must be 'reach' or 'counterfactual', got ${String(asked.weighting)}`);
+	}
 	return aliasHistories(
 		tree, runouts,
-		{ key: width === undefined ? { kind: 'exact' } : { kind: 'spr', width }, fromRound: asked.fromRound ?? runouts.rounds - 1 },
+		{ key: width === undefined ? { kind: 'exact' } : { kind: 'spr', width }, fromRound: from ?? runouts.rounds - 1 },
 		Math.round(config.stack * chipScale),
 	).alias;
 }

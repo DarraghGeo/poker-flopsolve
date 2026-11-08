@@ -94,6 +94,8 @@ export interface Layout {
 	readonly blockOffset: Int32Array;
 	readonly blocks: number;
 	readonly totalSlots: number;
+	/** Slots one iteration walks: `totalSlots`, and with shared storage what it would be unshared. */
+	readonly walkedSlots: number;
 	readonly maxActions: number;
 	readonly bytes: number;
 	/**
@@ -158,11 +160,13 @@ export function buildLayout(
 	let blocks = 0;
 	let maxActions = 0;
 	let shared = false;
+	let walked = 0;
 	for (let i = 0; i < tree.decisionNodes.length; i++) {
 		const node = tree.decisionNodes[i];
 		const actions = tree.numEdges[node];
 		if (actions > maxActions) maxActions = actions;
 		// An owner always comes before the nodes it owns, so its blocks are placed.
+		walked += actions * totals[tree.round[node] * 2 + tree.player[node]];
 		if (alias !== undefined && alias[node] !== node) {
 			if (alias[node] > node) throw new Error('buildLayout: a storage owner must come before the nodes it owns');
 			offset[node] = offset[alias[node]];
@@ -177,7 +181,8 @@ export function buildLayout(
 	}
 	const scales = bytesPerElement === 2 ? blocks * 8 * 2 : 0;
 	return {
-		offset: total <= INT32_MAX ? Int32Array.from(offset) : offset, blockOffset, blocks, totalSlots: total, maxActions, rowStart, roundBase,
+		offset: total <= INT32_MAX ? Int32Array.from(offset) : offset, blockOffset, blocks, totalSlots: total, walkedSlots: walked, maxActions,
+		rowStart, roundBase,
 		bytes: total * bytesPerElement * 2 + scales,
 		shared,
 		reachWeighted: shared && reachWeighted ? sharedNodes(tree, alias!) : null,

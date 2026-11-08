@@ -65,6 +65,8 @@ const dir = new URL('./results/', import.meta.url);
 mkdirSync(dir, { recursive: true });
 
 interface Reference {
+	/** The `--target` it was solved to; absent in older files, which used 0.3. */
+	target?: number;
 	exploitability: number;
 	iterations: number;
 	seconds: number;
@@ -138,7 +140,13 @@ function actionError(ref: Reference, run: SolveRun, values: number[][]): { mean:
 function reference(): Reference | null {
 	if (noReference) return null;
 	const file = new URL(`ref-${name}.json`, dir);
-	if (existsSync(file)) return JSON.parse(readFileSync(file, 'utf8')) as Reference;
+	if (existsSync(file)) {
+		const cached = JSON.parse(readFileSync(file, 'utf8')) as Reference;
+		if ((cached.target ?? 0.3) !== target) {
+			throw new Error(`${file.pathname} was solved to ${cached.target ?? 0.3}% of pot, not ${target}%; delete it to re-solve`);
+		}
+		return cached;
+	}
 	const spot = defineSpot(config);
 	const run = createRun(spot, { workers, precision });
 	const started = performance.now();
@@ -150,6 +158,7 @@ function reference(): Reference | null {
 	}
 	const solution = run.snapshot();
 	const ref: Reference = {
+		target,
 		exploitability,
 		iterations: run.completed,
 		seconds: (performance.now() - started) / 1000,

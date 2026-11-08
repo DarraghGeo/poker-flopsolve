@@ -442,8 +442,10 @@ otherwise, 173 river starts collapse to 23: 17.2 GiB becomes 2.9 GiB at 32 bits,
 equilibrium, with EVs a little under 1% off on average, in a spot that would not
 otherwise fit. `{ fromRound: 1 }` shares the turn too, which saves about 1% more and
 measured less accurate (9.4% on the first tree). `{ spr: w }` also merges subtrees of one
-shape whose stack-to-pot ratios fall in a log-bucket of width `w`. That saves up to twice
-as much on three-size trees but is much lossier: 20% of pot at `w = 4`.
+shape whose stack-to-pot ratios fall in a log-bucket of width `w`. On the three-size tree
+that is 1.5 times less storage at `w = 0.1` and 2 times at `w = 4`, but much lossier: a
+one-size tree was left 20% of pot exploitable at `w = 4`. A shared spot can warm-start
+only from another shared solve.
 
 ### Chance sampling (opt-in)
 

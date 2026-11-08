@@ -86,8 +86,11 @@ export function aliasHistories(
 	tree: Tree,
 	runouts: Runouts,
 	options: HistoryShareOptions,
-	stackUnits = 0,
+	stackUnits?: number,
 ): HistoryShare {
+	if (options.key.kind === 'spr' && !(stackUnits !== undefined && stackUnits > 0)) {
+		throw new Error('aliasHistories: an SPR key needs the effective stack');
+	}
 	const { exact, shape } = signatures(tree);
 	const alias = new Int32Array(tree.nodeCount);
 	for (let node = 0; node < tree.nodeCount; node++) alias[node] = node;
@@ -104,7 +107,7 @@ export function aliasHistories(
 	const bucketOf = (root: number): number => {
 		if (options.key.kind === 'exact') return 0;
 		const invested = (tree.pot[root] - potUnits) / 2;
-		const spr = (stackUnits - invested) / tree.pot[root];
+		const spr = (stackUnits! - invested) / tree.pot[root];
 		return Math.floor(Math.log(spr) / Math.log(1 + options.key.width));
 	};
 
@@ -119,7 +122,7 @@ export function aliasHistories(
 	const groups = new Int32Array(runouts.rounds);
 	for (let round = Math.max(1, options.fromRound); round < runouts.rounds; round++) {
 		const reps = new Map<string, number>();
-		for (const root of rootsByRound[round]) {
+		for (const root of rootsByRound[round] ?? []) {
 			// Already following a representative from an earlier round's walk.
 			if (alias[root] !== root) continue;
 			const key = options.key.kind === 'exact' ? `${exact[root]}` : `${shape[root]}/${bucketOf(root)}`;
