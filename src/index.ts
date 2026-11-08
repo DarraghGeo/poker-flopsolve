@@ -807,8 +807,10 @@ export interface Approximations {
 	 * fed in for one round, came out 42% exploitable: an opening a hand never
 	 * takes (the shove, IP's bets after a check) gets an answer to the
 	 * pieces' floor range, not an equilibrium one, until the stitch's rounds
-	 * correct it. And it is still only R: T's turn and river sizes need
-	 * grafts per flop line, which multiplies the solves.
+	 * correct it. And it is still only R: exactly solved, R's root EVs are
+	 * 0.8–1.0% of pot off T's per combination on Ks9s4s (T itself took 50
+	 * minutes on 4 threads to 0.23%), and T's turn and river sizes would
+	 * need grafts per flop line, which multiplies the solves.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
