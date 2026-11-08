@@ -150,14 +150,15 @@ export function createEngine(
 		add(tree.kind), add(tree.round), add(Uint8Array.from(tree.player, (p) => (p < 0 ? 255 : p))), add(tree.firstEdge),
 		add(tree.numEdges), add(tree.edgeChild), add(tree.payoff), add(layout.offset), add(layout.rowStart),
 		add(active.roundBase), add(active.start), add(Int32Array.from(active.count)), add(active.cardA), add(active.cardB),
-		add(active.strength), add(active.tieStart), add(active.ties), add(upRound), add(upStart), add(hands.up),
+		add(active.strength), add(active.packed), add(Float32Array.from(active.multiplicity)), add(active.memberStart),
+		add(active.memberA), add(active.memberB), add(upRound), add(upStart), add(hands.up),
 		add(hands.sameStart), add(hands.same), add(childRound), add(childStart), add(orbitRound), add(orbitStart),
 		add(input.runoutWeight),
 		add(null, layout.totalSlots * 4), // regret
 		add(null, layout.totalSlots * 4), // strategy sums
 	];
-	const REGRET = common[27];
-	const SUMS = common[28];
+	const REGRET = common[common.length - 2];
+	const SUMS = common[common.length - 1];
 	// Each thread's own.
 	const own = Array.from({ length: threads }, () => ({
 		buffers: add(null, depths * depthBytes),
@@ -189,11 +190,11 @@ export function createEngine(
 	for (const mine of own) {
 		const head = new Uint32Array(memory.buffer, offsets[mine.header], 40);
 		common.forEach((slot, i) => (head[i] = offsets[slot]));
-		head[29] = offsets[mine.buffers];
-		head[30] = depthBytes;
-		head[31] = rowBytes;
-		head[32] = offsets[mine.cardSums];
-		head[33] = input.chipScale;
+		head[common.length] = offsets[mine.buffers];
+		head[common.length + 1] = depthBytes;
+		head[common.length + 2] = rowBytes;
+		head[common.length + 3] = offsets[mine.cardSums];
+		head[common.length + 4] = input.chipScale;
 	}
 
 	const instance = new wasm.Instance(compiledModule, { env: { memory, abort: () => { throw new Error('engine abort'); } } });
