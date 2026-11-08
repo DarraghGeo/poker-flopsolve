@@ -133,6 +133,11 @@ export interface TreeConfig {
 	 * none. See `SpotConfig.removeActions`.
 	 */
 	readonly removeActions?: readonly string[];
+	/**
+	 * Keep one size at most nodes: see `SpotConfig.thinSizes`. Unset or
+	 * false, every size the other settings give.
+	 */
+	readonly thinSizes?: boolean;
 }
 
 /**
@@ -191,6 +196,14 @@ export interface Tree {
 	readonly decisionNodes: Int32Array;
 }
 
+interface SizedAction {
+	readonly action: number;
+	readonly target: number;
+}
+
+/** The pot fraction `thinSizes` keeps at most decisions. */
+const THIN_BASE = 0.75;
+
 interface BetState {
 	readonly round: number;
 	readonly invested: readonly [number, number];
@@ -204,6 +217,8 @@ interface BetState {
 	readonly aggressor: number;
 	/** Who last bet or raised the round before, or -1. */
 	readonly previousAggressor: number;
+	/** Earlier rounds that saw a bet. */
+	readonly streetsBet: number;
 }
 
 /**
@@ -256,6 +271,29 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 	const removed = new Set<string>();
 	const extend = (path: string, step: string): string => (remove ? (path ? `${path} ${step}` : step) : '');
 
+	// The sizes `thinSizes` keeps at a decision, in the order they came.
+	const thin = config.thinSizes === true;
+	const thinned = (sized: readonly SizedAction[], state: BetState): readonly SizedAction[] => {
+		// Every size where the first round opens.
+		if (state.round === 0 && state.aggressions === 0 && state.acted === 0) return sized;
+		const me = state.toAct;
+		const mine = state.invested[me];
+		const owed = Math.max(0, state.invested[1 - me] - mine);
+		const potAfterCall = potUnits + state.invested[0] + state.invested[1] + owed;
+		const fraction = (target: number): number => (target - mine - owed) / potAfterCall;
+		// The size nearest three quarters of the pot: a shove where that is one.
+		let nearest = -1;
+		sized.forEach((entry, i) => {
+			const distance = Math.abs(fraction(entry.target) - THIN_BASE);
+			if (nearest < 0 || distance < Math.abs(fraction(sized[nearest].target) - THIN_BASE)) nearest = i;
+		});
+		// Opening the last round after an earlier one saw a bet: the big sizes too.
+		const big = rounds > 1 && state.round === rounds - 1 && owed === 0 && state.streetsBet > 0;
+		return sized.filter(
+			(entry, i) => i === nearest || (big && (entry.action === ActionKind.AllIn || fraction(entry.target) > 1)),
+		);
+	};
+
 	const addNode = (
 		nodeKind: number,
 		nodePlayer: number,
@@ -295,6 +333,7 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 			base: state.invested[0],
 			aggressor: -1,
 			previousAggressor: state.aggressor,
+			streetsBet: state.streetsBet + (state.aggressions > 0 ? 1 : 0),
 		};
 		// With someone already all in there is nothing left to decide, so the
 		// remaining streets run out straight to showdown.
@@ -362,6 +401,7 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 			noDonk[state.round] && me === 0 && owed === 0 && state.aggressions === 0 && state.previousAggressor === 1;
 		if (state.aggressions < maxRaises[me][state.round] && myRemaining > owed && !donk) {
 			const seen = new Set<number>();
+			const sized: { action: number; target: number }[] = [];
 			const myRaises = raiseSizes[me];
 			const sizes: BetSize[] =
 				owed > 0 && myRaises
@@ -378,15 +418,17 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 				if (target === null || seen.has(target)) continue;
 				seen.add(target);
 				const isShove = target >= stackUnits;
-				const action = isShove ? ActionKind.AllIn : owed > 0 ? ActionKind.Raise : ActionKind.Bet;
+				sized.push({ action: isShove ? ActionKind.AllIn : owed > 0 ? ActionKind.Raise : ActionKind.Bet, target });
+			}
+			for (const entry of thin ? thinned(sized, state) : sized) {
 				if (remove) {
-					const line = extend(path, actionLabel(action, target, chipScale));
+					const line = extend(path, actionLabel(entry.action, entry.target, chipScale));
 					if (remove.has(line)) {
 						removed.add(line);
 						continue;
 					}
 				}
-				actions.push({ action, target });
+				actions.push(entry);
 			}
 		}
 
@@ -426,6 +468,7 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 					base: state.base,
 					aggressor: me,
 					previousAggressor: state.previousAggressor,
+					streetsBet: state.streetsBet,
 				}, line);
 			}
 			edgeChild[base + i] = child;
@@ -444,6 +487,7 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 		base: 0,
 		aggressor: -1,
 		previousAggressor: -1,
+		streetsBet: 0,
 	}, '');
 
 	if (remove && removed.size < remove.size) {

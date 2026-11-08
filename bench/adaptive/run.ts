@@ -36,11 +36,23 @@ const GiB = 2 ** 30;
  * Static rules, as the sized edges of the full tree each keeps. Every rule
  * keeps the one-size base (0.75 bets and raises, a shove where 0.75 would be).
  */
+const opening = (e: SizedEdge): boolean => !e.facingBet && e.kind !== ActionKind.Raise;
+const oopRoot = (e: SizedEdge): boolean => e.round === 0 && opening(e) && !e.path.startsWith('check');
+const betStreets = (e: SizedEdge): number => e.path.split(' / ').slice(0, -1).filter((street) => /bet|allin/.test(street)).length;
+const largeRiver = (e: SizedEdge): boolean => e.round === 2 && opening(e) && betStreets(e) >= 1 && (e.kind === ActionKind.AllIn || e.fraction > 1);
 const STATIC_RULES: Record<string, (edge: SizedEdge) => boolean> = {
 	/** The issue's rule: three sizes on flop and turn opening bets, one facing a bet and on the river. */
 	opening: (e) => e.base || (e.kind === ActionKind.Bet && !e.facingBet && e.round < 2),
 	/** Three opening sizes on the flop only. */
 	flopOpening: (e) => e.base || (e.kind === ActionKind.Bet && !e.facingBet && e.round === 0),
+	/**
+	 * Learned from what adaptive growth added on the rainbow flop: three sizes on
+	 * the OOP flop root, plus the large river sizes (above pot, and the shove) on
+	 * river opening bets after an earlier street was bet.
+	 */
+	learned: (e) => e.base || oopRoot(e) || largeRiver(e),
+	/** `learned` with three sizes at the IP flop root too. */
+	learnedBoth: (e) => e.base || (e.round === 0 && opening(e)) || largeRiver(e),
 	/** The one-size base itself. */
 	base: (e) => e.base,
 };

@@ -135,6 +135,23 @@ export interface SpotConfig {
 	 * is the one the other settings build, unchanged.
 	 */
 	readonly removeActions?: readonly string[];
+	/**
+	 * Thin the bet sizes to a shape that keeps most of what the full ones are
+	 * worth in a fraction of the memory. Every size stays at the root, where
+	 * out of position opens the first round. Everywhere else a decision keeps
+	 * one bet, raise or shove: the one nearest three quarters of the pot, a
+	 * shove where that would be one. Opening the last round after an earlier
+	 * round saw a bet, sizes above the pot and the shove stay as well.
+	 *
+	 * The shape is what growing sizes one at a time by their value per byte
+	 * picked on As Kh 7d and Ks 9s 4s (issue #51). Measured on As Kh 7d, pot
+	 * 55, stack 975, sizes 0.33 / 0.75 / 1.5 with shove-only raises and two
+	 * aggressions: see the `Approximations` notes for its memory and error.
+	 * It is a fixed rule, so it costs nothing to apply. A subgame from
+	 * `Solution.subgameAt` gets the full sizes back unless its betting sets
+	 * this again. Default false; unset, the tree is unchanged.
+	 */
+	readonly thinSizes?: boolean;
 	/** Refuse a range wider than this many combinations. */
 	readonly maxCombos?: number;
 	/**
@@ -340,6 +357,7 @@ export function defineSpot(config: SpotConfig): Spot {
 			noDonk: config.noDonk,
 			mergeSizes: config.mergeSizes,
 			removeActions: config.removeActions,
+			thinSizes: config.thinSizes,
 			chipScale,
 			minRaiseUnits: chipScale,
 		},
@@ -928,6 +946,7 @@ export type SubgameBetting = Partial<
 		| 'noDonk'
 		| 'mergeSizes'
 		| 'removeActions'
+		| 'thinSizes'
 		| 'maxCombos'
 		| 'maxBytes'
 	>
@@ -935,7 +954,7 @@ export type SubgameBetting = Partial<
 
 /** Subgame settings that shape the tree, which a carried-over cut would not fit. */
 const TREE_SETTINGS = [
-	'betSizes', 'raiseSizes', 'maxRaises', 'allowAllIn', 'allInThreshold', 'noDonk', 'mergeSizes',
+	'betSizes', 'raiseSizes', 'maxRaises', 'allowAllIn', 'allInThreshold', 'noDonk', 'mergeSizes', 'thinSizes',
 ] as const satisfies readonly (keyof SubgameBetting)[];
 
 export interface StrategyView {
@@ -1570,9 +1589,20 @@ function makeSolution(
 			// keeps the old betting; new betting builds a tree they need not fit.
 			const reshaped = TREE_SETTINGS.some((key) => key in betting);
 			const prefix = node === 0 ? '' : `${this.path(node)} `;
+			// Chips in a path are the actor's total investment, which a subgame
+			// counts from its own start: each amount drops by what is already in.
+			const rebase = (step: string): string => {
+				const [label, chips] = step.split(' ');
+				return chips === undefined ? step : `${label} ${(Math.round(Number(chips) * spot.chipScale) - invested) / spot.chipScale}`;
+			};
 			const cuts = source.removeActions
 				?.filter((line) => line.startsWith(prefix))
-				.map((line) => line.slice(prefix.length));
+				.map((line) => line.slice(prefix.length).split(' ').reduce<string[]>((steps, word, i, words) => {
+					// Words come as single actions ("check", "/") or a label and its chips.
+					if (/^-?[\d.]+$/.test(word)) steps[steps.length - 1] = rebase(`${words[i - 1]} ${word}`);
+					else steps.push(word);
+					return steps;
+				}, []).join(' '));
 			const removeActions =
 				'removeActions' in betting ? betting.removeActions : reshaped || !cuts || cuts.length === 0 ? undefined : cuts;
 
@@ -1590,6 +1620,8 @@ function makeSolution(
 				noDonk: 'noDonk' in betting ? betting.noDonk : source.noDonk === undefined ? undefined : later(source.noDonk, Array.isArray(source.noDonk)),
 				mergeSizes: 'mergeSizes' in betting ? betting.mergeSizes : source.mergeSizes,
 				...(removeActions ? { removeActions } : {}),
+				// The thinned shape is the whole tree's, so a subgame starts full.
+				...(betting.thinSizes ? { thinSizes: true } : {}),
 				minWeight: source.minWeight,
 				isomorphism: source.isomorphism,
 				maxCombos: 'maxCombos' in betting ? betting.maxCombos : source.maxCombos,

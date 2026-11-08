@@ -114,4 +114,25 @@ describe('removeActions', () => {
 		expect(solution.subgameAt(node, 0, { betSizes: [[0.5]] }).removeActions).toBeUndefined();
 		run.close();
 	});
+
+	it('counts the chips of a re-rooted cut from the subgame start', () => {
+		const full = paths(base);
+		const line = full.path.find((p) => /^bet 19\.8 call \/ bet [\d.]+$/.test(p))!;
+		expect(line).toBeDefined();
+		const chips = line.split(' ').at(-1)!;
+		const ip = `bet 19.8 call / check bet ${chips}`;
+		expect(full.path).toContain(ip);
+		const spot = defineSpot({ ...base, removeActions: [line, ip] });
+		const run = createRun(spot, { analysisOnly: true });
+		const solution = run.snapshot();
+		const node = Array.from({ length: spot.tree.nodeCount }, (_, n) => n).find(
+			(n) => solution.path(n) === 'bet 19.8 call /' && spot.tree.kind[n] === NodeKind.Decision,
+		)!;
+		const sub = solution.subgameAt(node, 0);
+		// 19.8 each is already in, so every amount drops by it.
+		const less = (Math.round(Number(chips) * spot.chipScale) - Math.round(19.8 * spot.chipScale)) / spot.chipScale;
+		expect(sub.removeActions).toEqual([`bet ${less}`, `check bet ${less}`]);
+		expect(() => defineSpot(sub)).not.toThrow();
+		run.close();
+	});
 });
