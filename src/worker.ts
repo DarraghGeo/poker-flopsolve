@@ -30,6 +30,7 @@ import type { Precision, SpotConfig } from './index.ts';
 import { buildShowdownTable } from './showdown.ts';
 import { buildHandSpace } from './hands.ts';
 import type { WorkerSetup } from './parallel.ts';
+import { lineBoards, lineScales } from './lines.ts';
 import { COMMAND, CONTROL } from './parallel.ts';
 
 const setup = workerData as WorkerSetup;
@@ -46,10 +47,14 @@ for (const combo of spot.players[0].combos) relevant[combo] = 1;
 for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 const weights = runoutWeights(spot.runouts);
-const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
+const lines = spot.runouts.lines;
+const layout = buildLayout(
+	spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], lines ? lineBoards(lines, spot.tree) : undefined,
+);
 
 const showdown = buildShowdownTable(spot.runouts, relevant);
 const active = buildActiveLists(spot.runouts, spot.players, showdown);
+const hands = buildHandSpace(spot.runouts, spot.players, active);
 const ctx: Context = {
 	tree: spot.tree,
 	runouts: spot.runouts,
@@ -63,7 +68,7 @@ const ctx: Context = {
 	scratch: makeTerminalScratch(),
 	chipScale: spot.chipScale,
 	active,
-	hands: buildHandSpace(spot.runouts, spot.players, active),
+	hands,
 	runoutWeight: weights,
 	totalMass: matchupMass(spot.players[0].weights, spot.players[1].weights) * weights[0],
 	dcfr,
@@ -76,6 +81,7 @@ const ctx: Context = {
 	entryIndexOf: null,
 	expandOrbits: false,
 	simd,
+	...(lines ? { lineStarts: lines.chanceStart, lineScales: lineScales(spot.runouts, spot.tree, active, hands) } : {}),
 };
 
 const solver = makeSolver(ctx);
