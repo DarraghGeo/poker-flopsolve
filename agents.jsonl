@@ -20,3 +20,4 @@
 {"url":null,"title":"Tree size: share turn/river storage across betting histories (imperfect recall)","issue":49,"state":"active","updated":"2026-11-08T16:23:28.141Z"}
 {"url":null,"title":"Tree size: drop late-street strategy sums, 8-bit/sparse regrets","issue":50,"state":"active","updated":"2026-11-08T16:23:33.314Z"}
 {"url":null,"title":"Tree size: grow bet sizes adaptively to a byte budget","issue":51,"state":"active","updated":"2026-11-08T16:23:38.949Z"}
+{"url":null,"title":"Tree size: best-response pruning that frees subtree memory","issue":52,"state":"active","updated":"2026-11-08T16:23:42.982Z"}
