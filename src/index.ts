@@ -804,6 +804,27 @@ export interface Approximations {
 	 * per-block indirection through every kernel, the AssemblyScript engine,
 	 * the threads' shared memory, the 16-bit scales and warm starts, for an
 	 * 8–20% saving at best.
+	 *
+	 * Runout clusters — potential-aware card abstraction (Ganzfried &
+	 * Sandholm, 2014): turn and river cards grouped by k-medoids under the
+	 * earth mover's distance between each range's river-equity distribution,
+	 * plus flush, straight and pair texture, one walk per cluster with reach
+	 * gathered from every member — were built and measured as well, and left
+	 * out (prototype and data in bench/clusters, commit ef1fa9c). Rank swaps
+	 * alone cannot get there: suited connectors leave only ranks 2-5 swappable on
+	 * AsKh7d, so about 37 of 49 turns stay apart whatever k asks for, and the
+	 * rest need hands mapped by strength order, and that is where the error
+	 * comes from. At 15 s in the browser, single-threaded (measured before
+	 * #8 changed how strategy sums are weighted), true exploitability:
+	 * bench flop 2.3% at k = 16 (rivers 20) against 1.8% exact and 0.7% for
+	 * `runoutBuckets`, which also beat it on per-combination EV; both monotone
+	 * flops lost to exact on every measure. It won only where exact gets
+	 * almost nowhere in 15 s — a two-size wide flop, under 10 iterations —
+	 * and on the pairs-and-broadway flop's EVs (mean error 0.3% of pot against
+	 * 1.0%, at 0.8% exploitability against 0.6%). Its error has a floor that
+	 * more iterations do not lower: on the bench flop 1.1-3.2% of pot mean
+	 * per-combination EV error and 2.2-4.7% exploitability from k = 16 down
+	 * to 4, on the wide flop 1.3-2.3% and 4-10%.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
