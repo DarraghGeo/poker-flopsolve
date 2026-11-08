@@ -28,7 +28,7 @@ import { aliasHistories } from './history-merge.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
 import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit } from './platform/node.ts';
-import type { Context, PlayerIndex, RegretStore, RootValues, SamplingOptions, Solver, SumStore } from './cfr.ts';
+import type { CompactPlan, Context, PlayerIndex, RegretStore, RootValues, SamplingOptions, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
@@ -204,6 +204,106 @@ export interface SpotConfig {
 	 * lossier buckets.
 	 */
 	readonly shareHistories?: boolean | ShareHistories;
+	/**
+	 * Store regrets and strategy sums at 8 bits — an approximation, off by
+	 * default. See `CompactStorage`. Set here rather than on the solve because it
+	 * decides how much memory the spot needs, which `maxBytes` is checked
+	 * against when the spot is defined.
+	 */
+	readonly compactStorage?: CompactStorage;
+}
+
+/**
+ * Compact storage (issue #50): accumulators as 8-bit integers, each hand on
+ * each board scaled by its own power of two, instead of 32- or 16-bit
+ * values. Regret matching and the average strategy both divide a hand's
+ * values by their own total, so a per-hand scale cancels wherever a strategy
+ * is read and costs only a byte per hand. Rounding is at random, with odds
+ * set by the remainder, so every stored value is right on average; the
+ * randomness is a hash of the slot and iteration, so a solve is deterministic
+ * at any thread count.
+ *
+ * Two modes:
+ *
+ * - With strategy sums (the default): regrets and sums at 8 bits, about 2.75
+ *   bytes a slot against 16-bit storage's 4 and 32-bit's 8. Measured, it
+ *   converges like the full solve: on the bench flop (AsKh7d, one size) 0.18%
+ *   of pot at 80 iterations against 0.18%, 0.058% at 160 against 0.052%; on
+ *   the monotone flop with three sizes (Ks9s4s, issue #20's T₀) 1.87% at 160
+ *   against 1.85%. Rounding the sums leaves a floor, near 0.03% of pot on the
+ *   bench flop and 0.1% on a small, narrow-range spot. On issue #20's T₀
+ *   (AsKh7d, three sizes, all-in raise, SPR 18), at 320 iterations it was
+ *   0.81% of pot exploitable where 32-bit storage was 0.69%, per-hand root
+ *   EVs 0.23% of pot off a 0.17% reference, every hand's preferred bet size
+ *   kept, in 1.75 GiB where 32-bit storage took 5.1 and 16-bit 2.6. T itself
+ *   takes 5.9 GiB, 16-bit storage 8.7.
+ * - `sums: false`: no strategy sums, so each node's strategy, wherever one is
+ *   read (`strategyAt`, `reachAt`, EVs, exploitability), is the current
+ *   profile, the regret-matched strategy the next iteration plays. About 1.4
+ *   bytes a slot, 1.03 with `blockScale`: T in 2.2 GiB. Per-hand root EVs stay as close as
+ *   the average's, as `currentProfileEv` found, but the strategy is far more
+ *   exploitable: 2 times at equal iterations on the bench flop, 5 to 8 times
+ *   on deeper or narrower spots (T₀ monotone: 4.0% of pot at 320 iterations
+ *   against 0.71%), and the bet size each hand prefers at the root agreed with
+ *   the reference for 62-82% of the hands where it was clear, against all of
+ *   them for the average. `algorithm: 'cfr+'`, whose current profile swings
+ *   less, is the better rule for the strategy; DCFR's current profile gives
+ *   the closer EVs (on T₀ monotone 0.55% of pot against the average's 1.19%,
+ *   but 4.9% exploitable).
+ *
+ * Rounding regrets to 8 bits costs training almost nothing: with 32-bit
+ * regrets and no sums (`float`) the same runs were no better.
+ *
+ * Training is otherwise the exact solve's; exploitability is measured
+ * exactly, in the full tree. Storage is split in chunks under `chunkBytes`,
+ * because browsers refuse a buffer of 2 GiB. Runs on the JavaScript engine
+ * and its Node worker threads, not the WebAssembly one; an iteration costs
+ * about 1.5 times a 32-bit one there; not with `warmStart`, `coarseStart`,
+ * `chanceSampling`, `analysisOnly` or a `precision`.
+ *
+ * With `shareHistories`, a node sharing another's storage shares its compact
+ * storage too; together they fit issue #20's target T in 0.99 GiB (0.37
+ * without sums). Measured on T₀ at 160 iterations, compact storage added
+ * about a tenth to sharing's own loss: 10.5% of pot exploitable against
+ * 9.5%, root EVs 0.86% of pot off against 0.66%, in a third of the memory.
+ *
+ * What was measured and left out is with the other approximations, in the
+ * comment inside `Approximations`.
+ */
+export interface CompactStorage {
+	/**
+	 * Keep 8-bit strategy sums, and with them the average strategy. Default
+	 * true; false stores only regrets and plays the current profile.
+	 */
+	readonly sums?: boolean;
+	/**
+	 * With `sums: false`, one scale per node and board instead of one per
+	 * hand: about 1.03 bytes a slot instead of 1.4. Under CFR+ it measured
+	 * nearly as accurate (0.077% of pot against 0.064% on the bench flop at
+	 * 320 iterations); under DCFR, whose large negative regrets then crowd
+	 * the scale, clearly less (0.16% against 0.08%).
+	 */
+	readonly blockScale?: boolean;
+	/**
+	 * First round stored compactly, from the spot's first (0); earlier rounds
+	 * keep 32-bit regrets and sums. Default 0. With `sums: false`, an earlier
+	 * round's average above the current profile measured worse than the
+	 * current profile throughout (0.053% of pot against 0.035% on the bench
+	 * flop): the two come from different iterations.
+	 */
+	readonly from?: number;
+	/**
+	 * Largest single buffer to allocate, in bytes; storage is split in chunks
+	 * no bigger, a node never split. Default 1 GiB: Chromium refuses an
+	 * ArrayBuffer of 2 GiB, but gives several smaller ones.
+	 */
+	readonly chunkBytes?: number;
+	/** For measurement: the largest regret magnitude stored, at most 127. */
+	readonly steps?: number;
+	/** For measurement: round regrets to nearest instead of at random. */
+	readonly nearest?: boolean;
+	/** For measurement, with `sums: false`: keep 32-bit regrets, dropping only the sums. */
+	readonly float?: boolean;
 }
 
 /** See `SpotConfig.shareHistories`. */
@@ -251,6 +351,8 @@ export interface Estimate {
 	 * that does not fit at 32 bits is solved with.
 	 */
 	readonly compressedBytes: number;
+	/** Storage with `compactStorage`, which `maxBytes` is then checked against; else null. */
+	readonly compactBytes: number | null;
 	readonly secondsPerThousandIterations: number;
 	/** Whether the spot fits `maxBytes` at 16 bits or better. */
 	readonly fits: boolean;
@@ -262,7 +364,9 @@ export class SpotTooLargeError extends Error {
 	readonly estimate: Estimate;
 	constructor(estimate: Estimate, maxBytes: number) {
 		super(
-			`This spot needs ~${formatBytes(estimate.compressedBytes)} even at 16-bit precision, ` +
+			(estimate.compactBytes !== null
+				? `This spot needs ~${formatBytes(estimate.compactBytes)} even with compact storage, `
+				: `This spot needs ~${formatBytes(estimate.compressedBytes)} even at 16-bit precision, `) +
 				`but the limit is ${formatBytes(maxBytes)}.\n` +
 				`  ${estimate.decisionNodes} decision nodes x up to ${estimate.runouts.toLocaleString()} runouts ` +
 				`x ${Math.max(...estimate.combos)} combos.\n` +
@@ -413,9 +517,14 @@ export function defineSpot(config: SpotConfig): Spot {
 	const compressedBytes = buildLayout(tree, runouts, players, 2, historyAlias).bytes + showdownBytes;
 	// Shared storage is walked once per history all the same.
 	const walkedSlots = layout.walkedSlots;
+	const compact = config.compactStorage ? compactPlan(config.compactStorage, runouts.rounds) : null;
+	const compactBytes = compact
+		? buildLayout(tree, runouts, players, 4, historyAlias, reachWeighted(config), compact).bytes + showdownBytes
+		: null;
+	const needed = compactBytes ?? compressedBytes;
 
 	const suggestions: string[] = [];
-	if (compressedBytes > maxBytes) {
+	if (needed > maxBytes) {
 		const widest = Math.max(...[0, 1].flatMap((p) => forPlayer(rows, p).map((r) => r.length)));
 		if (widest > 1) suggestions.push(`use fewer bet sizes (currently up to ${widest} per round)`);
 		const raises = [0, 1].flatMap((p) => [forPlayer(config.maxRaises ?? 1, p)].flat());
@@ -432,8 +541,9 @@ export function defineSpot(config: SpotConfig): Spot {
 		totalSlots: layout.totalSlots,
 		bytes,
 		compressedBytes,
+		compactBytes,
 		secondsPerThousandIterations: (walkedSlots * 4 * 1000) / OPS_PER_SECOND,
-		fits: compressedBytes <= maxBytes,
+		fits: needed <= maxBytes,
 		suggestions,
 	};
 	if (!estimate.fits) throw new SpotTooLargeError(estimate, maxBytes);
@@ -1045,6 +1155,30 @@ export interface Approximations {
 	 * 0.8–1.0% of pot off T's per combination on Ks9s4s (T itself took 50
 	 * minutes on 4 threads to 0.23%), and T's turn and river sizes would
 	 * need grafts per flop line, which multiplies the solves.
+	 *
+	 * Of the storage compressions issue #50 measured, `compactStorage` offers
+	 * 8-bit regrets and sums; these were left out. Against the bench flop's
+	 * 0.016% of pot at 320 iterations with the full average:
+	 *
+	 * - Dropping strategy sums on the turn and river only, the flop keeping
+	 *   its average: 0.053% (river only, 0.063%), worse than dropping them
+	 *   everywhere (0.035%), since an average above a current profile mixes
+	 *   strategies from different iterations. Offered only as `from`.
+	 * - Fewer bits: at 6 bits a floor near 0.15% of pot, at 4 bits near
+	 *   0.4-0.6%, so packing two regrets a byte, which the target spot would
+	 *   need to reach 2 GiB on this alone, does not pay.
+	 * - A log (µ-law) scale per block, 127 levels over 16 or 24 octaves:
+	 *   0.14% and 0.44%. Its few-percent steps sit at the top of the range,
+	 *   which is what regret matching reads; a per-hand linear scale puts the
+	 *   precision there and costs a byte per hand.
+	 * - Sparse regrets, only positive ones stored: 57-68% of regrets were
+	 *   positive at every checkpoint on every spot, so any index costs more
+	 *   than the dense byte.
+	 * - Recomputing the strategy at fold-or-call nodes (facing an all-in or
+	 *   the raise cap, 37-41% of the slots of the 3-size trees): no decision
+	 *   is choice-free, and those call frequencies are mixed bluff-catching
+	 *   choices that a best response recomputed each iteration does not
+	 *   converge to.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
@@ -1240,7 +1374,26 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// A saved strategy is loaded as float32 sums, so analysis stays there.
 	const maxBytes = spot.source.maxBytes ?? DEFAULT_MAX_BYTES;
 	const { totalSlots, bytes } = spot.estimate;
-	const precision: Precision = options.analysisOnly
+	const compact = spot.source.compactStorage ? compactPlan(spot.source.compactStorage, spot.runouts.rounds) : null;
+	if (compact) {
+		const clashes: [unknown, string][] = [
+			[options.analysisOnly, 'analysisOnly'],
+			[options.warmStart, 'warmStart'],
+			[options.approximations?.coarseStart, 'coarseStart'],
+			[options.approximations?.chanceSampling, 'chanceSampling'],
+			[options.precision, 'precision'],
+			// Measuring a bucketed spot in the real game warm-starts that from this one.
+			[spot.runouts.approximate, 'runoutBuckets'],
+		];
+		const clash = clashes.find(([set]) => set)?.[1];
+		if (clash) throw new Error(`compactStorage does not combine with ${clash}`);
+	}
+	if (options.warmStart?.solver.ctx.compact) {
+		throw new Error('A run with compactStorage cannot seed a warm start');
+	}
+	const precision: Precision = compact
+		? 'f32'
+		: options.analysisOnly
 		? 'f32'
 		: options.precision ??
 			(bytes <= maxBytes ? 'f32' : 'i16');
@@ -1257,6 +1410,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const showdown = buildShowdownTable(spot.runouts, relevant);
 	const layout = buildLayout(
 		spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], spot.historyAlias, reachWeighted(spot.source),
+		compact ?? undefined,
 	);
 	const weights = runoutWeights(spot.runouts);
 
@@ -1264,7 +1418,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// with WebAssembly SIMD. Decided before the thread count, because the
 	// browser build can only thread the engine.
 	const wantsEngine =
-		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false;
+		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false && !compact;
 	// Sampling's state is one thread's; see `Approximations.chanceSampling`.
 	const samplingOptions = options.approximations?.chanceSampling;
 	const requested = samplingOptions ? 1 : resolveWorkers(options, wantsEngine);
@@ -1313,6 +1467,17 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		strategySum: engine ? engine.strategySum : makeSumStore(precision, allocate(layout.totalSlots * width)),
 		regretScale: quantised ? new Float64Array(allocate(layout.blocks * 8)) : null,
 		sumScale: quantised ? new Float64Array(allocate(layout.blocks * 8)) : null,
+		compact,
+		compactRegret: !compact
+			? null
+			: layout.chunkSlots.map((slots) =>
+					compact.float ? new Float32Array(allocate(slots * 4)) : new Int8Array(allocate(slots)),
+				),
+		handShift: compact?.perHand ? layout.chunkHands.map((hands) => new Uint8Array(allocate(hands))) : null,
+		compactSum: compact?.sums ? layout.chunkSlots.map((slots) => new Uint8Array(allocate(slots))) : null,
+		sumShift: compact?.sums ? layout.chunkHands.map((hands) => new Uint8Array(allocate(hands))) : null,
+		compactScale:
+			compact && !compact.perHand && !compact.float ? new Float64Array(allocate(layout.blocks * 8)) : null,
 		scratch: makeTerminalScratch(),
 		chipScale: spot.chipScale,
 		active,
@@ -1369,7 +1534,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		if (warm && coarsePlan) coarseMs.set(solver, coarsePlan.elapsed);
 		// The engine runs its own threads; the JavaScript pool is for the rest.
 		pool = plan && !engine
-			? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
+			? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd, compact }, requested)
 			: null;
 	} catch (error) {
 		// The engine's threads would otherwise stay parked on this run for good.
@@ -1426,6 +1591,29 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 				options.approximations?.currentProfileEv === true,
 			);
 		},
+	};
+}
+
+/** Validate `SpotConfig.compactStorage` into the solver's plan. */
+function compactPlan(settings: CompactStorage, rounds: number): CompactPlan {
+	const from = settings.from ?? 0;
+	if (!Number.isInteger(from) || from < 0 || from >= rounds) {
+		throw new Error(`compactStorage.from must be a round of this spot, 0 to ${rounds - 1}; got ${from}`);
+	}
+	const chunkBytes = settings.chunkBytes ?? 2 ** 30;
+	if (!Number.isInteger(chunkBytes) || chunkBytes < 1) {
+		throw new Error(`compactStorage.chunkBytes must be a positive whole number of bytes; got ${chunkBytes}`);
+	}
+	const steps = settings.steps ?? 127;
+	if (!Number.isInteger(steps) || steps < 1 || steps > 127) {
+		throw new Error(`compactStorage.steps must be an integer from 1 to 127; got ${steps}`);
+	}
+	if (settings.sums !== false && (settings.blockScale || settings.float)) {
+		throw new Error('compactStorage.sums keeps a scale per hand, so blockScale and float need sums: false');
+	}
+	return {
+		from, steps, perHand: !settings.blockScale && !settings.float, stochastic: !settings.nearest,
+		float: settings.float === true, chunkBytes, sums: settings.sums ?? true,
 	};
 }
 
@@ -1834,6 +2022,7 @@ function makeSolution(
 				maxCombos: 'maxCombos' in betting ? betting.maxCombos : source.maxCombos,
 				maxBytes: 'maxBytes' in betting ? betting.maxBytes : source.maxBytes,
 				chipScale: spot.chipScale,
+				compactStorage: source.compactStorage,
 			};
 		},
 	};

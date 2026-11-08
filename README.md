@@ -597,6 +597,57 @@ nearest, small sums lose most of each iteration's contribution and exploitabilit
 near 0.04% of pot. The randomness is a hash of the slot and iteration, so solves stay
 deterministic at any thread count.
 
+### Compact storage (opt-in)
+
+`compactStorage: {}` in the spot's config stores regrets and strategy sums as 8-bit
+integers, each hand on each board scaled by its own power of two. Regret matching and the
+average strategy divide each hand's values by their own total, so the scale cancels
+wherever a strategy is read, and costs a byte per hand. Values round up or down at random,
+weighted by the remainder, as 16-bit sums do. It is set on the spot rather than the solve,
+because `maxBytes` is checked against it when the spot is defined
+(`estimate.compactBytes`).
+
+`compactStorage: { sums: false }` keeps no strategy sums. Each node then plays the current
+profile, the regret-matched strategy the next iteration would play. It is cheaper again but
+much more exploitable on deep trees. `blockScale: true` takes the per-hand byte away too.
+
+Storage and peak memory on issue #20's target spots (AsKh7d and Ks9s4s, pot 55, stack 975,
+three bet sizes, a 75% raise, three aggressions), measured on four threads in Node:
+
+| Storage | Bytes per slot | T | Monotone T |
+|---|---|---|---|
+| 32-bit | 8.0 | 17.2 GiB | 3.75 GiB |
+| 16-bit | 4.0 | 8.7 GiB | 1.90 GiB |
+| compact | 2.75 | 5.9 GiB (peak 6.4 GB), 35 s an iteration | 1.29 GiB (peak 1.7 GB) |
+| compact, `sums: false, blockScale: true` | 1.03 | 2.2 GiB (peak 2.7 GB), 24 s an iteration | 0.48 GiB (peak 0.8 GB) |
+
+Accuracy at 320 iterations, against reference solves to 0.17% of pot (T₀: AsKh7d, three
+sizes, all-in as the only raise) and 0.22% (the same tree on Ks9s4s). Exploitability is
+true, in the full tree; EV error is per combination at the root, range-weighted, in % of pot;
+"same size" is the share of OOP's hands, among those whose best root bet size beats the
+next by 0.5% of pot in the reference, that still prefer it:
+
+| Storage | T₀: exploitability, EV error, same size | Monotone T₀ |
+|---|---|---|
+| 32-bit | 0.69% (the reference run itself) | 0.71%, 1.19%, 100% |
+| compact | 0.81%, 0.23%, 100% | 0.83%, 1.09%, 100% |
+| compact, `sums: false, blockScale: true`, CFR+ | 4.76%, 0.17%, 78% | 4.08%, 1.28%, 62% |
+
+It combines with `shareHistories` (one set of storage for betting lines that reach the same
+pot), and the pair is what brings T under 2 GiB: 0.99 GiB with sums, peaking at 1.5 GB on four
+threads, and 0.37 GiB with `sums: false, blockScale: true`. Sharing is lossy on its own; on
+T₀ at 160 iterations it was 9.5% of pot exploitable in 1.06 GiB at 32 bits, with root EVs
+0.66% of pot off and 97% of clear bet-size choices kept; with compact storage added, 10.5%,
+0.86% and 84%, in 0.36 GiB.
+
+It runs on the JavaScript engine, like 16-bit storage, on Node worker threads but on one
+thread in the browser. In headless Chromium on one thread, monotone T₀ took 10.1 s an
+iteration compact, 8.1 s at 16 bits and 2.3 s at 32 bits on WebAssembly; T itself, at
+`sums: false, blockScale: true`, allocated its 2.2 GiB and ran at 95 s an iteration. Storage is split into buffers under 1 GiB, because Chromium refuses
+an ArrayBuffer of 2 GiB or more. `bench/storage/` has the measurements and the variants
+that were left out: 4- and 6-bit regrets, a log scale, sparse regrets, and dropping sums on
+the later streets only.
+
 ### Algorithm and benchmark
 
 The default update rule is Discounted CFR (`algorithm: 'dcfr'`, α 1.5, β 0, γ 3, with

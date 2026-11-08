@@ -1,0 +1,50 @@
+flop: 28M slots, 14M hand rows, 0.09M blocks, showdown 18 MiB
+  f32                                          0.23 GiB  8.66 B/slot
+  i16                                          0.12 GiB  4.71 B/slot
+  f32 regrets, no sums (option 1)              0.12 GiB  4.66 B/slot
+  i16 regrets, no sums                         0.07 GiB  2.68 B/slot
+  i8, scale per hand, no sums                  0.06 GiB  2.16 B/slot
+  i8, scale per block, no sums                 0.04 GiB  1.68 B/slot
+  i8, 4-bit scale per hand (computed)          0.05 GiB  1.93 B/slot
+  i6 packed, 4-bit scale per hand (computed)   0.04 GiB  1.68 B/slot
+  i4 packed, 4-bit scale per hand (computed)   0.04 GiB  1.43 B/slot
+T0: 686M slots, 254M hand rows, 1.52M blocks, showdown 18 MiB
+  f32                                          5.13 GiB  8.03 B/slot
+  i16                                          2.60 GiB  4.06 B/slot
+  f32 regrets, no sums (option 1)              2.57 GiB  4.03 B/slot
+  i16 regrets, no sums                         1.31 GiB  2.05 B/slot
+  i8, scale per hand, no sums                  0.89 GiB  1.40 B/slot
+  i8, scale per block, no sums                 0.67 GiB  1.05 B/slot
+  i8, 4-bit scale per hand (computed)          0.79 GiB  1.23 B/slot
+  i6 packed, 4-bit scale per hand (computed)   0.63 GiB  0.98 B/slot
+  i4 packed, 4-bit scale per hand (computed)   0.47 GiB  0.73 B/slot
+T0mono: 150M slots, 56M hand rows, 0.44M blocks, showdown 5 MiB
+  f32                                          1.12 GiB  8.04 B/slot
+  i16                                          0.57 GiB  4.08 B/slot
+  f32 regrets, no sums (option 1)              0.56 GiB  4.04 B/slot
+  i16 regrets, no sums                         0.29 GiB  2.06 B/slot
+  i8, scale per hand, no sums                  0.20 GiB  1.41 B/slot
+  i8, scale per block, no sums                 0.15 GiB  1.06 B/slot
+  i8, 4-bit scale per hand (computed)          0.17 GiB  1.24 B/slot
+  i6 packed, 4-bit scale per hand (computed)   0.14 GiB  0.99 B/slot
+  i4 packed, 4-bit scale per hand (computed)   0.10 GiB  0.74 B/slot
+T: 2301M slots, 858M hand rows, 5.14M blocks, showdown 18 MiB
+  f32                                          17.16 GiB  8.01 B/slot
+  i16                                          8.67 GiB  4.04 B/slot
+  f32 regrets, no sums (option 1)              8.59 GiB  4.01 B/slot
+  i16 regrets, no sums                         4.34 GiB  2.03 B/slot
+  i8, scale per hand, no sums                  2.96 GiB  1.38 B/slot
+  i8, scale per block, no sums                 2.20 GiB  1.03 B/slot
+  i8, 4-bit scale per hand (computed)          2.60 GiB  1.21 B/slot
+  i6 packed, 4-bit scale per hand (computed)   2.06 GiB  0.96 B/slot
+  i4 packed, 4-bit scale per hand (computed)   1.53 GiB  0.71 B/slot
+Tmono: 503M slots, 188M hand rows, 1.48M blocks, showdown 5 MiB
+  f32                                          3.75 GiB  8.01 B/slot
+  i16                                          1.90 GiB  4.06 B/slot
+  f32 regrets, no sums (option 1)              1.88 GiB  4.01 B/slot
+  i16 regrets, no sums                         0.95 GiB  2.03 B/slot
+  i8, scale per hand, no sums                  0.65 GiB  1.38 B/slot
+  i8, scale per block, no sums                 0.48 GiB  1.03 B/slot
+  i8, 4-bit scale per hand (computed)          0.57 GiB  1.22 B/slot
+  i6 packed, 4-bit scale per hand (computed)   0.45 GiB  0.97 B/slot
+  i4 packed, 4-bit scale per hand (computed)   0.34 GiB  0.72 B/slot

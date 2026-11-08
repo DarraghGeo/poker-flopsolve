@@ -1,0 +1,54 @@
+{
+ "spot": "T0mono",
+ "variant": "nosums-all-cfr+",
+ "workers": 4,
+ "engine": "js",
+ "storageMiB": 572,
+ "estimateMiB": 577.1,
+ "peakRssMiB": 954,
+ "setupSeconds": 0.6,
+ "rows": [
+  {
+   "iterations": 40,
+   "trainSeconds": 77.5,
+   "exploitability": 25.9946,
+   "positiveShare": 0.604,
+   "mae": 7.0627,
+   "max": 41.7545
+  },
+  {
+   "iterations": 80,
+   "trainSeconds": 152,
+   "exploitability": 12.0656,
+   "positiveShare": 0.5799,
+   "mae": 4.5174,
+   "max": 23.7933
+  },
+  {
+   "iterations": 160,
+   "trainSeconds": 314.3,
+   "exploitability": 7.5719,
+   "positiveShare": 0.5653,
+   "mae": 2.507,
+   "max": 13.1027
+  },
+  {
+   "iterations": 320,
+   "trainSeconds": 652,
+   "exploitability": 2.6497,
+   "positiveShare": 0.5504,
+   "mae": 1.0769,
+   "max": 5.4874
+  }
+ ],
+ "sizeChoice": {
+  "actionMae": 3.6075,
+  "actionMax": 34.9022,
+  "playedActionMae": 0.9727,
+  "playedActionMax": 3.9829,
+  "sameBestAction": 0.9724,
+  "sameBestSize": 0.341,
+  "sameBestSizeWhereClear": 0.5207,
+  "clearShare": 0.5576
+ }
+}
