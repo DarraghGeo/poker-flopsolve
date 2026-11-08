@@ -64,7 +64,9 @@ const out = await runInBrowser<Out>(
 			if (last) last.close();
 			last = run;
 		}
+		// Snapshots outlive close(), which hands the engine threads back for the re-solves.
 		const sol = last.snapshot();
+		last.close();
 		const tree = sol.spot.tree;
 		let node = -1;
 		for (let n = 0; n < tree.nodeCount; n++) {
@@ -80,7 +82,6 @@ const out = await runInBrowser<Out>(
 				out.resolves.push({ gadget, workers, ms: performance.now() - started, bytes: r.solution.spot.estimate.bytes });
 			}
 		}
-		last.close();
 		return out;
 	}
 	`,
