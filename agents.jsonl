@@ -18,7 +18,7 @@
 {"url":"https://claude.ai/code/session_014RSNFgHXeDqHKVgRDKpgPC","title":"Tree size: safe nested subgame solving — full flop sizes, re-solve turns on demand","issue":47,"state":"active","updated":"2026-11-08T16:24:00.978Z"}
 {"url":"https://claude.ai/code/session_014RSNFjHJajYhJbbLmAEhsx","title":"Tree size: depth-limited flop solve with blueprint continuation values at the turn","issue":48,"state":"active","updated":"2026-11-08T16:24:00.978Z"}
 {"url":"https://claude.ai/code/session_014RSNFhUGaoKECGfCAeueJg","title":"Tree size: share turn/river storage across betting histories (imperfect recall)","issue":49,"state":"active","updated":"2026-11-08T16:24:00.978Z"}
-{"url":null,"title":"Tree size: drop late-street strategy sums, 8-bit/sparse regrets","issue":50,"state":"active","updated":"2026-11-08T16:23:33.314Z"}
+{"url":"https://claude.ai/code/session_014RSNFh9g9a5aMAPzs27gu8","title":"Tree size: drop late-street strategy sums, 8-bit/sparse regrets","issue":50,"state":"active","updated":"2026-11-08T16:31:39.221Z"}
 {"url":"https://claude.ai/code/session_014RSNFk4VvUePvvF86VAu73","title":"Tree size: grow bet sizes adaptively to a byte budget","issue":51,"state":"active","updated":"2026-11-08T16:31:39.221Z"}
 {"url":"https://claude.ai/code/session_014RSNFjM4YrHrUCMB4bGXzd","title":"Tree size: best-response pruning that frees subtree memory","issue":52,"state":"active","updated":"2026-11-08T16:31:39.221Z"}
 {"url":"https://claude.ai/code/session_014RSNFk2qxgcoRWcZPQsbdZ","title":"Tree size: coarser runouts in rare betting lines (history-dependent card abstraction)","issue":53,"state":"active","updated":"2026-11-08T16:31:39.221Z"}
