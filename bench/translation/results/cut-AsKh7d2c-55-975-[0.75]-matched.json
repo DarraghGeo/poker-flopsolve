@@ -1,0 +1,76 @@
+{
+ "tag": "AsKh7d2c-55-975",
+ "raiseOver": [
+  0.75
+ ],
+ "unmatchedPlay": "uniform",
+ "frequencyMatched": true,
+ "bytes": 35612184,
+ "compressedBytes": 18146428,
+ "fullBytes": 67278184,
+ "iterations": 470,
+ "ms": 29526.06472600001,
+ "ownExploitability": 0.29959975255174925,
+ "peak": "rss 0.12 GiB, heap 9 MiB, arrayBuffers 0.00 GiB",
+ "rootEvError": [
+  {
+   "mae": 2.1658687813195305,
+   "max": 6.145406678210166,
+   "range": 0.8597355854902133
+  },
+  {
+   "mae": 3.074915641728753,
+   "max": 7.028200862413107,
+   "range": 0.8597355854901939
+  }
+ ],
+ "sizes": [
+  {
+   "labels": [
+    "0.33",
+    "0.75",
+    "1.50"
+   ],
+   "sizeMaePercent": [
+    2.3823007393522198,
+    2.300517769998734,
+    3.034291975935967
+   ],
+   "agreement": 0.866273423731252,
+   "agreementClear": 0.9069455960201543,
+   "clearShare": 0.563931949789591
+  },
+  {
+   "labels": [
+    "0.33",
+    "0.75",
+    "1.50"
+   ],
+   "sizeMaePercent": [
+    4.337699488052596,
+    8.099256050470329,
+    9.363594671878138
+   ],
+   "agreement": 0.4287666798546919,
+   "agreementClear": 0.6641173716247853,
+   "clearShare": 0.460885515951516
+  }
+ ],
+ "translated": {
+  "exploitability": 38.865854958911775,
+  "translatedNodes": 172,
+  "unmatched": 12,
+  "rootEvError": [
+   {
+    "mae": 2.165868785789504,
+    "max": 6.145406674456698,
+    "range": 0.8597355854005784
+   },
+   {
+    "mae": 3.0749156367041772,
+    "max": 7.0282008622806424,
+    "range": 0.8597355854005542
+   }
+  ]
+ }
+}

@@ -94,20 +94,38 @@ export interface Layout {
 	readonly blockOffset: Int32Array;
 	readonly blocks: number;
 	readonly totalSlots: number;
+	/** Slots one iteration walks: `totalSlots`, and with shared storage what it would be unshared. */
+	readonly walkedSlots: number;
 	readonly maxActions: number;
 	readonly bytes: number;
+	/**
+	 * Whether some nodes share another's storage (`SpotConfig.shareHistories`):
+	 * a block may then be visited more than once an iteration.
+	 */
+	readonly shared: boolean;
+	/**
+	 * Per node, 1 where regret updates are weighted by the actor's own reach:
+	 * nodes whose storage more than one history shares, under
+	 * `shareHistories` with that weighting. Null otherwise.
+	 */
+	readonly reachWeighted: Uint8Array | null;
 }
 
 /**
  * Size storage. A node's block is `boards * actions * combosOfItsOwner`.
  * @param bytesPerElement 8 for float64, 4 for float32, 2 for 16-bit, which
  *   also keeps one float64 scale per block for each accumulator
+ * @param alias each node's storage owner, from `aliasHistories`: a node
+ *   owned by another takes its owner's blocks and adds none. Unset, every
+ *   node owns its own.
  */
 export function buildLayout(
 	tree: Tree,
 	runouts: Runouts,
 	players: readonly [PlayerIndex, PlayerIndex],
 	bytesPerElement: number,
+	alias?: Int32Array,
+	reachWeighted = false,
 ): Layout {
 	// How many of each player's hands each board leaves live: a block's rows.
 	const roundBase = new Int32Array(runouts.rounds + 1);
@@ -141,10 +159,21 @@ export function buildLayout(
 	let total = 0;
 	let blocks = 0;
 	let maxActions = 0;
+	let shared = false;
+	let walked = 0;
 	for (let i = 0; i < tree.decisionNodes.length; i++) {
 		const node = tree.decisionNodes[i];
 		const actions = tree.numEdges[node];
 		if (actions > maxActions) maxActions = actions;
+		// An owner always comes before the nodes it owns, so its blocks are placed.
+		walked += actions * totals[tree.round[node] * 2 + tree.player[node]];
+		if (alias !== undefined && alias[node] !== node) {
+			if (alias[node] > node) throw new Error('buildLayout: a storage owner must come before the nodes it owns');
+			offset[node] = offset[alias[node]];
+			blockOffset[node] = blockOffset[alias[node]];
+			shared = true;
+			continue;
+		}
 		offset[node] = total;
 		blockOffset[node] = blocks;
 		total += actions * totals[tree.round[node] * 2 + tree.player[node]];
@@ -152,9 +181,21 @@ export function buildLayout(
 	}
 	const scales = bytesPerElement === 2 ? blocks * 8 * 2 : 0;
 	return {
-		offset: total <= INT32_MAX ? Int32Array.from(offset) : offset, blockOffset, blocks, totalSlots: total, maxActions, rowStart, roundBase,
+		offset: total <= INT32_MAX ? Int32Array.from(offset) : offset, blockOffset, blocks, totalSlots: total, walkedSlots: walked, maxActions,
+		rowStart, roundBase,
 		bytes: total * bytesPerElement * 2 + scales,
+		shared,
+		reachWeighted: shared && reachWeighted ? sharedNodes(tree, alias!) : null,
 	};
+}
+
+/** 1 for every node whose storage more than one node uses, owner included. */
+function sharedNodes(tree: Tree, alias: Int32Array): Uint8Array {
+	const marks = new Uint8Array(tree.nodeCount);
+	for (let node = 0; node < tree.nodeCount; node++) {
+		if (alias[node] !== node) marks[node] = marks[alias[node]] = 1;
+	}
+	return marks;
 }
 
 /**
@@ -241,6 +282,13 @@ export interface Context {
 	 * unset or null for the exact traversal.
 	 */
 	sampling?: Sampling | null;
+	/**
+	 * With shared storage (`Layout.shared`), per block the iteration DCFR
+	 * last discounted it in. A shared block is visited once per history that
+	 * reaches it, and only the first visit of an iteration discounts. Unset or
+	 * null for unshared storage, where every block is visited once.
+	 */
+	discounted?: Int32Array | null;
 }
 
 /** How chance sampling picks deals; see `Approximations.chanceSampling`. */
@@ -676,6 +724,15 @@ export function treeDepth(tree: Tree): number {
  * `t^γ`. Every slot is visited exactly once per iteration, by its owner's
  * traversal, so discounting at that visit is the same as discounting
  * everything between iterations — without a separate pass over memory.
+ *
+ * Each iteration adds its strategy to the sum as it is, not weighted by the
+ * hand's own reach (as postflop-solver does). A hand that equilibrium play
+ * stops sending to a node then still averages to what its regrets settled on
+ * there; with own-reach weighting the near-uniform early iterations swamped
+ * it, so play continued off the path was close to random (issue #8). This
+ * holds at every precision, here and in assembly/engine.ts. CFR+ keeps the
+ * own-reach weighting: its iterates oscillate, and unweighted they averaged
+ * to 2–3× the exploitability at the same iteration count.
  */
 // assembly/engine.ts repeats these in its sampling catch-up; keep in step.
 const DCFR_ALPHA = 1.5;
@@ -756,8 +813,10 @@ function regretMatch(regret: RegretStore, base: number, actions: number, count: 
 /**
  * Average strategy from accumulated sums, which are never negative.
  *
- * A hand whose sum is zero here never reached this node on its own, so the
- * average says nothing about it. Its regrets are still updated — weighted by
+ * A hand whose sum is zero here has no average to give: under CFR+, whose
+ * sums follow the hand's own reach, it never reached this node on its own;
+ * under DCFR, whose sums do not (issue #8), only a loaded strategy with gaps,
+ * a warm start or 16-bit rounding leaves one. Its regrets are still updated — weighted by
  * the opponent's reach — so it plays the current strategy: whatever goes on to
  * continue it from here (a best response, another player's rules, a user
  * browsing the line) then sees sensible play rather than every action at an
@@ -1035,6 +1094,16 @@ function traverse(
 		}
 	}
 
+	const weighted = ctx.layout.reachWeighted;
+	if (weighted !== null && weighted[node] && isTraverser && mode === Mode.Train && ctx.applyUpdates) {
+		// Each history's regret counts as often as this hand plays into it.
+		for (let a = 0; a < actions; a++) {
+			const offset = a * myCount;
+			for (let i = 0; i < myCount; i++) {
+				actionValues[offset + i] = out[i] + reachMe[i] * (actionValues[offset + i] - out[i]);
+			}
+		}
+	}
 	if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.regretScale !== null) {
 		updateQuantised(
 			ctx, ctx.layout.blockOffset[node] + board, slotBase, actions, stride,
@@ -1043,6 +1112,13 @@ function traverse(
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.dcfr) {
 		// `iterWeight` is the iteration number, counted from 1.
 		let { keepPositive, keepNegative, keepSum } = dcfrFactors(iterWeight);
+		const discounted = ctx.discounted;
+		if (discounted !== undefined && discounted !== null) {
+			// Another history already discounted this shared block this iteration.
+			const block = ctx.layout.blockOffset[node] + board;
+			if (discounted[block] === iterWeight) keepPositive = keepNegative = keepSum = 1;
+			discounted[block] = iterWeight;
+		}
 		const sampling = ctx.sampling;
 		if (sampling !== undefined && sampling !== null) {
 			// A subtree chance sampling skipped missed those iterations'
@@ -1068,7 +1144,7 @@ function traverse(
 				const at = slotRow + i;
 				const accumulated = regret[at];
 				regret[at] = accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[offset + i] - out[i];
-				strategySum[at] = strategySum[at] * keepSum + reachMe[i] * strategy[row + i];
+				strategySum[at] = strategySum[at] * keepSum + strategy[row + i];
 			}
 		}
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates) {
@@ -1194,6 +1270,12 @@ function updateQuantised(
 	if (ctx.dcfr) {
 		({ keepPositive, keepNegative, keepSum } = dcfrFactors(iterWeight));
 		weight = 1;
+		const discounted = ctx.discounted;
+		if (discounted !== undefined && discounted !== null) {
+			// Another history already discounted this shared block this iteration.
+			if (discounted[block] === iterWeight) keepPositive = keepNegative = keepSum = 1;
+			discounted[block] = iterWeight;
+		}
 	}
 
 	let largestRegret = 0;
@@ -1211,7 +1293,9 @@ function updateQuantised(
 			if (magnitude > largestRegret) largestRegret = magnitude;
 			actionValues[offset + i] = updated;
 
-			const sum = strategySum[at] * oldSum * keepSum + weight * reachMe[i] * strategy[a * count + i];
+			// DCFR adds the strategy unweighted by own reach (issue #8); CFR+ keeps the weight.
+			const added = clamp ? weight * reachMe[i] * strategy[a * count + i] : weight * strategy[a * count + i];
+			const sum = strategySum[at] * oldSum * keepSum + added;
 			if (sum > largestSum) largestSum = sum;
 			strategy[a * count + i] = sum;
 		}

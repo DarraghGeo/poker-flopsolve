@@ -62,6 +62,80 @@ export const CONTROL = {
 export const THREAD_FAILED_ERROR =
 	'A solver thread failed mid-iteration; this run cannot continue. Close it and solve again, or use workers: 1.';
 
+/**
+ * What a threaded step throws once another thread has gone silent past the
+ * backstop, here or in src/engine.ts.
+ */
+export const THREAD_LOST_ERROR =
+	'A solver thread stopped answering mid-iteration; it may have run out of memory or been killed. ' +
+	'This run cannot continue. Close it and solve again, or use workers: 1.';
+
+/**
+ * The backstop on how long the main thread waits for the others in one step.
+ *
+ * A thread that throws reports itself in shared memory, but one killed
+ * without unwinding (a Node worker out of V8 heap, a worker the browser
+ * kills) runs no `catch` or `finally`, and its error event cannot reach a
+ * main thread waiting in `Atomics.wait`. Every thread's shard is the same
+ * size as the main thread's own and runs under the same load, so the wait is
+ * bounded at a multiple of the main thread's own shard time, and never under
+ * the floor: it only fires with one thread both 20× slower than the main
+ * thread and over a minute late.
+ */
+export const THREAD_BACKSTOP_FLOOR_MS = 60_000;
+export const THREAD_BACKSTOP_FACTOR = 20;
+
+/**
+ * How long, from the step's dispatch, the main thread waits for the others.
+ * @param ownMs the main thread's own shard time this step
+ * @param floorMs the shortest wait; tests shorten it
+ */
+export function backstopMs(ownMs: number, floorMs: number = THREAD_BACKSTOP_FLOOR_MS): number {
+	return Math.max(floorMs, THREAD_BACKSTOP_FACTOR * ownMs);
+}
+
+/** How long one `Atomics.wait` of {@link awaitThreads} sleeps before looking again. */
+const WAIT_SLICE_MS = 50;
+/** A wait that overruns its slice by more than this was a stopped process, not a slow thread. */
+const STOPPED_MS = 1_000;
+
+/**
+ * Wait, after this thread's own shard, for the other threads to count
+ * themselves done in `control[slot]`, or until the backstop passes.
+ *
+ * Time the whole process spends stopped mid-wait (a debugger, Ctrl-Z, a VM
+ * pause, a sleep the clock counts) stops every thread alike, so it extends
+ * the backstop rather than counting against the others.
+ *
+ * @param control the pool's control slots
+ * @param slot the slot the other threads count themselves done in
+ * @param target how many other threads there are
+ * @param dispatched `performance.now()` when the step was dispatched
+ * @param floorMs the backstop's floor; see {@link backstopMs}
+ * @param stopped whether to stop waiting for some other reason
+ * @returns {@link THREAD_LOST_ERROR} once the backstop passes, else null
+ */
+export function awaitThreads(
+	control: Int32Array,
+	slot: number,
+	target: number,
+	dispatched: number,
+	floorMs: number | undefined,
+	stopped: () => boolean,
+): Error | null {
+	// Monotonic, so a change to the wall clock is not taken for a silent thread.
+	let giveUp = dispatched + backstopMs(performance.now() - dispatched, floorMs);
+	for (;;) {
+		const done = Atomics.load(control, slot);
+		if (done >= target || stopped()) return null;
+		const before = performance.now();
+		if (before > giveUp) return new Error(THREAD_LOST_ERROR);
+		Atomics.wait(control, slot, done, WAIT_SLICE_MS);
+		const overrun = performance.now() - before - WAIT_SLICE_MS;
+		if (overrun > STOPPED_MS) giveUp += overrun;
+	}
+}
+
 export const COMMAND = { work: 0, exit: 1 } as const;
 
 /** How long worker threads may take to start before a solve gives up on them. */
@@ -153,6 +227,7 @@ export interface Pool {
  * @param payload everything the worker needs to rebuild the context
  * @param workers threads doing the work, the main thread included
  * @param spawn how each worker is started
+ * @param backstopFloorMs the shortest a step waits for the workers; see {@link backstopMs}
  */
 export function startPool(
 	ctx: Context,
@@ -161,6 +236,7 @@ export function startPool(
 	payload: unknown,
 	workers: number,
 	spawn: SpawnWorker = spawnWorker,
+	backstopFloorMs: number = THREAD_BACKSTOP_FLOOR_MS,
 ): Pool {
 	const entryCount = plan.entryNodes.length;
 	// The main thread is one of the `workers`; only the rest are spawned.
@@ -235,6 +311,7 @@ export function startPool(
 		Atomics.store(control, CONTROL.command, COMMAND.work);
 		Atomics.add(control, CONTROL.generation, 1);
 		Atomics.notify(control, CONTROL.generation);
+		const dispatched = performance.now();
 
 		// Shard 0 is this thread's, done while the workers do theirs. With no
 		// collect or override set the split-round chance nodes expand as usual,
@@ -263,11 +340,8 @@ export function startPool(
 
 		// A worker whose walk throws says so in `failed` and counts itself
 		// done, as its error event cannot reach this thread while it waits.
-		for (;;) {
-			const done = Atomics.load(control, CONTROL.done);
-			if (done >= spawned || failure) break;
-			Atomics.wait(control, CONTROL.done, done, 50);
-		}
+		// One killed without unwinding does neither, hence the backstop.
+		failure ??= awaitThreads(control, CONTROL.done, spawned, dispatched, backstopFloorMs, () => failure !== null);
 		const dead = failed();
 		if (dead) throw dead;
 	};

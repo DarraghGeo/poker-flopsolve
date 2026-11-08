@@ -80,6 +80,9 @@ interface Isolated {
 	afterDoubleClose: number[];
 	afterFailedCreate: number;
 	brokenError: string;
+	lostError: string;
+	afterLost: number;
+	afterLostSolve: number;
 	afterBroken: number;
 	afterBrokenSolve: number;
 	solves: Record<string, { one: Outcome; first: Outcome; second: Outcome }>;
@@ -99,7 +102,7 @@ beforeAll(async () => {
 		import { createRun, defineSpot } from './src/index.ts';
 		import { enableThreads, threadsUnavailable } from './src/threads.ts';
 		import { spawnEngineWorker } from './src/platform/node.ts';
-		import { brokenEngine } from './test/thread-faults.ts';
+		import { brokenEngine, vanishingEngine } from './test/thread-faults.ts';
 		${SOLVE}
 		const SPOTS = ${JSON.stringify(SPOTS)};
 	`;
@@ -161,10 +164,25 @@ beforeAll(async () => {
 				const afterBroken = await enableThreads(${THREADS});
 				const afterBrokenSolve = solveSpot(createRun, defineSpot, config, 2, ${THREADS}).workers;
 
+				// A thread that stops answering without a word (one the browser
+				// killed) fails the step once the backstop passes. Its threads
+				// are not lent again either.
+				const lost = vanishingEngine(spawnEngineWorker, ${THREADS}, 300);
+				let lostError = '';
+				try {
+					lost.root(true)(0, 0, 1);
+				} catch (error) {
+					lostError = String(error && error.message);
+				} finally {
+					lost.close();
+				}
+				const afterLost = await enableThreads(${THREADS});
+				const afterLostSolve = solveSpot(createRun, defineSpot, config, 2, ${THREADS}).workers;
+
 				const released = await enableThreads(1);
 				return {
 					reason, threads, again, released, whileHeld, afterDoubleClose, afterFailedCreate,
-					brokenError, afterBroken, afterBrokenSolve, solves,
+					brokenError, afterBroken, afterBrokenSolve, lostError, afterLost, afterLostSolve, solves,
 				};
 			}`,
 			180_000,
@@ -252,6 +270,16 @@ describe('browser build threads', () => {
 		expect(isolated.brokenError).toMatch(/thread failed mid-iteration/);
 		expect(isolated.afterBroken).toBe(THREADS);
 		expect(isolated.afterBrokenSolve).toBe(THREADS);
+	});
+
+	it('fails a step whose thread stops answering, and replaces that thread', (context) => {
+		if (!isolated) {
+			context.skip();
+			return;
+		}
+		expect(isolated.lostError).toMatch(/stopped answering/);
+		expect(isolated.afterLost).toBe(THREADS);
+		expect(isolated.afterLostSolve).toBe(THREADS);
 	});
 
 	it('falls back to one thread on a page that is not isolated', (context) => {

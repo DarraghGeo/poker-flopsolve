@@ -173,6 +173,12 @@ export function warmStart(
 	cards?: Uint8Array,
 	fromNode = 0,
 ): WarmStartReport {
+	// Each node is copied on its own, so into shared storage every history of
+	// a group would overwrite the same block and the last would win. From
+	// shared storage the copy is exact: each node takes its owner's block.
+	if (to.layout.shared && !from.layout.shared) {
+		throw new Error('A spot with shareHistories can only warm-start from a solve that shares histories too');
+	}
 	const a = to.runouts.initial;
 	const b = from.runouts.initial;
 	// Rounds of `to` sit this many rounds into `from`.
