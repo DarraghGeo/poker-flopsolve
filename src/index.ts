@@ -684,6 +684,42 @@ export interface Approximations {
 	 * 3–14% mean error. The implementation is in this repository's history
 	 * (commit 32e8424, issue #21).
 	 *
+	 * The same idea was measured again for memory (issue #48), with
+	 * continuations from a solved blueprint instead of fixed rules and the cut
+	 * at the turn deal, and is not offered either. A one-size blueprint (0.75
+	 * pot, no raise, 235 MiB) was solved first. Each flop line into the turn
+	 * took the blueprint's turn and river strategy from the blueprint line most
+	 * like it, played out from the line's real pot and stacks. Both players
+	 * then picked per hand among k continuations: the blueprint, and copies
+	 * leaning ×5 toward folding, calling or raising. The flop was solved with
+	 * every size and raise.
+	 *
+	 * Leaf values were stored as each player's EV per hand for each pair of
+	 * picks, a pair of hands worth the difference. Plain per-hand vectors
+	 * made the leaf game non-zero-sum and CFR cycled. Exact per-pair tables
+	 * cost about n times the walks (n the opponent's hands) to build.
+	 *
+	 * It fit easily. On the round's target spot (As Kh 7d, pot 55, stack 975,
+	 * sizes 0.33 / 0.75 / 1.5, a 0.75 raise, three aggressions; 17 GiB exact)
+	 * it peaked at 0.5–0.8 GiB and took 31–55 s on 4 threads in Chromium. It
+	 * lost on accuracy.
+	 *
+	 * Root EV per combination was off by these amounts on average, in % of
+	 * pot, OOP / IP:
+	 *
+	 * - 4.5 / 4.4 against an exact T₀ (all-in-only raise, 0.84% of pot),
+	 *   where the one-size blueprint alone was 5.2 / 6.4;
+	 * - 3.1–3.6 / 2.3–3.8 on Ks 9s 4s, against 3.5 / 4.4;
+	 * - 6.3 / 4.7–6.1 on a T-shaped spot at SPR 3, against 2.0 / 3.0.
+	 *
+	 * Single hands were off by up to 35% of pot. The best root bet size per
+	 * hand matched the exact solve for 32–37% of the range on As Kh 7d,
+	 * chance for three sizes. More continuations (k = 2, 4) never helped.
+	 * Exact per-pair leaf tables only brought it level with the blueprint
+	 * alone. So it does no better than solving its own blueprint, which
+	 * already fits. The implementation and bench are in this repository's
+	 * history (commit ab0b66a, issue #48).
+	 *
 	 * Cheaper EV estimates (issue #27) were measured offline with bench/ev on
 	 * three flops, against each solve run on to 0.045% of pot, and none is
 	 * offered here. The idea was that per-hand EVs settle before
