@@ -116,12 +116,14 @@ if (isStatic && fourth in STATIC_RULES) {
 	config = budgetedConfig(full, kept);
 }
 
+// SHARE=1 measures the tree with shareHistories too (#49).
+if (process.env.SHARE === '1') config = { ...config, shareHistories: true };
 // The final tree, solved cold to the target as a user would.
 const growSeconds = (performance.now() - started) / 1000;
 const final = solveTo(config, 0.3, 2000, options);
 final.run.close();
 const measured = measure(final.run, final.seconds, final.exploitability);
-const name = isStatic ? `static-${fourth}` : `adaptive-${third}${seed === 'base' ? '' : `-${seed}`}${process.env.PROBE_GIB ? `-probe${process.env.PROBE_GIB}` : ''}`;
+const name = isStatic ? `static-${fourth}` : `adaptive-${third}${seed === 'base' ? '' : `-${seed}`}${process.env.PROBE_GIB ? `-probe${process.env.PROBE_GIB}` : ''}${process.env.SHARE === '1' ? '-share' : ''}`;
 const out = {
 	board, full: fullName, name, config, growSeconds: isStatic ? 0 : growSeconds, rounds, ...measured,
 	sizes: kept ? sizesSummary(full, kept) : null,
