@@ -10,24 +10,14 @@
 
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { COMBOS, createRun, defineSpot, NodeKind, solve } from '../../src/index.ts';
-import type { Precision, Solution, SolveRun, SpotConfig } from '../../src/index.ts';
+import type { Solution, SolveRun, SpotConfig } from '../../src/index.ts';
 import { Mode, matchupMass } from '../../src/cfr.ts';
 import { resolveSubgame } from '../../src/resolve.ts';
+import { warmStart } from '../../src/warm.ts';
 import type { Gadget } from '../../src/resolve.ts';
 import { configFromJson, fromJson, lineNode, nodeEvs, openMass, rootActionEvs, rootEvs, toJson, turnBoard } from './lib.ts';
-import { blueprint, small, target, type BoardName, type Later } from './spots.ts';
+import { blueprint, small, target, VARIANTS, type BoardName } from './spots.ts';
 
-export const VARIANTS: Record<string, { later: Later; buckets?: number; precision?: Precision }> = {
-	'1size': { later: { sizes: [0.75], maxRaises: 1 } },
-	'1size-b3': { later: { sizes: [0.75], maxRaises: 1 }, buckets: 3 },
-	'1size-i16': { later: { sizes: [0.75], maxRaises: 1 }, precision: 'i16' },
-	'1size-b3-i16': { later: { sizes: [0.75], maxRaises: 1 }, buckets: 3, precision: 'i16' },
-	'1size-allin': { later: { sizes: [0.75], maxRaises: 1, allowAllIn: true } },
-	'2size': { later: { sizes: [0.33, 1.5], maxRaises: 1 } },
-	'2size-i16': { later: { sizes: [0.33, 1.5], maxRaises: 1 }, precision: 'i16' },
-	'2size-b3-i16': { later: { sizes: [0.33, 1.5], maxRaises: 1 }, buckets: 3, precision: 'i16' },
-	'3size-b3-i16': { later: { sizes: [0.33, 0.75, 1.5], maxRaises: 1 }, buckets: 3, precision: 'i16' },
-};
 
 const [boardName, variantName, iterArg, gadgetArg] = process.argv.slice(2) as [BoardName, string, string?, string?];
 const variant = VARIANTS[variantName];
@@ -118,6 +108,7 @@ const sizeReport = actions.map((mine, d) => {
 		const err = evError(mine.evs[a], fromJson(ref.evs[a]), Float64Array.from(reach, (x) => (x > 0 ? x : 0)), new Float64Array(COMBOS).fill(1));
 		return { action: name, mae: err.mae, max: err.max };
 	});
+	const refEv = ref.evs.map(fromJson);
 	let agree = 0;
 	let agreeBest = 0;
 	let mass = 0;
@@ -131,7 +122,6 @@ const sizeReport = actions.map((mine, d) => {
 			return best;
 		};
 		const mineEv = mine.evs;
-		const refEv = ref.evs.map(fromJson);
 		const a = pick(mineEv);
 		const b = pick(refEv);
 		if (a < 0 || b < 0) continue;
@@ -308,7 +298,6 @@ for (const key of keys) {
 	const subBp = defineSpot(bp.subgameAt(node, board));
 	// The blueprint's own play at the node, as a subgame for comparing.
 	const bpSub = createRun(subBp, { analysisOnly: true });
-	const { warmStart } = await import('../../src/warm.ts');
 	warmStart(bpSub.solver.ctx, bp.solver.ctx, true, undefined, node);
 	const bpSol = bpSub.snapshot();
 	const refPot = ref.spot.potUnits / ref.spot.chipScale;
@@ -332,7 +321,7 @@ for (const key of keys) {
 	for (const gadget of GADGETS) {
 		for (const player of [0, 1] as const) {
 			const t = performance.now();
-			const resolved = resolveSubgame(bp, node, board, { player, gadget, betting: later, iterations: RESOLVE_ITERATIONS, values: VALUES });
+			const resolved = resolveSubgame(bp, node, board, { player, gadget, betting: later, iterations: RESOLVE_ITERATIONS, values: VALUES, measure: true });
 			const ms = performance.now() - t;
 			const sub = resolved.solution;
 			if (sub.spot.tree.nodeCount !== ref.spot.tree.nodeCount) throw new Error(`${key}: re-solved tree differs from the reference's`);

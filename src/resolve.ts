@@ -39,7 +39,9 @@
  * both players' strategies at a node, re-solve it once for each.
  *
  * Nested: a re-solved subgame is a `Solution` like any other, so a node below
- * it can be re-solved from it in turn.
+ * it can be re-solved from it in turn. 'reach-maxmargin' then counts only
+ * the gifts on the path inside that subgame: what the opponent gave up on
+ * earlier streets, in the solve the subgame came from, is not carried in.
  *
  * Measured (issue #47; Ks 9s 4s, a flop blueprint with three flop sizes and
  * one turn/river size, its turns re-solved at three sizes with raises,
@@ -90,6 +92,12 @@ export interface ResolveOptions {
 	 * hands that take their blueprint value stop training their own play.
 	 */
 	readonly iterations?: number;
+	/**
+	 * Also report `alternative` and `entered` with 'unsafe', at the cost of a
+	 * best-response pass over the blueprint below the node and one over the
+	 * subgame. The gadgets need them and always report them.
+	 */
+	readonly measure?: boolean;
 	/** Solver settings for the subgame; `iterations` and warm starts are this function's. */
 	readonly solve?: Pick<SolveOptions, 'workers' | 'precision' | 'algorithm' | 'engine' | 'simd'>;
 }
@@ -106,17 +114,16 @@ export interface ResolvedSubgame {
 	/**
 	 * Each opponent hand's guaranteed value at the node — what it had
 	 * against the blueprint, gifts included — in chips, indexed like
-	 * `COMBO_CARDS`; NaN off its range. Reported for 'unsafe' too, which
-	 * does not use it.
+	 * `COMBO_CARDS`; NaN off its range. Null for 'unsafe' unless `measure`.
 	 */
-	readonly alternative: Float64Array;
+	readonly alternative: Float64Array | null;
 	/**
 	 * Each opponent hand's best-response value in the re-solved subgame
 	 * against the refined strategy, in chips; NaN off its range. Where it
 	 * exceeds `alternative` the re-solve gave that hand more than the
-	 * blueprint did.
+	 * blueprint did. Null for 'unsafe' unless `measure`.
 	 */
-	readonly entered: Float64Array;
+	readonly entered: Float64Array | null;
 	/** What each opponent hand gave up on the path ('reach-maxmargin'), in chips, else null. */
 	readonly gifts: Float64Array | null;
 	readonly iterations: number;
@@ -138,43 +145,48 @@ export function resolveSubgame(blueprint: Solution, node: number, board: number,
 		throw new Error(`iterations must be a positive whole number; got ${iterations}`);
 	}
 	const spot = defineSpot(blueprint.subgameAt(node, board, options.betting));
+	const measured = gadget !== 'unsafe' || options.measure === true;
+	const mode = options.values === 'blueprint' ? Mode.Average : Mode.BestResponse;
+	const base = spot.players[opponent].weights.slice();
+	const mine = spot.players[player].weights;
+	// Mass of the refined player's range each opponent hand does not block.
+	const open = measured ? openMass(mine) : null;
+
+	// The blueprint's values below the node, worked out before the
+	// subgame's storage and threads are taken.
+	const live = liveCombos(spot.players);
+	const blueprintValues = open ? blueprint.solver.valuesAt(node, board, opponent, base, mine, live, live.length, mode) : null;
+	const gifts = open && gadget === 'reach-maxmargin' ? pathGifts(blueprint, node, board, opponent, mode) : null;
+
 	const run = createRun(spot, { ...options.solve });
 	try {
 		const { ctx } = run.solver;
-
-		const mode = options.values === 'blueprint' ? Mode.Average : Mode.BestResponse;
-		const base = spot.players[opponent].weights.slice();
-		const mine = spot.players[player].weights;
 		// The opponent's root hands in the subgame, as the traversal lists them.
 		const lists = ctx.active;
 		const slot = lists.roundBase[0] * 2 + opponent;
 		const from = lists.start[slot];
 		const count = lists.count[slot];
 		const deals = ctx.runoutWeight[0];
-		// Mass of the refined player's range each opponent hand does not block.
-		const open = openMass(mine);
 		const openOf = new Float64Array(count);
-		for (let i = 0; i < count; i++) openOf[i] = open[lists.list[from + i]];
+		if (open) for (let i = 0; i < count; i++) openOf[i] = open[lists.list[from + i]];
 
 		// The blueprint's value for each opponent hand at the node, in chips.
-		const alternative = new Float64Array(COMBOS).fill(Number.NaN);
-		{
-			const live = liveCombos(spot.players);
-			const values = blueprint.solver.valuesAt(node, board, opponent, base, mine, live, live.length, mode);
+		let alternative: Float64Array | null = null;
+		if (open && blueprintValues) {
+			alternative = new Float64Array(COMBOS).fill(Number.NaN);
 			for (const combo of live) {
-				if (base[combo] > 0 && open[combo] > 0) alternative[combo] = values[combo] / (open[combo] * deals);
+				if (base[combo] > 0 && open[combo] > 0) alternative[combo] = blueprintValues[combo] / (open[combo] * deals);
 			}
+			if (gifts) for (let combo = 0; combo < COMBOS; combo++) alternative[combo] += gifts[combo];
 		}
-		const gifts = gadget === 'reach-maxmargin' ? pathGifts(blueprint, node, board, opponent, mode) : null;
-		if (gifts) for (let combo = 0; combo < COMBOS; combo++) alternative[combo] += gifts[combo];
 
 		// Per root entry: the blueprint value and the gadget's regrets.
 		const alt = new Float64Array(count);
 		const usable = new Uint8Array(count);
 		for (let i = 0; i < count; i++) {
 			const combo = lists.list[from + i];
-			usable[i] = base[combo] > 0 && openOf[i] > 0 && Number.isFinite(alternative[combo]) ? 1 : 0;
-			alt[i] = usable[i] ? alternative[combo] : 0;
+			usable[i] = alternative && base[combo] > 0 && openOf[i] > 0 && Number.isFinite(alternative[combo]) ? 1 : 0;
+			alt[i] = usable[i] ? alternative![combo] : 0;
 		}
 		const value = new Float64Array(count);
 		const regretEnter = new Float64Array(count);
@@ -274,12 +286,15 @@ export function resolveSubgame(blueprint: Solution, node: number, board: number,
 		}
 
 		// Each opponent hand's best response to the refined strategy.
-		const response = run.solver.root(Mode.BestResponse, opponent, 0);
-		const entered = new Float64Array(COMBOS).fill(Number.NaN);
-		for (let i = 0; i < count; i++) {
-			if (!usable[i]) continue;
-			const chips = response[i] / (openOf[i] * deals);
-			for (let m = lists.memberStart[from + i]; m < lists.memberStart[from + i + 1]; m++) entered[lists.memberCombo[m]] = chips;
+		let entered: Float64Array | null = null;
+		if (measured) {
+			const response = run.solver.root(Mode.BestResponse, opponent, 0);
+			entered = new Float64Array(COMBOS).fill(Number.NaN);
+			for (let i = 0; i < count; i++) {
+				if (!usable[i]) continue;
+				const chips = response[i] / (openOf[i] * deals);
+				for (let m = lists.memberStart[from + i]; m < lists.memberStart[from + i + 1]; m++) entered[lists.memberCombo[m]] = chips;
+			}
 		}
 		return { solution: run.snapshot(), player, gadget, alternative, entered, gifts, iterations };
 	} finally {
@@ -296,18 +311,26 @@ function liveCombos(players: readonly { readonly weights: Float64Array }[]): Uin
 	return Uint16Array.from(live);
 }
 
-/** For each combination, the mass of `range` it does not block. */
-function openMass(range: Float64Array): Float64Array {
-	const card = new Float64Array(52);
-	let total = 0;
-	for (let h = 0; h < COMBOS; h++) {
-		total += range[h];
-		card[COMBO_CARDS[h * 2]] += range[h];
-		card[COMBO_CARDS[h * 2 + 1]] += range[h];
-	}
+/**
+ * For each combination, the mass of `range` it does not block. Summed
+ * directly rather than by inclusion-exclusion over cards, so a hand with
+ * nothing to face gets exactly zero, not a rounding residue that passes a
+ * `> 0` check and is then divided by.
+ */
+export function openMass(range: Float64Array): Float64Array {
+	const held: number[] = [];
+	for (let h = 0; h < COMBOS; h++) if (range[h] > 0) held.push(h);
 	const open = new Float64Array(COMBOS);
 	for (let h = 0; h < COMBOS; h++) {
-		open[h] = Math.max(0, total - card[COMBO_CARDS[h * 2]] - card[COMBO_CARDS[h * 2 + 1]] + range[h]);
+		const a = COMBO_CARDS[h * 2];
+		const b = COMBO_CARDS[h * 2 + 1];
+		let mass = 0;
+		for (const other of held) {
+			const c = COMBO_CARDS[other * 2];
+			const d = COMBO_CARDS[other * 2 + 1];
+			if (c !== a && c !== b && d !== a && d !== b) mass += range[other];
+		}
+		open[h] = mass;
 	}
 	return open;
 }

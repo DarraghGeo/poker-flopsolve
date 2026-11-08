@@ -62,7 +62,10 @@ export function matchNodes(to: Tree, from: Tree, fromRoot = 0): Int32Array {
 	const match = new Int32Array(to.nodeCount).fill(-1);
 	// A subgame's rounds count from its own first one.
 	const shift = from.round[fromRoot];
-	const base = investedBefore(from, fromRoot);
+	if (fromRoot !== 0 && !opensRound(from, fromRoot)) {
+		throw new Error(`Node ${fromRoot} is inside a betting round; a subtree can only be copied from a node that opens a betting round`);
+	}
+	const invested = investedBefore(from, fromRoot);
 	const walk = (a: number, b: number): void => {
 		if (to.kind[a] !== from.kind[b] || to.round[a] + shift !== from.round[b]) return;
 		if (to.kind[a] === NodeKind.Chance) {
@@ -73,7 +76,7 @@ export function matchNodes(to: Tree, from: Tree, fromRoot = 0): Int32Array {
 		match[a] = b;
 		for (let e = 0; e < to.numEdges[a]; e++) {
 			const edge = to.firstEdge[a] + e;
-			const other = matchEdge(to, edge, a, from, b, base);
+			const other = matchEdge(to, edge, a, from, b, invested);
 			if (other >= 0) walk(to.edgeChild[edge], from.edgeChild[other]);
 		}
 	};
@@ -86,11 +89,20 @@ export function matchNodes(to: Tree, from: Tree, fromRoot = 0): Int32Array {
  * Investments count from the start of the hand, so a subtree's bets carry it
  * and a subgame's do not.
  */
+function opensRound(tree: Tree, node: number): boolean {
+	if (tree.kind[node] !== NodeKind.Decision) return false;
+	for (let chance = 0; chance < tree.nodeCount; chance++) {
+		if (tree.kind[chance] !== NodeKind.Chance) continue;
+		for (let e = 0; e < tree.numEdges[chance]; e++) if (tree.edgeChild[tree.firstEdge[chance] + e] === node) return true;
+	}
+	return false;
+}
+
 function investedBefore(tree: Tree, node: number): number {
 	return (tree.pot[node] - tree.pot[0]) / 2;
 }
 
-function matchEdge(to: Tree, edge: number, node: number, from: Tree, other: number, base = 0): number {
+function matchEdge(to: Tree, edge: number, node: number, from: Tree, other: number, invested = 0): number {
 	const kind = to.edgeAction[edge];
 	const sized = kind === ActionKind.Bet || kind === ActionKind.Raise;
 	const size = to.edgeTarget[edge] / to.pot[node];
@@ -100,7 +112,7 @@ function matchEdge(to: Tree, edge: number, node: number, from: Tree, other: numb
 		const candidate = from.firstEdge[other] + e;
 		if (from.edgeAction[candidate] !== kind) continue;
 		if (!sized) return candidate;
-		const gap = Math.abs(Math.log((from.edgeTarget[candidate] - base) / from.pot[other] / size));
+		const gap = Math.abs(Math.log((from.edgeTarget[candidate] - invested) / from.pot[other] / size));
 		if (gap < bestGap) {
 			bestGap = gap;
 			best = candidate;
@@ -187,7 +199,11 @@ export function warmStart(
 		if (fromNode !== 0) throw new Error('A subgame warm start cannot relabel cards');
 		checkRelabelling(cards, a, b);
 	} else if (a.length !== from.runouts.width[shift] || b.some((card, i) => card !== a[i])) {
-		throw new Error('A warm start must come from a solve of the same board, unless `warmCards` relabels one onto the other');
+		throw new Error(
+			fromNode === 0
+				? 'A warm start must come from a solve of the same board, unless `warmCards` relabels one onto the other'
+				: `A subgame warm start must have the board dealt at node ${fromNode} of the solve it copies`,
+		);
 	}
 	// A real board of `to` as `from` sees it: its own given board first, in
 	// its order, then the dealt cards relabelled.
@@ -199,7 +215,7 @@ export function warmStart(
 		comboOf[combo] = cards ? comboIndex(cards[COMBO_CARDS[combo * 2]], cards[COMBO_CARDS[combo * 2 + 1]]) : combo;
 	}
 	const match = matchNodes(to.tree, from.tree, fromNode);
-	const base = investedBefore(from.tree, fromNode);
+	const invested = investedBefore(from.tree, fromNode);
 	const { tree } = to;
 	const width = to.layout.maxActions * COMBOS;
 	const oldRegret = new Float64Array(width);
@@ -223,7 +239,7 @@ export function warmStart(
 		// Which old action each new one continues.
 		const actionOf = new Int32Array(actions).fill(-1);
 		for (let e = 0; e < actions; e++) {
-			const other = matchEdge(tree, tree.firstEdge[node] + e, node, from.tree, old, base);
+			const other = matchEdge(tree, tree.firstEdge[node] + e, node, from.tree, old, invested);
 			if (other >= 0) actionOf[e] = other - from.tree.firstEdge[old];
 		}
 

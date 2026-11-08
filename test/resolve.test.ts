@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { COMBOS, createRun, defineSpot, NodeKind, solve } from '../src/index.ts';
-import type { Solution } from '../src/index.ts';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { COMBO_CARDS, COMBOS, createRun, defineSpot, NodeKind, parseCards, solve } from '../src/index.ts';
+import type { Solution, SolveRun } from '../src/index.ts';
+import type { Tree } from '../src/tree.ts';
 import { Mode } from '../src/cfr.ts';
-import { resolveSubgame } from '../src/resolve.ts';
+import { openMass, resolveSubgame } from '../src/resolve.ts';
 import type { Gadget } from '../src/resolve.ts';
 import { matchNodes, warmStart } from '../src/warm.ts';
 
@@ -20,10 +21,10 @@ describe('resolveSubgame', () => {
 		betSizes: [[0.75]],
 		maxRaises: 1,
 	};
-	const run = createRun(defineSpot(config), { workers: 1 });
-	run.step(1500);
-	const blueprint = run.snapshot();
-	const { tree } = blueprint.spot;
+	let run: SolveRun;
+	let blueprint: Solution;
+	let tree: Tree;
+	let checked: number;
 	const riverAfter = (sol: Solution, path: string): number => {
 		const t = sol.spot.tree;
 		for (let node = 0; node < t.nodeCount; node++) {
@@ -33,12 +34,21 @@ describe('resolveSubgame', () => {
 		}
 		throw new Error(`no node after ${path}`);
 	};
-	const checked = riverAfter(blueprint, 'check check /');
+	// Solved once for the file, when its tests run rather than when they are collected.
+	beforeAll(() => {
+		run = createRun(defineSpot(config), { workers: 1 });
+		run.step(1500);
+		blueprint = run.snapshot();
+		tree = blueprint.spot.tree;
+		checked = riverAfter(blueprint, 'check check /');
+	});
+	afterAll(() => run.close());
 	const rich = { betSizes: [[0.33, 0.75, 1.5]], maxRaises: 2, allowAllIn: true };
 	const gadgets: Gadget[] = ['resolve', 'maxmargin', 'reach-maxmargin'];
 
 	/** Largest margin, in chips, by which an opponent hand beats its guaranteed value. */
-	const worstExcess = (alternative: Float64Array, entered: Float64Array): number => {
+	const worstExcess = (alternative: Float64Array | null, entered: Float64Array | null): number => {
+		if (!alternative || !entered) throw new Error('not measured');
 		let worst = -Infinity;
 		for (let combo = 0; combo < COMBOS; combo++) {
 			if (Number.isNaN(entered[combo])) continue;
@@ -118,6 +128,12 @@ describe('resolveSubgame', () => {
 		const resolved = resolveSubgame(blueprint, checked, 7, { player: 0, gadget: 'unsafe', betting: rich, iterations: 120 });
 		const plain = solve(defineSpot(blueprint.subgameAt(checked, 7, rich)), { iterations: 120, workers: 1 });
 		expect(resolved.solution.ev(0)).toBe(plain.ev(0));
+		// Nothing is measured that nothing uses, unless asked.
+		expect(resolved.alternative).toBeNull();
+		expect(resolved.entered).toBeNull();
+		const measured = resolveSubgame(blueprint, checked, 7, { player: 0, gadget: 'unsafe', betting: rich, iterations: 120, measure: true });
+		expect(measured.solution.ev(0)).toBe(plain.ev(0));
+		expect(measured.entered).not.toBeNull();
 		expect(Array.from(resolved.solution.strategyAt(0, 0).probs)).toEqual(Array.from(plain.strategyAt(0, 0).probs));
 	});
 
@@ -142,7 +158,7 @@ describe('resolveSubgame', () => {
 		const rough = early.snapshot();
 		const node = riverAfter(rough, 'check check /');
 		for (const player of [0, 1] as const) {
-			const unsafe = resolveSubgame(rough, node, 3, { player, gadget: 'unsafe', iterations: 400 });
+			const unsafe = resolveSubgame(rough, node, 3, { player, gadget: 'unsafe', iterations: 400, measure: true });
 			const margin = resolveSubgame(rough, node, 3, { player, gadget: 'maxmargin', iterations: 400 });
 			expect(worstExcess(margin.alternative, margin.entered)).toBeLessThanOrEqual(worstExcess(unsafe.alternative, unsafe.entered) + 1e-9);
 		}
@@ -154,10 +170,10 @@ describe('resolveSubgame', () => {
 		expect(plain.gifts).toBeNull();
 		let positive = 0;
 		for (let combo = 0; combo < COMBOS; combo++) {
-			if (Number.isNaN(reach.alternative[combo])) continue;
+			if (Number.isNaN(reach.alternative![combo])) continue;
 			const gift = reach.gifts![combo];
 			expect(gift).toBeGreaterThanOrEqual(0);
-			expect(reach.alternative[combo]).toBeCloseTo(plain.alternative[combo] + gift, 9);
+			expect(reach.alternative![combo]).toBeCloseTo(plain.alternative![combo] + gift, 9);
 			if (gift > 1e-6) positive++;
 		}
 		// IP checked behind on the turn with hands that would rather have bet.
@@ -180,6 +196,36 @@ describe('resolveSubgame', () => {
 		const nested = resolveSubgame(turn.solution, river, 2, { player: 0, gadget: 'maxmargin', iterations: 60 });
 		expect(nested.solution.spot.board).toHaveLength(5);
 		expect(Number.isFinite(nested.solution.ev(0))).toBe(true);
+	});
+
+	it('gives a hand that faces no opponent hand exactly zero open mass', () => {
+		// Every opponent hand holds the As or the Kd, so AsKd faces none of
+		// them; a rounding residue would pass "> 0" checks and be divided by.
+		const range = new Float64Array(COMBOS);
+		let seed = 7;
+		const random = (): number => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+		const [As, Kd] = parseCards('As Kd');
+		for (let combo = 0; combo < COMBOS; combo++) {
+			const a = COMBO_CARDS[combo * 2];
+			const b = COMBO_CARDS[combo * 2 + 1];
+			const hasAs = a === As || b === As;
+			const hasKd = a === Kd || b === Kd;
+			if (hasAs !== hasKd) range[combo] = random() / 3;
+		}
+		const open = openMass(range);
+		for (let combo = 0; combo < COMBOS; combo++) {
+			const a = COMBO_CARDS[combo * 2];
+			const b = COMBO_CARDS[combo * 2 + 1];
+			if ((a === As && b === Kd) || (a === Kd && b === As)) expect(open[combo]).toBe(0);
+		}
+	});
+
+	it('refuses to copy a subtree that starts inside a betting round', () => {
+		// Investments are only level, and so known, where a round opens.
+		const midRound = tree.edgeChild[tree.firstEdge[checked]];
+		const sub = createRun(defineSpot(blueprint.subgameAt(checked, 0)), { analysisOnly: true });
+		expect(() => warmStart(sub.solver.ctx, run.solver.ctx, true, undefined, midRound)).toThrow(/opens a betting round/);
+		expect(() => matchNodes(sub.spot.tree, tree, midRound)).toThrow(/opens a betting round/);
 	});
 
 	it('refuses a node that does not open a betting round', () => {

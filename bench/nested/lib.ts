@@ -2,6 +2,7 @@
  * Measurements shared by `reference.ts` and `run.ts` (issue #47).
  */
 
+import { openMass as solverOpenMass } from '../../src/resolve.ts';
 import { COMBO_CARDS, COMBOS, NodeKind, parseCards } from '../../src/index.ts';
 import type { Solution, SpotConfig } from '../../src/index.ts';
 import { Mode } from '../../src/cfr.ts';
@@ -12,18 +13,9 @@ export type Vec = number[];
 export const toJson = (v: ArrayLike<number>): (number | null)[] => Array.from(v, (x) => (Number.isFinite(x) ? x : null));
 export const fromJson = (v: readonly (number | null)[]): number[] => v.map((x) => (x === null ? Number.NaN : x));
 
-/** For each combination, the mass of `range` it does not block. */
+/** For each combination, the mass of `range` it does not block (the solver's own). */
 export function openMass(range: ArrayLike<number>): Float64Array {
-	const card = new Float64Array(52);
-	let total = 0;
-	for (let h = 0; h < COMBOS; h++) {
-		total += range[h];
-		card[COMBO_CARDS[h * 2]] += range[h];
-		card[COMBO_CARDS[h * 2 + 1]] += range[h];
-	}
-	const open = new Float64Array(COMBOS);
-	for (let h = 0; h < COMBOS; h++) open[h] = Math.max(0, total - card[COMBO_CARDS[h * 2]] - card[COMBO_CARDS[h * 2 + 1]] + range[h]);
-	return open;
+	return solverOpenMass(Float64Array.from(range));
 }
 
 /** `reach` with combinations using a card of `cards` zeroed. */

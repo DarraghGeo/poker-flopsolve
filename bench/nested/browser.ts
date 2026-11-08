@@ -8,17 +8,12 @@
 
 import { runInBrowser } from '../../scripts/browser-harness.ts';
 import type { SpotConfig } from '../../src/index.ts';
-import { blueprint, target, type BoardName, type Later } from './spots.ts';
+import { blueprint, target, VARIANTS, type BoardName } from './spots.ts';
 
-const VARIANTS: Record<string, { later: Later; buckets?: number; precision?: 'i16' }> = {
-	'1size': { later: { sizes: [0.75], maxRaises: 1 } },
-	'1size-b3': { later: { sizes: [0.75], maxRaises: 1 }, buckets: 3 },
-	'1size-b3-i16': { later: { sizes: [0.75], maxRaises: 1 }, buckets: 3, precision: 'i16' },
-	'2size-i16': { later: { sizes: [0.33, 1.5], maxRaises: 1 }, precision: 'i16' },
-};
 
 const [boardName, variantName, ...rest] = process.argv.slice(2) as [BoardName, string, ...string[]];
 const variant = VARIANTS[variantName];
+if (!variant) throw new Error(`unknown variant ${variantName}`);
 const workerList = rest.length ? rest.map(Number) : [1, 4];
 const full = target(boardName);
 const config: SpotConfig = { ...blueprint(full, variant.later), runoutBuckets: variant.buckets ?? false, maxBytes: 3.5 * 2 ** 30 };
@@ -64,6 +59,7 @@ const out = await runInBrowser<Out>(
 			if (last) last.close();
 			last = run;
 		}
+		if (!last) throw new Error('no blueprint solved: every worker count asked for is above the ' + threads + ' threads available');
 		// Snapshots outlive close(), which hands the engine threads back for the re-solves.
 		const sol = last.snapshot();
 		last.close();

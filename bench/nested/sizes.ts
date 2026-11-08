@@ -13,16 +13,10 @@
 
 import { readFileSync } from 'node:fs';
 import { COMBOS, defineSpot, solve } from '../../src/index.ts';
-import type { Precision, SpotConfig } from '../../src/index.ts';
+import type { SpotConfig } from '../../src/index.ts';
 import { fromJson, rootActionEvs } from './lib.ts';
-import { blueprint, target, type BoardName, type Later } from './spots.ts';
+import { blueprint, target, VARIANTS, type BoardName } from './spots.ts';
 
-const VARIANTS: Record<string, { later: Later; buckets?: number; precision?: Precision }> = {
-	'1size': { later: { sizes: [0.75], maxRaises: 1 } },
-	'1size-b3-i16': { later: { sizes: [0.75], maxRaises: 1 }, buckets: 3, precision: 'i16' },
-	'2size-i16': { later: { sizes: [0.33, 1.5], maxRaises: 1 }, precision: 'i16' },
-	'3size-b3-i16': { later: { sizes: [0.33, 0.75, 1.5], maxRaises: 1 }, buckets: 3, precision: 'i16' },
-};
 
 const CLEAR = 0.5;
 const NEAR = 1;
@@ -137,6 +131,7 @@ function analyse(name: string, actions: readonly string[], refEv: ArrayLike<numb
 const out: Record<string, Report[]> = {};
 for (const variantName of variantNames) {
 	const variant = VARIANTS[variantName];
+	if (!variant) throw new Error(`unknown variant ${variantName}`);
 	const config: SpotConfig = { ...blueprint(full, variant.later), runoutBuckets: variant.buckets ?? false };
 	const bp = solve(defineSpot(config), { workers: 4, targetPercent: 0.3, iterations: 2000, precision: variant.precision });
 	const mine = rootActionEvs(bp);

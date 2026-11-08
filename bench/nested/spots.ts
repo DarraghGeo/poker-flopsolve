@@ -4,7 +4,7 @@
  * simplify the turn and river.
  */
 
-import type { SpotConfig } from '../../src/index.ts';
+import type { Precision, SpotConfig } from '../../src/index.ts';
 
 const OOP = 'AA-22,AKs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,AKo-ATo,KQo-KJo';
 const IP = 'TT-22,AQs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,76s,AQo-ATo,KQo';
@@ -76,4 +76,17 @@ export function blueprint(full: SpotConfig, later: Later): SpotConfig {
 export const TURNS: Record<BoardName, readonly string[]> = {
 	rainbow: ['2c', 'Qs', '7c'],
 	monotone: ['2h', 'Qd', 'As'],
+};
+
+/** The blueprints measured: turn and river betting, runout buckets, storage. */
+export const VARIANTS: Record<string, { later: Later; buckets?: number; precision?: Precision }> = {
+	'1size': { later: { sizes: [0.75], maxRaises: 1 } },
+	'1size-b3': { later: { sizes: [0.75], maxRaises: 1 }, buckets: 3 },
+	'1size-i16': { later: { sizes: [0.75], maxRaises: 1 }, precision: 'i16' },
+	'1size-b3-i16': { later: { sizes: [0.75], maxRaises: 1 }, buckets: 3, precision: 'i16' },
+	'1size-allin': { later: { sizes: [0.75], maxRaises: 1, allowAllIn: true } },
+	'2size': { later: { sizes: [0.33, 1.5], maxRaises: 1 } },
+	'2size-i16': { later: { sizes: [0.33, 1.5], maxRaises: 1 }, precision: 'i16' },
+	'2size-b3-i16': { later: { sizes: [0.33, 1.5], maxRaises: 1 }, buckets: 3, precision: 'i16' },
+	'3size-b3-i16': { later: { sizes: [0.33, 0.75, 1.5], maxRaises: 1 }, buckets: 3, precision: 'i16' },
 };
