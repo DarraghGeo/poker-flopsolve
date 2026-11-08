@@ -108,18 +108,26 @@ for (;;) {
 	const traverser = Atomics.load(control, CONTROL.traverser) as 0 | 1;
 	const iterWeight = Atomics.load(control, CONTROL.iterWeight);
 
-	for (let entry = 0; entry < setup.plan.entryNodes.length; entry++) {
-		const node = setup.plan.entryNodes[entry];
-		for (let i = 0; i < COMBOS; i++) {
-			reachMe[i] = exchange[entry * 2 * COMBOS + i];
-			reachOpp[i] = exchange[entry * 2 * COMBOS + COMBOS + i];
+	try {
+		for (let entry = 0; entry < setup.plan.entryNodes.length; entry++) {
+			const node = setup.plan.entryNodes[entry];
+			for (let i = 0; i < COMBOS; i++) {
+				reachMe[i] = exchange[entry * 2 * COMBOS + i];
+				reachOpp[i] = exchange[entry * 2 * COMBOS + COMBOS + i];
+			}
+			const value = solver.traverseChance(mode, traverser, iterWeight, node, reachMe, reachOpp);
+			for (let i = 0; i < COMBOS; i++) exchange[partialBase + entry * COMBOS + i] = value[i];
 		}
-		const value = solver.traverseChance(mode, traverser, iterWeight, node, reachMe, reachOpp);
-		for (let i = 0; i < COMBOS; i++) exchange[partialBase + entry * COMBOS + i] = value[i];
+	} catch (error) {
+		// The main thread is blocked in Atomics.wait and cannot see this
+		// thread's error event, so say so in shared memory (and count as
+		// done, below).
+		Atomics.store(control, CONTROL.failed, 1);
+		throw error;
+	} finally {
+		Atomics.add(control, CONTROL.done, 1);
+		Atomics.notify(control, CONTROL.done);
 	}
-
-	Atomics.add(control, CONTROL.done, 1);
-	Atomics.notify(control, CONTROL.done);
 }
 
 parentPort?.close();

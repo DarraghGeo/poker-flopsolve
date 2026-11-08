@@ -626,10 +626,38 @@ export interface Approximations {
 	 * terminal work of the bench flop spots (rainbow, monotone, and the
 	 * same in pairs-and-broadway form), the river 99%, so shortening the flop
 	 * vectors 2 to 3 times (198 combos to 92 classes on As Kh 7d, 217 to 75 on
-	 * Ks 9s 4s) bounds the speed-up at 0.02%. Carried through to the river
-	 * the same classes would shorten vectors 2.0 to 3.1 times, but members of
-	 * a class block different cards on each runout, so that is the rejected
-	 * river buckets above with blocker detail averaged away as well.
+	 * Ks 9s 4s) bounds the speed-up at 0.02%.
+	 *
+	 * Carried through every street (#40), against the packed hand lists, the
+	 * same classes shorten river vectors 1.9 to 2.1 times (784,806 to 384,948
+	 * on As Kh 7d, 171,442 to 90,704 on Ks 9s 4s, 177,944 to 84,404 on Ks 9s
+	 * 4s in pairs and broadway), and they were measured before building
+	 * (`bench/hand-classes/`). The test was the best case: every class's
+	 * regrets and strategy sums were tied after each iteration, so each
+	 * decision played one strategy per class while payoffs and card removal
+	 * stayed exact. They are not offered, for two reasons.
+	 *
+	 * - Accuracy. On As Kh 7d the classes put a hearts flush draw and the
+	 *   same ranks in clubs together, and they stalled at 0.53% of pot, where
+	 *   the exact solve reaches 0.3% in 60 iterations and 0.1% in 105.
+	 *   Keying the suit counts on the current board instead keeps draws
+	 *   apart. That shortened rainbow vectors only 1.6 times (1.1 times on
+	 *   monotone), needed twice the iterations to reach 0.1%, and stalled
+	 *   near 0.09%. On Ks 9s 4s only spades can flush, so the classes cost
+	 *   little: the same iterations to 0.3%, 10–15% more to 0.1%, and
+	 *   0.024% after 500 iterations where the exact solve had 0.005%. In
+	 *   pairs and broadway they cost nothing, because the exact solve already
+	 *   plays every member of a class alike.
+	 * - Speed. Only the decision rows shrink. The fold and showdown kernels
+	 *   must still read each hand's own two cards to keep card removal
+	 *   exact, and they are about 70% of an iteration: single-threaded in a
+	 *   cloud container, Ks 9s 4s took 93 ms, and 27 ms with the engine's
+	 *   fold and showdown calls replaced by zeros; As Kh 7d took 358 and 116
+	 *   ms. So the bound is
+	 *   1.15 to 1.2 times, before the cost of expanding classes into hands at
+	 *   every terminal. Kernels at class length would need each class's
+	 *   blocked mass averaged over its members. That is only approximate, and
+	 *   it can only make the floors above worse.
 	 *
 	 * Regret-based pruning — skipping the subtree below an action no hand of
 	 * the actor plays (Brown & Sandholm, 2015) — was measured before building
