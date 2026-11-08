@@ -51,8 +51,6 @@ for (const [name, board] of Object.entries(BOARDS)) {
 		// The archetype's strategy against the new IP range. A library would store
 		// one value per OOP hand per IP hand and take their reweighted average;
 		// values are linear in the opponent's reach, so this is that average.
-		// (`pairValuesAt`, which would build the table, is only exact where its
-		// traverser acts after a bet: see #42.)
 		const oop = comboEvs(archetype, library.solver, 0, custom);
 		const precomputeMs = performance.now() - started;
 		// IP's hands face the same OOP range, so the archetype's own values stand.

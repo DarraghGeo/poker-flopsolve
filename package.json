@@ -20,6 +20,11 @@
       "types": "./dist/index.d.ts",
       "browser": "./dist/browser.js",
       "import": "./dist/index.js"
+    },
+    "./threads": {
+      "types": "./dist/threads.d.ts",
+      "browser": "./dist/browser-threads.js",
+      "import": "./dist/threads.js"
     }
   },
   "files": [
@@ -38,6 +43,7 @@
     "bench": "node --import tsx bin/bench.ts",
     "bench:kernels": "node --import tsx bin/kernels.ts",
     "bench:browser": "node --import tsx bin/bench-browser.ts",
+    "bench:browser:threads": "node --import tsx bin/bench-browser-threads.ts",
     "build:wasm": "node --import tsx scripts/build-wasm.ts",
     "prepublishOnly": "npm run build",
     "bench:compare": "node --import tsx bench/compare/run.ts"
@@ -60,6 +66,7 @@
     "vitest": "^2.1.8"
   },
   "browser": {
-    "./dist/index.js": "./dist/browser.js"
+    "./dist/index.js": "./dist/browser.js",
+    "./dist/threads.js": "./dist/browser-threads.js"
   }
 }
