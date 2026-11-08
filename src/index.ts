@@ -1078,6 +1078,33 @@ export interface Approximations {
 	 * 0.8–1.0% of pot off T's per combination on Ks9s4s (T itself took 50
 	 * minutes on 4 threads to 0.23%), and T's turn and river sizes would
 	 * need grafts per flop line, which multiplies the solves.
+	 *
+	 * Growing bet sizes adaptively to a byte budget (#51) was built and
+	 * measured. Only the fixed shape it found is offered, as
+	 * `SpotConfig.thinSizes`; `bench/adaptive/` has the growth. Growth starts
+	 * from one size per decision (0.75, a shove facing a bet where there is
+	 * no sized raise). Each round, it probes every cut size in a tree with it
+	 * added, warm-started from the current solve and stepped 60 iterations.
+	 * It scores each by its first-order gain per byte (Σ reach · σ · (Q −
+	 * the best kept action's Q)), whose rank correlation with the true gain
+	 * was 0.81 on a turn spot (0.71 for the best-response gain). It then adds
+	 * the best until the round's share of the budget is spent, and re-solves.
+	 * On As Kh 7d (bench ranges, pot 55, stack 975, 0.33 / 0.75 / 1.5 with a
+	 * shove, shove-only raises, 2 aggressions, 5.8 GiB), 1.7 GiB grown in 4
+	 * rounds had root EVs 1.0 / 1.2% of pot off the exact solve per
+	 * combination (3.9% at most), with 90% of OOP's range picking the same
+	 * size. The issue's static rule (3 sizes on flop and turn opening bets) had
+	 * 1.6 / 1.3% and 13.5% in 2.0 GiB, and `thinSizes` 1.45 / 1.74% and
+	 * 5.6–6.3% in 1.3 GiB. But the probes need a second tree beside the
+	 * current one: the process peaked at 7.5 GiB (8.7 GiB grown from three
+	 * flop sizes, and still 4.8 GiB with probes capped at 0.9 GiB for a
+	 * 0.85 GiB tree), and growth took 31 to 43 minutes on 3 threads before
+	 * the final solve. On Ks 9s 4s, grown from one size, it never added the
+	 * flop sizes it needed and ended worse than the fixed rule (2.9 / 4.1%
+	 * against 2.1 / 1.9%). Its own census of the exact solve also showed that
+	 * how often a size is used is a poor guide to what it is worth. The flop's
+	 * 0.75 bet was used 5% of the time for 0.005% of pot in 29% of the
+	 * storage, while river shove-raises, used 3% of the time, were worth 2%.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
