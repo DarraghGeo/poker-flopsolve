@@ -29,6 +29,8 @@ export interface HandLists {
 	readonly count: Uint16Array;
 	readonly list: Uint16Array;
 	readonly roundBase: Int32Array;
+	readonly memberStart: Int32Array;
+	readonly memberCombo: Uint16Array;
 }
 
 /** Everything a hand-space traversal looks up. */
@@ -48,6 +50,24 @@ export interface HandSpace {
 	 */
 	readonly sameStart: Int32Array;
 	readonly same: Int32Array;
+}
+
+/**
+ * Point every hand the entries of one list stand for at its entry's position
+ * in that list, or back at -1 with `clear`.
+ */
+export function markMembers(
+	lists: Pick<HandLists, 'memberStart' | 'memberCombo'>,
+	from: number,
+	count: number,
+	indexOf: Int32Array,
+	clear: boolean,
+): void {
+	for (let i = 0; i < count; i++) {
+		for (let m = lists.memberStart[from + i]; m < lists.memberStart[from + i + 1]; m++) {
+			indexOf[lists.memberCombo[m]] = clear ? -1 : i;
+		}
+	}
 }
 
 /** A list's offset and length for a round, board and player. */
@@ -75,7 +95,7 @@ export function buildHandSpace(
 			const parent = runouts.parent[round][child];
 			for (let player = 0; player < 2; player++) {
 				const [parentFrom, parentCount] = span(lists, round - 1, parent, player);
-				for (let i = 0; i < parentCount; i++) indexOf[lists.list[parentFrom + i]] = i;
+				markMembers(lists, parentFrom, parentCount, indexOf, false);
 				const [childFrom, childCount] = span(lists, round, child, player);
 				for (let m = orbitStart[child]; m < orbitStart[child + 1]; m++) {
 					// The member's map sends a real hand onto the stored board;
@@ -89,7 +109,7 @@ export function buildHandSpace(
 						up.push(at);
 					}
 				}
-				for (let i = 0; i < parentCount; i++) indexOf[lists.list[parentFrom + i]] = -1;
+				markMembers(lists, parentFrom, parentCount, indexOf, true);
 			}
 		}
 		upStart.push(starts);
@@ -104,11 +124,11 @@ export function buildHandSpace(
 			for (let player = 0; player < 2; player++) {
 				const slot = (lists.roundBase[round] + board) * 2 + player;
 				const [otherFrom, otherCount] = span(lists, round, board, 1 - player);
-				for (let j = 0; j < otherCount; j++) indexOf[lists.list[otherFrom + j]] = j;
+				markMembers(lists, otherFrom, otherCount, indexOf, false);
 				const [from, count] = span(lists, round, board, player);
 				sameStart[slot] = same.length;
 				for (let i = 0; i < count; i++) same.push(indexOf[lists.list[from + i]]);
-				for (let j = 0; j < otherCount; j++) indexOf[lists.list[otherFrom + j]] = -1;
+				markMembers(lists, otherFrom, otherCount, indexOf, true);
 			}
 		}
 	}
@@ -207,6 +227,96 @@ export function showdownValuesHands(
 			running += value;
 			sums[cardA[oppFrom + j]] += value;
 			sums[cardB[oppFrom + j]] += value;
+			j--;
+		}
+		out[i] = payoff * (out[i] - (running - (sums[cardA[myFrom + i]] + sums[cardB[myFrom + i]])));
+	}
+	sums.fill(0, 0, DECK);
+}
+
+/**
+ * Packed lists' card-removal sums: each entry's reach counted once per hand it
+ * stands for, on that hand's own cards. Returns the reach-weighted total.
+ */
+function addMembers(
+	reach: number,
+	entry: number,
+	memberStart: Int32Array,
+	memberA: Uint8Array,
+	memberB: Uint8Array,
+	sums: Float64Array,
+): number {
+	const to = memberStart[entry + 1];
+	for (let m = memberStart[entry]; m < to; m++) {
+		sums[memberA[m]] += reach;
+		sums[memberB[m]] += reach;
+	}
+	return reach * (to - memberStart[entry]);
+}
+
+/** `foldValuesHands` over packed lists: every hand an opposing entry stands for counts. */
+export function foldValuesPacked(
+	oppReach: Float64Array,
+	cardA: Uint8Array,
+	cardB: Uint8Array,
+	memberStart: Int32Array,
+	memberA: Uint8Array,
+	memberB: Uint8Array,
+	oppFrom: number,
+	oppCount: number,
+	myFrom: number,
+	myCount: number,
+	same: Int32Array,
+	sameFrom: number,
+	payoff: number,
+	sums: Float64Array,
+	out: Float64Array,
+): void {
+	let total = 0;
+	for (let j = 0; j < oppCount; j++) total += addMembers(oppReach[j], oppFrom + j, memberStart, memberA, memberB, sums);
+	for (let i = 0; i < myCount; i++) {
+		const twin = same[sameFrom + i];
+		const both = twin >= 0 ? oppReach[twin] : 0;
+		out[i] = payoff * (total - (sums[cardA[myFrom + i]] + sums[cardB[myFrom + i]] - both));
+	}
+	sums.fill(0, 0, DECK);
+}
+
+/** `showdownValuesHands` over packed lists: every hand an opposing entry stands for counts. */
+export function showdownValuesPacked(
+	oppReach: Float64Array,
+	cardA: Uint8Array,
+	cardB: Uint8Array,
+	memberStart: Int32Array,
+	memberA: Uint8Array,
+	memberB: Uint8Array,
+	strength: Int32Array,
+	oppFrom: number,
+	oppCount: number,
+	myFrom: number,
+	myCount: number,
+	payoff: number,
+	sums: Float64Array,
+	out: Float64Array,
+): void {
+	let running = 0;
+	let j = 0;
+	for (let i = 0; i < myCount; i++) {
+		const level = strength[myFrom + i];
+		while (j < oppCount && strength[oppFrom + j] < level) {
+			running += addMembers(oppReach[j], oppFrom + j, memberStart, memberA, memberB, sums);
+			j++;
+		}
+		out[i] = running - (sums[cardA[myFrom + i]] + sums[cardB[myFrom + i]]);
+	}
+	sums.fill(0, 0, DECK);
+
+	running = 0;
+	j = oppCount - 1;
+	for (let i = myCount - 1; i >= 0; i--) {
+		const level = strength[myFrom + i];
+		while (j >= 0 && strength[oppFrom + j] > level) {
+			running += addMembers(oppReach[j], oppFrom + j, memberStart, memberA, memberB, sums);
 			j--;
 		}
 		out[i] = payoff * (out[i] - (running - (sums[cardA[myFrom + i]] + sums[cardB[myFrom + i]])));

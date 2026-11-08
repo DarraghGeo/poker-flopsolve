@@ -55,6 +55,40 @@ describe('suit symmetry', () => {
 		expect(count('As Kh 7d')).toEqual([1, 49, 49 * 48]);
 	});
 
+	it('stores one hand per mirror orbit, standing for all of it', () => {
+		const folded = createRun(defineSpot(spot('Ks 9s 4s')), { workers: 1, precision: 'f64' });
+		const full = createRun(defineSpot(spot('Ks 9s 4s', { isomorphism: false })), { workers: 1, precision: 'f64' });
+		try {
+			const lists = folded.solver.ctx.active;
+			const plain = full.solver.ctx.active;
+			for (const player of [0, 1]) {
+				// At the flop the three absent suits are interchangeable: AA
+				// is AsAh, AsAd, AsAc and three more, two orbits of three.
+				const from = lists.start[player];
+				const count = lists.count[player];
+				expect(lists.packed[player]).toBe(1);
+				expect(count).toBeLessThan(plain.count[player]);
+				let hands = 0;
+				const stood = new Set<number>();
+				for (let i = 0; i < count; i++) {
+					const members = lists.memberCombo.slice(lists.memberStart[from + i], lists.memberStart[from + i + 1]);
+					expect(members[0]).toBe(lists.list[from + i]);
+					expect(lists.multiplicity[from + i]).toBe(members.length);
+					hands += members.length;
+					for (const combo of members) stood.add(combo);
+				}
+				// Every live hand, each exactly once.
+				expect(hands).toBe(plain.count[player]);
+				expect(stood.size).toBe(plain.count[player]);
+				const live = plain.list.slice(plain.start[player], plain.start[player] + plain.count[player]);
+				for (const combo of live) expect(stood.has(combo)).toBe(true);
+			}
+		} finally {
+			folded.close();
+			full.close();
+		}
+	});
+
 	it('ignores symmetry the ranges break', () => {
 		// A partial weight on one suited combo: its mirror image keeps full weight.
 		const folded = defineSpot(spot('Ts 9s 4h', { oop: `${NARROW_OOP},AdKd:0.5` }));

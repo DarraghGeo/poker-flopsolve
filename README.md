@@ -337,8 +337,21 @@ Chromium, exploitability checks ~8%.
 When swapping suits leaves the board and both ranges unchanged, a deal in one of those
 suits is the mirror image of a deal in another, and only one is solved. On a two-tone flop
 the two absent suits are interchangeable; on a monotone flop, all three. This is exact —
-the solver keeps mirrored hands' strategies tied together, so a stored runout stands for
-its mirrors with nothing lost — and it is on by default (`isomorphism: false` turns it off).
+mirrored hands play alike, so a stored runout stands for its mirrors with nothing lost —
+and it is on by default (`isomorphism: false` turns it off).
+
+The same symmetry is used a second time inside each stored board: hands that mirror each
+other there (on Ks9s4s, AhAd, AhAc and AdAc) are stored once, and every vector, regret and
+strategy sum on that board shrinks with them. Card removal stays exact, because the fold and
+showdown kernels still count each opposing hand's own cards. Measured single-threaded, ms
+per iteration with the same iterations to every target:
+
+| Flop | Hands stored on the river | ms per iteration | Memory |
+|---|---|---|---|
+| Ks9s4s, monotone, bench ranges | 245,916 → 171,442 | 78 → 62 | 38 → 27 MB |
+| Ks9s4s, pairs and broadway | 264,184 → 177,944 | 80 → 59 | 41 → 28 MB |
+| Ts9s4h, two-tone | 522,944 → 458,484 | 154 → 143 | 81 → 71 MB |
+| AsKh7d, rainbow | 784,806 → 784,806 | unchanged | unchanged |
 
 | Flop, 4 threads | Runouts stored | To 0.3% of pot |
 |---|---|---|

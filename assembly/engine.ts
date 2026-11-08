@@ -4,9 +4,8 @@
  * Purpose: what `traverse` in src/cfr.ts does, over 32-bit vectors and
  * storage, with SIMD wherever a loop runs over a contiguous row. It is the
  * same algorithm, step for step — deals through the `up` maps, folds and
- * showdowns over the hand lists, regret matching, DCFR or CFR+ updates, mirror
- * ties — so the two engines agree to float precision, and the tests hold them
- * to that.
+ * showdowns over the hand lists, regret matching, DCFR or CFR+ updates — so
+ * the two engines agree to float precision, and the tests hold them to that.
  *
  * Everything lives in one memory that src/engine.ts lays out: a header of
  * pointers written by `init`, the spot's structures copied in, the storage
@@ -39,8 +38,11 @@ let listCount: usize = 0;
 let cardA: usize = 0;
 let cardB: usize = 0;
 let strength: usize = 0;
-let tieStart: usize = 0;
-let ties: usize = 0;
+let packed: usize = 0;
+let multiplicity: usize = 0;
+let memberStart: usize = 0;
+let memberA: usize = 0;
+let memberB: usize = 0;
 let upRound: usize = 0;
 let upStart: usize = 0;
 let up: usize = 0;
@@ -120,25 +122,28 @@ export function init(header: usize): void {
 	cardA = <usize>load<u32>(header + 48);
 	cardB = <usize>load<u32>(header + 52);
 	strength = <usize>load<u32>(header + 56);
-	tieStart = <usize>load<u32>(header + 60);
-	ties = <usize>load<u32>(header + 64);
-	upRound = <usize>load<u32>(header + 68);
-	upStart = <usize>load<u32>(header + 72);
-	up = <usize>load<u32>(header + 76);
-	sameStart = <usize>load<u32>(header + 80);
-	same = <usize>load<u32>(header + 84);
-	childRound = <usize>load<u32>(header + 88);
-	childStart = <usize>load<u32>(header + 92);
-	orbitRound = <usize>load<u32>(header + 96);
-	orbitStart = <usize>load<u32>(header + 100);
-	runoutWeight = <usize>load<u32>(header + 104);
-	regret = <usize>load<u32>(header + 108);
-	sums = <usize>load<u32>(header + 112);
-	buffers = <usize>load<u32>(header + 116);
-	depthBytes = <usize>load<u32>(header + 120);
-	rowBytes = <usize>load<u32>(header + 124);
-	cardSums = <usize>load<u32>(header + 128);
-	chipScale = <f64>load<u32>(header + 132);
+	packed = <usize>load<u32>(header + 60);
+	multiplicity = <usize>load<u32>(header + 64);
+	memberStart = <usize>load<u32>(header + 68);
+	memberA = <usize>load<u32>(header + 72);
+	memberB = <usize>load<u32>(header + 76);
+	upRound = <usize>load<u32>(header + 80);
+	upStart = <usize>load<u32>(header + 84);
+	up = <usize>load<u32>(header + 88);
+	sameStart = <usize>load<u32>(header + 92);
+	same = <usize>load<u32>(header + 96);
+	childRound = <usize>load<u32>(header + 100);
+	childStart = <usize>load<u32>(header + 104);
+	orbitRound = <usize>load<u32>(header + 108);
+	orbitStart = <usize>load<u32>(header + 112);
+	runoutWeight = <usize>load<u32>(header + 116);
+	regret = <usize>load<u32>(header + 120);
+	sums = <usize>load<u32>(header + 124);
+	buffers = <usize>load<u32>(header + 128);
+	depthBytes = <usize>load<u32>(header + 132);
+	rowBytes = <usize>load<u32>(header + 136);
+	cardSums = <usize>load<u32>(header + 140);
+	chipScale = <f64>load<u32>(header + 144);
 }
 
 // Per-depth buffers, each `rowBytes` apart: value, reach for player 0, reach
@@ -222,12 +227,15 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 		let signed = <f64>i32At(payoff, node);
 		if (traverser === 1) signed = -signed;
 		const scale = signed * load<f64>(runoutWeight + (<usize>r << 3)) / chipScale;
-		fold(reachOpp, oppFrom, oppCount, myFrom, myCount, i32At(sameStart, mySlot), scale, out);
+		const sameFrom = i32At(sameStart, mySlot);
+		if (load<u8>(packed + <usize>oppSlot)) foldPacked(reachOpp, oppFrom, oppCount, myFrom, myCount, sameFrom, scale, out);
+		else fold(reachOpp, oppFrom, oppCount, myFrom, myCount, sameFrom, scale, out);
 		return out;
 	}
 	if (nodeKind > FOLD) {
 		const scale = <f64>i32At(payoff, node) * load<f64>(runoutWeight + (<usize>r << 3)) / chipScale;
-		showdown(reachOpp, oppFrom, oppCount, myFrom, myCount, scale, out);
+		if (load<u8>(packed + <usize>oppSlot)) showdownPacked(reachOpp, oppFrom, oppCount, myFrom, myCount, scale, out);
+		else showdown(reachOpp, oppFrom, oppCount, myFrom, myCount, scale, out);
 		return out;
 	}
 
@@ -277,10 +285,27 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 				}
 				// Reach is symmetric under the member's relabelling, so one
 				// walk serves every member; only the values are spread.
-				for (let k = 0; k < nMe; k++) {
-					const at = out + (<usize>load<u16>(upMe + (<usize>k << 1)) << 2);
-					store<f32>(at, load<f32>(at) + f32At(value, k));
+				if (load<u8>(packed + <usize>(childSlot + traverser))) {
+					// An entry stands for its whole orbit: weight it so, and
+					// share the parent's total among its own orbit below.
+					const weights = multiplicity + (<usize>i32At(listStart, childSlot + traverser) << 2);
+					for (let k = 0; k < nMe; k++) {
+						const at = out + (<usize>load<u16>(upMe + (<usize>k << 1)) << 2);
+						store<f32>(at, load<f32>(at) + f32At(value, k) * f32At(weights, k));
+					}
+				} else {
+					for (let k = 0; k < nMe; k++) {
+						const at = out + (<usize>load<u16>(upMe + (<usize>k << 1)) << 2);
+						store<f32>(at, load<f32>(at) + f32At(value, k));
+					}
 				}
+			}
+		}
+		if (load<u8>(packed + <usize>mySlot)) {
+			const weights = multiplicity + (<usize>myFrom << 2);
+			for (let i = 0; i < myCount; i++) {
+				const at = out + (<usize>i << 2);
+				store<f32>(at, load<f32>(at) / f32At(weights, i));
 			}
 		}
 		return out;
@@ -361,12 +386,6 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 
 	if (isTraverser && mode === TRAIN && applyUpdates) {
 		update(base, sumBase, actions, n, reachMe, strategy, actionValues, out);
-		const tieFrom = i32At(tieStart, listSlot);
-		const tieTo = i32At(tieStart, listSlot + 1);
-		if (tieFrom < tieTo) {
-			tie(base, actions, n, tieFrom, tieTo);
-			tie(sumBase, actions, n, tieFrom, tieTo);
-		}
 	}
 	return out;
 }
@@ -484,22 +503,6 @@ function update(base: usize, sumBase: usize, actions: i32, n: i32, reachMe: usiz
 	}
 }
 
-/** Average each mirror class's entries, as `tieMirrors` does. */
-function tie(base: usize, actions: i32, n: i32, from: i32, to: i32): void {
-	const rowStride = <usize>n << 2;
-	for (let a = 0; a < actions; a++) {
-		const row = base + <usize>a * rowStride;
-		for (let k = from; k < to; ) {
-			const size = i32At(ties, k);
-			let total: f32 = 0;
-			for (let j = 1; j <= size; j++) total += load<f32>(row + (<usize>i32At(ties, k + j) << 2));
-			const mean = total / <f32>size;
-			for (let j = 1; j <= size; j++) store<f32>(row + (<usize>i32At(ties, k + j) << 2), mean);
-			k += size + 1;
-		}
-	}
-}
-
 /** Fold values: card-removal inclusion–exclusion, as `foldValuesHands`. */
 function fold(reachOpp: usize, oppFrom: i32, oppCount: i32, myFrom: i32, myCount: i32, sameFrom: i32, scale: f64, out: usize): void {
 	let total: f64 = 0;
@@ -555,6 +558,68 @@ function showdown(reachOpp: usize, oppFrom: i32, oppCount: i32, myFrom: i32, myC
 			store<f64>(a, load<f64>(a) + v);
 			const b = cardSums + (<usize>load<u8>(cardB + <usize>(oppFrom + j)) << 3);
 			store<f64>(b, load<f64>(b) + v);
+			j--;
+		}
+		const lose = running
+			- (load<f64>(cardSums + (<usize>load<u8>(cardA + <usize>(myFrom + i)) << 3))
+				+ load<f64>(cardSums + (<usize>load<u8>(cardB + <usize>(myFrom + i)) << 3)));
+		store<f32>(out + (<usize>i << 2), <f32>(scale * (load<f64>(wins + (<usize>i << 3)) - lose)));
+	}
+	memory.fill(cardSums, 0, 52 * 8);
+}
+
+/**
+ * Packed lists' card-removal sums: an entry's reach counted once per hand it
+ * stands for, on that hand's own cards. Returns the reach times their number.
+ */
+@inline function addMembers(v: f64, entry: i32): f64 {
+	const from = i32At(memberStart, entry);
+	const to = i32At(memberStart, entry + 1);
+	for (let m = from; m < to; m++) {
+		const a = cardSums + (<usize>load<u8>(memberA + <usize>m) << 3);
+		store<f64>(a, load<f64>(a) + v);
+		const b = cardSums + (<usize>load<u8>(memberB + <usize>m) << 3);
+		store<f64>(b, load<f64>(b) + v);
+	}
+	return v * <f64>(to - from);
+}
+
+/** `fold` over packed lists, as `foldValuesPacked`. */
+function foldPacked(reachOpp: usize, oppFrom: i32, oppCount: i32, myFrom: i32, myCount: i32, sameFrom: i32, scale: f64, out: usize): void {
+	let total: f64 = 0;
+	for (let j = 0; j < oppCount; j++) total += addMembers(<f64>f32At(reachOpp, j), oppFrom + j);
+	for (let i = 0; i < myCount; i++) {
+		const twin = i32At(same, sameFrom + i);
+		const both: f64 = twin >= 0 ? <f64>f32At(reachOpp, twin) : 0;
+		const blocked = load<f64>(cardSums + (<usize>load<u8>(cardA + <usize>(myFrom + i)) << 3))
+			+ load<f64>(cardSums + (<usize>load<u8>(cardB + <usize>(myFrom + i)) << 3)) - both;
+		store<f32>(out + (<usize>i << 2), <f32>(scale * (total - blocked)));
+	}
+	memory.fill(cardSums, 0, 52 * 8);
+}
+
+/** `showdown` over packed lists, as `showdownValuesPacked`. */
+function showdownPacked(reachOpp: usize, oppFrom: i32, oppCount: i32, myFrom: i32, myCount: i32, scale: f64, out: usize): void {
+	let running: f64 = 0;
+	let j = 0;
+	const wins = cardSums + 52 * 8;
+	for (let i = 0; i < myCount; i++) {
+		const level = i32At(strength, myFrom + i);
+		while (j < oppCount && i32At(strength, oppFrom + j) < level) {
+			running += addMembers(<f64>f32At(reachOpp, j), oppFrom + j);
+			j++;
+		}
+		store<f64>(wins + (<usize>i << 3), running
+			- (load<f64>(cardSums + (<usize>load<u8>(cardA + <usize>(myFrom + i)) << 3))
+				+ load<f64>(cardSums + (<usize>load<u8>(cardB + <usize>(myFrom + i)) << 3))));
+	}
+	memory.fill(cardSums, 0, 52 * 8);
+	running = 0;
+	j = oppCount - 1;
+	for (let i = myCount - 1; i >= 0; i--) {
+		const level = i32At(strength, myFrom + i);
+		while (j >= 0 && i32At(strength, oppFrom + j) > level) {
+			running += addMembers(<f64>f32At(reachOpp, j), oppFrom + j);
 			j--;
 		}
 		const lose = running
