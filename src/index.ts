@@ -532,6 +532,21 @@ export interface Approximations {
 	 * the same classes would shorten vectors 2.0 to 3.1 times, but members of
 	 * a class block different cards on each runout, so that is the rejected
 	 * river buckets above with blocker detail averaged away as well.
+	 *
+	 * Regret-based pruning — skipping the subtree below an action no hand of
+	 * the actor plays (Brown & Sandholm, 2015) — was measured before building
+	 * and is not offered either; `bench/prune-census.ts` counts the work it
+	 * could skip. The provably safe form cannot skip anything under this DCFR:
+	 * with β = 0 a negative regret is halved every iteration, so it never
+	 * falls below twice the largest one-iteration regret, and the skip it
+	 * proves safe is zero iterations. The unsafe form's ceiling is small too.
+	 * Below actions played by no hand sat 4–10% of the work to reach 0.5% and
+	 * 0.3% of pot, on the bench flop, monotone, wide-flop and turn spots and
+	 * on pairs-and-broadway ranges. Most of that was iterations 2–5, before
+	 * every board has a hand that likes each action, and after them it was
+	 * 1–8% per iteration. Half of it, at opponent nodes, could be skipped
+	 * without changing any value, but the traverser's own nodes below would
+	 * then miss their discount and strategy-sum update.
 	 */
 }
 
