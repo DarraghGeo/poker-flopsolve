@@ -1,0 +1,32 @@
+{
+ "spot": "M",
+ "rule": {
+  "aggressions": 2,
+  "band": 13
+ },
+ "iterations": 510,
+ "seconds": 1846,
+ "storage": "1.68 GiB",
+ "peakRss": "2.14 GiB",
+ "heap": "0.05 GiB",
+ "ownExploitability": 0.148,
+ "trueExploitability": 13.653,
+ "rootEv": {
+  "oop": {
+   "mae": 2.212,
+   "max": 9.603
+  },
+  "ip": {
+   "mae": 2.443,
+   "max": 14.722
+  }
+ },
+ "rootBetEvMae": 3.693,
+ "preferredSizeAgreement": 97.2,
+ "reference": {
+  "iterations": 510,
+  "seconds": 3724,
+  "exploitability": 0.2981570257223056
+ },
+ "trueExploitabilitySeconds": 25
+}
