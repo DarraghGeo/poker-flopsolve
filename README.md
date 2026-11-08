@@ -443,9 +443,13 @@ with plain CFR's sum, which was left 24% of pot exploitable).
 
 On the three-size tree with a 75% raise and three aggressions, which does not fit
 otherwise, 173 river starts collapse to 23: 17.2 GiB becomes 2.9 GiB at 32 bits, and
-8.7 GiB becomes 1.5 GiB at 16. Expect a strategy a few percent of the pot from
-equilibrium, with EVs a little under 1% off on average, in a spot that would not
-otherwise fit. `{ fromRound: 1 }` shares the turn too, which saves about 1% more and
+8.7 GiB becomes 1.5 GiB at 16. In Node at 16 bits the whole process peaked at 1.6 GiB
+on one thread (about 100 s an iteration) and 2.0 GiB on four (30 s an iteration), and the
+strategy was 27% of pot exploitable after 50 iterations, 15% after 100 and 12% after 150. At 32 bits it runs on the
+WebAssembly engine in 10.4 s an iteration on four threads, peaking at 3.2 GiB. An
+iteration costs what the unshared tree's would, so this makes the spot fit, not fast.
+Expect a strategy several percent of the pot from equilibrium, with EVs about 1% off on
+average, in a spot that would not otherwise fit. `{ fromRound: 1 }` shares the turn too, which saves about 1% more and
 measured less accurate (9.4% on the first tree). `{ spr: w }` also merges subtrees of one
 shape whose stack-to-pot ratios fall in a log-bucket of width `w`. On the three-size tree
 that is 1.5 times less storage at `w = 0.1` and 2 times at `w = 4`, but much lossier: a

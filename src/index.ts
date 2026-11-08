@@ -172,6 +172,9 @@ export interface SpotConfig {
 	 * three-size target spot (AsKh7d, pot 55, stack 975, sizes 33/75/150%, a
 	 * 75% raise and all-in, three aggressions) 173 river starts collapse to 23
 	 * and storage falls 5.9 times: 17.2 GiB to 2.9 at 32 bits, 8.7 to 1.5 at 16.
+	 * There, at 16 bits, a Node solve peaked at 1.6 GiB on one thread and 2.0
+	 * on four (30 s an iteration), and was 12% of pot exploitable after 150
+	 * iterations.
 	 *
 	 * What is lost is recall: a player plays one strategy for every line that
 	 * met, though the ranges each line brings differ. Each history's regret is
