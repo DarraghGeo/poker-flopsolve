@@ -48,7 +48,8 @@ const [board = 'rainbow', fullName = 'T', third = '2', fourth = '4', fifth = '4'
 const isStatic = third === 'static';
 const workers = Number(fifth);
 const log = (message: string): void => console.log(message);
-const options = { workers, probeIterations: 20, probeResume: 10, boardStride: 4, log };
+// First-order gain after 60 probe iterations ranked lines best in calibrate.ts (Spearman 0.81 on the turn).
+const options = { workers, probeIterations: 60, probeResume: 10, boardStride: 4, estimator: 'firstOrder' as const, log };
 
 const full = indexFull(spotOn(board as BoardName, TREES[fullName]));
 const referenceFile = new URL(`./results/${board}-${fullName}.json`, import.meta.url);
