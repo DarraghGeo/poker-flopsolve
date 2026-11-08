@@ -71,7 +71,7 @@ export interface EngineInput {
 	readonly chipScale: number;
 	/** Chance sampling's layout, for `Approximations.chanceSampling`; unset for none. */
 	readonly sampling?: SamplingPlan;
-	/** Bytes left unused below the layout; tests set it to place every pointer past 2 GiB. */
+	/** Bytes left unused below the layout, rounded up to 16; tests set it to place every pointer past 2 GiB. */
 	readonly lowBytes?: number;
 }
 
@@ -202,7 +202,7 @@ export function createEngine(
 		: null;
 
 	const offsets: number[] = [];
-	let total = 64 + (input.lowBytes ?? 0);
+	let total = 64 + Math.ceil(Math.max(input.lowBytes ?? 0, 0) / 16) * 16;
 	for (const piece of pieces) {
 		offsets.push(total);
 		total += piece.bytes;

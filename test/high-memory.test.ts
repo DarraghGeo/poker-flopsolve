@@ -47,6 +47,8 @@ function engineFor(lowBytes: number, threads: number): Engine {
 		plan ? { plan, threads, spawn: spawnEngineWorker } : undefined,
 	);
 	if (!engine) throw new Error('The WebAssembly engine is not available here');
+	// A spot that could not be split would quietly run on one thread.
+	if (engine.threads !== threads) throw new Error(`asked for ${threads} threads, got ${engine.threads}`);
 	return engine;
 }
 
