@@ -499,6 +499,45 @@ export interface SolveOptions {
 /** See `SolveOptions.approximations`. */
 export interface Approximations {
 	/**
+	 * Solve a coarser copy of the spot first and start the real one from its
+	 * regrets — coarse to fine, as multigrid methods do. The copy buckets
+	 * turn and river cards like `runoutBuckets`, so each of its iterations
+	 * is cheaper (a flop stores ~40% fewer runouts at a gap of 3), and its
+	 * equilibrium is close enough to the real one's that the real solve picks
+	 * up roughly where it left off. The answer is still the real spot's: the
+	 * coarse game only chooses where it starts, and exploitability and
+	 * `targetPercent` measure the real game. Unset, off.
+	 *
+	 * Measured on three flop spots in Chromium, one thread, stopped at 15 s,
+	 * with 40 coarse iterations (issue #24): root-EV error per combination
+	 * against a 0.1%-of-pot reference fell from 1.51% to 0.19% of pot on
+	 * AsKh7d (exploitability 0.94% to 0.40%), and 0.26% to 0.06% on the
+	 * wider bench flop. A monotone flop, which a cold solve already settles
+	 * within 15 s, reached 0.5% error in half the time but ended a little
+	 * looser, 0.11% against 0.04%. To an exploitability target in Node it
+	 * was faster on all three: 0.1% on the monotone flop in 14.5 s instead of
+	 * 15.3, 0.2% on the wide one in 15.5 instead of 19.3, 0.3% on AsKh7d in
+	 * 23.8 instead of 31.5. Around 40 iterations suits a flop; far fewer
+	 * leave the coarse solve too rough to help, far more spend the time
+	 * where the real solve would have spent it better.
+	 *
+	 * Carrying the coarse average strategy, restarting DCFR's count (a
+	 * `warmIteration` of 0 or 10), a bucket gap of 1, or forbidding donk bets
+	 * in the coarse spot were measured too, and were all worse.
+	 *
+	 * The coarse iterations count toward `totalIterations`, not `completed`
+	 * or `Solution.iterations`; DCFR carries on counting from them unless
+	 * `warmIteration` says otherwise. Both solves are in memory at the
+	 * switch, the coarse one about 60% the size of the real one on a flop.
+	 * Where bucketing folds no runouts together — a river spot, ranges with no rank symmetry — it does
+	 * nothing. Not with `warmStart`, which it already is. The coarse solve
+	 * runs inside `createRun`, all at once and without progress reports, so
+	 * a caller stepping a run to stay responsive should keep it short; it
+	 * must fit in what `maxBytes` leaves beside the real spot, at 16 bits if
+	 * not 32, or `createRun` refuses.
+	 */
+	readonly coarseStart?: CoarseStart;
+	/**
 	 * Report `Solution.ev` and `Solution.handEvs` under the current profile —
 	 * the regret-matched strategy the next iteration would play — instead of
 	 * the average strategy. Default off. Measured under DCFR, the default
@@ -635,6 +674,17 @@ export interface Approximations {
 	 * 140 ms, three leaves more than an exact flop iteration (about 350 ms),
 	 * before the range-dependent features it needs.
 	 */
+}
+
+/** See `Approximations.coarseStart`. */
+export interface CoarseStart {
+	/** Iterations of the coarse spot to run before the real one. */
+	readonly iterations: number;
+	/**
+	 * The coarse spot's `runoutBuckets`, at least the spot's own. Default 3;
+	 * a wider gap folds more runouts only where the ranges allow it.
+	 */
+	readonly runoutBuckets?: number;
 }
 
 export type Algorithm = 'cfr+' | 'dcfr';
@@ -795,6 +845,10 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		: options.precision ??
 			(bytes <= maxBytes ? 'f32' : 'i16');
 
+	// Planned before anything is allocated, so a bad option or a coarse spot
+	// that does not fit fails here; solved only once the real run exists.
+	const coarsePlan = planCoarseStart(spot, options, precision, maxBytes);
+
 	// Hands neither player holds never carry reach, so they need no ranking.
 	const relevant = new Uint8Array(COMBOS);
 	for (const combo of spot.players[0].combos) relevant[combo] = 1;
@@ -877,9 +931,19 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			const source = options.warmStart;
 			warm = warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
 			offset = options.warmIteration ?? source.totalIterations;
+		} else if (coarsePlan && coarsePlan.iterations > 0) {
+			// Regrets only: the bucketed game's average would have to be outweighed.
+			const coarse = solveCoarse(coarsePlan, options);
+			try {
+				warm = warmStart(ctx, coarse.solver.ctx, false);
+			} finally {
+				coarse.close();
+			}
+			offset = options.warmIteration ?? coarse.totalIterations;
 		}
 
 		solver = makeSolver(ctx);
+		if (warm && coarsePlan) coarseMs.set(solver, coarsePlan.elapsed);
 		// The engine runs its own threads; the JavaScript pool is for the rest.
 		pool = plan && !engine
 			? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
@@ -940,6 +1004,87 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			);
 		},
 	};
+}
+
+/** Bucket gap of the coarse spot when `CoarseStart.runoutBuckets` is unset. */
+const DEFAULT_COARSE_GAP = 3;
+
+/** A coarse start to run: its spot and settings, and once solved, how long it took. */
+interface CoarsePlan {
+	readonly spot: Spot;
+	readonly iterations: number;
+	readonly precision: Precision;
+	elapsed: number;
+}
+
+/** Milliseconds a run's coarse start took, by the real run's solver, for `solve()`'s clock. */
+const coarseMs = new WeakMap<Solver, number>();
+
+/**
+ * Validate `approximations.coarseStart` and define its spot, or null when
+ * there is nothing to solve: the option unset, no iterations, or bucketing
+ * folds no more runouts than the spot itself does.
+ *
+ * The coarse spot must fit in what `maxBytes` leaves beside the real one,
+ * since both are in memory at the switch; at 32 bits if it can, else 16.
+ */
+function planCoarseStart(spot: Spot, options: SolveOptions, precision: Precision, maxBytes: number): CoarsePlan | null {
+	const settings = options.approximations?.coarseStart;
+	if (!settings) return null;
+	const { iterations, runoutBuckets = DEFAULT_COARSE_GAP } = settings;
+	if (!(Number.isInteger(iterations) && iterations >= 0)) {
+		throw new Error(`coarseStart.iterations must be a whole number of iterations; got ${iterations}`);
+	}
+	if (!(Number.isInteger(runoutBuckets) && runoutBuckets >= 1)) {
+		throw new Error(`coarseStart.runoutBuckets must be a rank gap of 1 or more; got ${runoutBuckets}`);
+	}
+	if (options.warmStart) throw new Error('coarseStart is a warm start of its own; give one or the other, not both');
+	if (options.analysisOnly) throw new Error('coarseStart solves; an analysis-only run must never be stepped');
+
+	// Never a narrower gap than the spot already uses, and only a wider one helps.
+	const own = spot.source.runoutBuckets;
+	const ownGap = own === true ? DEFAULT_BUCKET_GAP : own || 0;
+	if (iterations === 0 || spot.board.length === 5 || runoutBuckets <= ownGap) return null;
+	const coarseSpot = defineSpot({ ...spot.source, runoutBuckets });
+	if (coarseSpot.runouts.counts.at(-1)! >= spot.runouts.counts.at(-1)!) return null;
+
+	const used = precision === 'i16' ? spot.estimate.compressedBytes : spot.estimate.bytes * (precision === 'f64' ? 2 : 1);
+	const left = maxBytes - used;
+	const coarsePrecision: Precision =
+		options.precision ?? (coarseSpot.estimate.bytes <= left ? 'f32' : 'i16');
+	const needs =
+		coarsePrecision === 'i16'
+			? coarseSpot.estimate.compressedBytes
+			: coarseSpot.estimate.bytes * (coarsePrecision === 'f64' ? 2 : 1);
+	if (needs > left) {
+		throw new Error(
+			`coarseStart needs ~${formatBytes(needs)} beside this spot's ~${formatBytes(used)}, ` +
+				`over the ${formatBytes(maxBytes)} limit; raise maxBytes or leave coarseStart off`,
+		);
+	}
+	return { spot: coarseSpot, iterations, precision: coarsePrecision, elapsed: 0 };
+}
+
+/** Solve a planned coarse start, returning the run to warm-start from. */
+function solveCoarse(plan: CoarsePlan, options: SolveOptions): SolveRun {
+	const started = Date.now();
+	const { coarseStart: _, ...rest } = options.approximations!;
+	const run = createRun(plan.spot, {
+		workers: options.workers,
+		precision: plan.precision,
+		algorithm: options.algorithm,
+		simd: options.simd,
+		engine: options.engine,
+		approximations: rest,
+	});
+	try {
+		run.step(plan.iterations);
+	} catch (error) {
+		run.close();
+		throw error;
+	}
+	plan.elapsed = Date.now() - started;
+	return run;
 }
 
 /**
@@ -1023,7 +1168,12 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 	const fixed = options.exploitEvery ?? 0;
 	const run = createRun(spot, options);
 	const history: Progress[] = [];
-	const started = Date.now();
+	// A coarse start solves inside createRun, and that is solving time too.
+	const started = Date.now() - (coarseMs.get(run.solver) ?? 0);
+	// Where DCFR's count stands before this run's first iteration, for
+	// predicting the target; only a coarse start shifts it, as a warm start's
+	// checks were always scheduled from zero.
+	const before = coarseMs.has(run.solver) ? run.totalIterations : 0;
 
 	try {
 		return runAll();
@@ -1071,13 +1221,13 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 				// Aim just short of where the target is predicted to be met, so
 				// the overshoot is a few iterations rather than a whole doubling.
 				const predicted = predictCrossing(
-					prevIteration,
+					before + prevIteration,
 					prevExploitability,
-					done,
+					before + done,
 					info.exploitability,
 					(target * spot.potUnits) / (100 * spot.chipScale),
 				);
-				const aim = predicted > 0 ? predicted * 0.95 : done * MAX_GROWTH;
+				const aim = predicted > 0 ? predicted * 0.95 - before : done * MAX_GROWTH;
 				const bounded = Math.min(Math.max(aim, done * MIN_GROWTH), done * MAX_GROWTH);
 				next = Math.max(done + 1, Math.ceil(bounded));
 				prevIteration = done;

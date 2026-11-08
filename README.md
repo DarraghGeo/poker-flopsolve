@@ -401,6 +401,27 @@ accuracy. On AhKdQc, 4 threads, to 0.3% of pot in the bucketed game:
 | | 1 | 1,396 | 4.9 s | 0.482% |
 | | 3 | 1,088 | 4.2 s | 0.542% |
 
+### Coarse start (approximate start, exact answer)
+
+`approximations: { coarseStart: { iterations: 40 } }` first solves a coarse copy of the
+spot, with runouts bucketed as by `runoutBuckets: 3`, for that many iterations. It then
+starts the real spot from those regrets. Coarse iterations are cheaper, and the real solve
+picks up roughly where they left off. The answer is still the real spot's, and
+exploitability measures the real game. Off by default.
+
+Measured in Chromium on one thread, stopped at 15 s, 40 coarse iterations, with root-EV
+error per combination (range-weighted mean, % of pot) against a 0.1% reference:
+
+| Flop | Cold | Coarse start | Exploitability, cold → coarse start |
+|---|---|---|---|
+| AsKh7d, compare ranges, 50% bet | 1.51% | 0.19% | 0.94% → 0.40% |
+| AsKh7d, bench ranges, 66% bet | 0.26% | 0.06% | 0.24% → 0.15% |
+| Ks9s4s, monotone | 0.04% | 0.11% | 0.10% → 0.07% |
+
+The monotone flop reaches 0.5% error in half the time, but a cold solve has already settled
+it by 15 s. To an exploitability target in Node, coarse start was faster on all three.
+`bench/coarse-to-fine/` has the harness.
+
 ### 16-bit storage
 
 A spot too big for 32-bit storage under `maxBytes` is solved at 16 bits instead
