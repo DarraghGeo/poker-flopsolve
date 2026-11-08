@@ -7,6 +7,7 @@
  */
 
 import type { EngineWorkerSetup } from '../engine.ts';
+import { ENGINE_CONTROL } from '../engine.ts';
 import { serveEngine } from '../engine-thread.ts';
 
 /** A spawned solver thread. */
@@ -86,8 +87,7 @@ function drop(thread: Thread): void {
 	if (at >= 0) threads.splice(at, 1);
 }
 
-/** Slot of `ENGINE_CONTROL.command`, and its exit value. */
-const COMMAND_SLOT = 2;
+/** `ENGINE_CONTROL.command`'s value that ends a thread's solve. */
 const COMMAND_EXIT = 1;
 
 /**
@@ -106,18 +106,25 @@ function spawn(setup: EngineWorkerSetup, onError: (error: Error) => void): Worke
 	};
 	thread.port.postMessage(setup);
 	const control = new Int32Array(setup.control);
+	let released = false;
 	return {
 		terminate() {
+			// A run may be closed twice; by then the thread may serve another.
+			if (released) return;
+			released = true;
 			if (!pool().includes(thread)) return;
-			// Told to exit, the thread returns to waiting for its next setup.
-			// Anything else — a solve that gave up on it — may leave it parked
-			// on a counter nobody will move, so it goes.
-			if (Atomics.load(control, COMMAND_SLOT) === COMMAND_EXIT) {
-				thread.busy = false;
-				thread.worker.onerror = () => drop(thread);
-			} else {
-				drop(thread);
+			// Whether this solve finished or gave up on starting, tell the
+			// thread its solve is over: it returns to waiting for the next
+			// setup, having started this one or not (serveEngine checks for
+			// exit before it first waits). A thread that died is dropped by
+			// its error handler instead.
+			if (Atomics.load(control, ENGINE_CONTROL.command) !== COMMAND_EXIT) {
+				Atomics.store(control, ENGINE_CONTROL.command, COMMAND_EXIT);
+				Atomics.add(control, ENGINE_CONTROL.generation, 1);
+				Atomics.notify(control, ENGINE_CONTROL.generation);
 			}
+			thread.busy = false;
+			thread.worker.onerror = () => drop(thread);
 		},
 	};
 }
@@ -182,9 +189,9 @@ function startThread(url: string): Promise<Thread | null> {
 
 /**
  * Start engine threads so that solves can use up to `count` threads, this one
- * included, and resolve to how many they can use. Threads already started
- * are kept; idle ones beyond `count` are stopped, so `prepareThreads(1)`
- * releases them all. Resolves to 1 where threads cannot run; see
+ * included, and resolve to how many a solve can use now. Threads already
+ * started are kept; idle ones beyond `count` are stopped, so `prepareThreads(1)`
+ * stops every thread no open run is holding. Resolves to 1 where threads cannot run; see
  * {@link threadsUnavailableReason}.
  * @param count threads wanted, this one included; defaults to `navigator.hardwareConcurrency`
  */
@@ -222,5 +229,5 @@ async function resize(count?: number): Promise<number> {
 			g.URL.revokeObjectURL(url);
 		}
 	}
-	return threadsUnavailableReason() === null ? Math.min(wanted, 1 + threads.length) : 1;
+	return threadsUnavailableReason() === null ? Math.min(wanted, 1 + idleThreads()) : 1;
 }

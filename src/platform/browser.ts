@@ -63,9 +63,19 @@ export function threadLimit(engine: boolean): number {
 	return compiledEngine('shared') ? 1 + threads.idle() : 1;
 }
 
-/** One, plus every engine thread `prepareThreads` started. */
+/** One, plus every idle engine thread `prepareThreads` started. */
 export function defaultWorkerCount(): number {
-	return 1 + (provider()?.total() ?? 0);
+	return 1 + (provider()?.idle() ?? 0);
+}
+
+/**
+ * Why a solve gets fewer threads than it asked for, for the one warning.
+ * @param engine whether the WebAssembly engine is to run
+ */
+export function threadAdvice(engine: boolean): string {
+	if (!provider()) return 'call enableThreads() from poker-flopsolve/threads first, in a cross-origin isolated Web Worker';
+	if (!engine) return 'browser threads run only the WebAssembly engine (default engine, f32 precision)';
+	return 'the other threads are held by open runs; close() a run to free its threads';
 }
 
 /** Never called: the browser build threads only the WebAssembly engine; see `threadLimit`. */

@@ -87,6 +87,14 @@ export function spawnEngineWorker(setup: EngineWorkerSetup, onError: (error: Err
 	};
 }
 
+/**
+ * Why a solve gets fewer threads than it asked for: never, in Node.
+ * @param _engine whether the WebAssembly engine is to run
+ */
+export function threadAdvice(_engine: boolean): string {
+	return '';
+}
+
 /** Node always has worker threads. */
 export function threadsUnavailableReason(): string | null {
 	return null;

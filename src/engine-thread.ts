@@ -74,6 +74,8 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 	let generation = Atomics.load(control, GENERATION);
 	Atomics.add(control, READY, 1);
 	Atomics.notify(control, READY);
+	// A solve that gave up before this thread started has already said exit.
+	if (Atomics.load(control, COMMAND) === EXIT) return;
 
 	for (;;) {
 		Atomics.wait(control, GENERATION, generation);

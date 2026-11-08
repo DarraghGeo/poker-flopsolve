@@ -265,7 +265,7 @@ It starts `threads − 1` engine workers that share the WebAssembly engine's mem
 as Node's threads do, so a fixed thread count gives the same answer as Node at that count
 (bit for bit where the browser's V8 agrees with Node's on `Math.pow`, as it did in every
 measurement here). They stay started between solves; a solve borrows them and gives them back on
-`close()`. `enableThreads(1)` stops them. Only the WebAssembly engine (the default) is
+`close()`. `enableThreads(1)` stops every thread no open run holds. Only the WebAssembly engine (the default) is
 threaded; `engine: 'js'` or `precision: 'f64'`/`'i16'` solve on one thread.
 
 Threads need:

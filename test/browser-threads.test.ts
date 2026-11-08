@@ -76,6 +76,9 @@ interface Isolated {
 	threads: number;
 	again: number;
 	released: number;
+	whileHeld: number;
+	afterDoubleClose: number[];
+	afterFailedCreate: number;
 	solves: Record<string, { one: Outcome; first: Outcome; second: Outcome }>;
 }
 
@@ -111,8 +114,36 @@ beforeAll(async () => {
 					};
 				}
 				const again = await enableThreads(${THREADS});
+				const [name] = Object.keys(SPOTS);
+				const { config } = SPOTS[name];
+
+				// While a run holds the threads, a new solve can use only this one.
+				const held = createRun(defineSpot(config), { workers: ${THREADS} });
+				const whileHeld = await enableThreads(${THREADS});
+				held.close();
+
+				// Closing a run twice must not free threads another run is using.
+				const first = createRun(defineSpot(config), { workers: ${THREADS} });
+				first.close();
+				const second = createRun(defineSpot(config), { workers: ${THREADS} });
+				first.close();
+				const third = createRun(defineSpot(config), { workers: ${THREADS} });
+				const afterDoubleClose = [second.workers, third.workers];
+				third.close();
+				second.step(2);
+				second.close();
+
+				// A run that fails after borrowing threads gives them back.
+				const other = createRun(defineSpot({ ...config, board: 'Qs Jh 3d 2c' }), { workers: 1 });
+				other.step(1);
+				try {
+					createRun(defineSpot(config), { workers: ${THREADS}, warmStart: other });
+				} catch {}
+				other.close();
+				const afterFailedCreate = await enableThreads(${THREADS});
+
 				const released = await enableThreads(1);
-				return { reason, threads, again, released, solves };
+				return { reason, threads, again, released, whileHeld, afterDoubleClose, afterFailedCreate, solves };
 			}`,
 			180_000,
 			{ isolated: true },
@@ -178,6 +209,16 @@ describe('browser build threads', () => {
 		expect(isolated.threads).toBe(THREADS);
 		expect(isolated.again).toBe(THREADS);
 		expect(isolated.released).toBe(1);
+	});
+
+	it('lends each thread to one open run at a time', (context) => {
+		if (!isolated) {
+			context.skip();
+			return;
+		}
+		expect(isolated.whileHeld).toBe(1);
+		expect(isolated.afterDoubleClose).toEqual([THREADS, 1]);
+		expect(isolated.afterFailedCreate).toBe(THREADS);
 	});
 
 	it('falls back to one thread on a page that is not isolated', (context) => {

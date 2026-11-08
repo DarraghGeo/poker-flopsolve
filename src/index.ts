@@ -25,7 +25,7 @@ import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
-import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadLimit } from './platform/node.ts';
+import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit } from './platform/node.ts';
 import type { Context, PlayerIndex, RegretStore, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
@@ -740,17 +740,25 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// Seeded before any worker starts, so they all see the inherited values.
 	let warm: WarmStartReport | null = null;
 	let offset = 0;
-	if (options.warmStart) {
-		const source = options.warmStart;
-		warm = warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
-		offset = options.warmIteration ?? source.totalIterations;
-	}
+	let solver: Solver;
+	let pool: Pool | null;
+	try {
+		if (options.warmStart) {
+			const source = options.warmStart;
+			warm = warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
+			offset = options.warmIteration ?? source.totalIterations;
+		}
 
-	const solver = makeSolver(ctx);
-	// The engine runs its own threads; the JavaScript pool is for the rest.
-	const pool: Pool | null = plan && !engine
-		? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
-		: null;
+		solver = makeSolver(ctx);
+		// The engine runs its own threads; the JavaScript pool is for the rest.
+		pool = plan && !engine
+			? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
+			: null;
+	} catch (error) {
+		// The engine's threads would otherwise stay parked on this run for good.
+		engine?.close();
+		throw error;
+	}
 	if (pool) solver.useRoot(pool.traverse);
 	if (engine) solver.useRoot(engine.root(ctx.dcfr));
 	const threadCount = pool ? pool.workers : engine ? engine.threads : 1;
@@ -834,12 +842,12 @@ function rangeRankMerge(players: readonly [PlayerIndex, PlayerIndex], maxGap: nu
 	return { ranks: (a, b) => allowed[a * 13 + b] === 1, maxGap };
 }
 
-let warnedThreads = false;
+const threadWarnings = new Set<string>();
 
 /**
  * Threads a run will use. Anything above what the platform can run now falls
- * back to what it can, with a single warning: the browser build threads only
- * the WebAssembly engine, and only after `enableThreads` from
+ * back to what it can, with one warning per reason: the browser build threads
+ * only the WebAssembly engine, and only after `enableThreads` from
  * `poker-flopsolve/threads` has started its workers.
  * @param options solver tuning
  * @param engine whether the WebAssembly engine is to run
@@ -849,14 +857,10 @@ function resolveWorkers(options: SolveOptions, engine: boolean): number {
 	const asked = options.workers === 'auto' ? defaultWorkerCount() : (options.workers ?? 1);
 	const limit = threadLimit(engine);
 	if (asked > limit) {
-		if (!warnedThreads) {
-			warnedThreads = true;
-			console.warn(
-				limit > 1
-					? `poker-flopsolve: ${asked} threads asked for, ${limit} available; solving on ${limit} (${PLATFORM} build)`
-					: `poker-flopsolve: no worker threads available; solving on one thread (${PLATFORM} build). ` +
-							'In a browser, call enableThreads() from poker-flopsolve/threads first, in a cross-origin isolated Web Worker.',
-			);
+		const advice = threadAdvice(engine);
+		if (!threadWarnings.has(advice)) {
+			threadWarnings.add(advice);
+			console.warn(`poker-flopsolve: ${asked} threads asked for, solving on ${limit} (${PLATFORM} build): ${advice}`);
 		}
 		return limit;
 	}
