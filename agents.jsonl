@@ -17,3 +17,4 @@
 {"url":null,"title":"Approx EV: lossy hand classes on every street, measured against packed lists","issue":40,"state":"active","updated":"2026-11-08T16:23:12.501Z"}
 {"url":null,"title":"Tree size: safe nested subgame solving — full flop sizes, re-solve turns on demand","issue":47,"state":"active","updated":"2026-11-08T16:23:16.317Z"}
 {"url":null,"title":"Tree size: depth-limited flop solve with blueprint continuation values at the turn","issue":48,"state":"active","updated":"2026-11-08T16:23:21.940Z"}
+{"url":null,"title":"Tree size: share turn/river storage across betting histories (imperfect recall)","issue":49,"state":"active","updated":"2026-11-08T16:23:28.141Z"}
