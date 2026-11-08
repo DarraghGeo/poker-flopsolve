@@ -10,3 +10,4 @@
 {"url":"https://claude.ai/code/session_014RSNFhg5zJFCit4txKvH5G","title":"Speed: multi-threaded WASM (and WebGPU prototype) in the browser","issue":29,"state":"active","updated":"2026-11-08T15:01:34.596Z"}
 {"url":"https://claude.ai/code/session_014RSNFgZVpvtuhbZzctuumV","title":"Approx EV: precomputed flop library + nearest-spot warm start","issue":30,"state":"active","updated":"2026-11-08T15:01:34.596Z"}
 {"url":"https://claude.ai/code/session_014RSNFido7DC5Nexn75QfNJ","title":"Approx EV: hand classes carried through every street (2–3× shorter river vectors)","issue":31,"state":"active","updated":"2026-11-08T15:10:31.451Z"}
+{"url":null,"title":"Per-hand root EV accessor, with an opt-in current-profile estimate","issue":35,"state":"active","updated":"2026-11-08T15:20:38.060Z"}
