@@ -40,6 +40,8 @@ interface PairBuffers {
 	readonly rank: Int32Array;
 	/** A combination's position in the current decision's hand list. */
 	readonly position: Int32Array;
+	/** Each opposing hand's position in the acting list, per depth: deeper walks reuse `position`. */
+	readonly at: Int32Array[];
 }
 
 function treeDepth(ctx: Context): number {
@@ -72,6 +74,7 @@ function makeBuffers(ctx: Context, width: number): PairBuffers {
 		strategy: make(() => new Float64Array(actions * COMBOS)),
 		rank: new Int32Array(COMBOS),
 		position: new Int32Array(COMBOS),
+		at: make(() => new Int32Array(width)),
 	};
 }
 
@@ -254,7 +257,6 @@ function walk(
 	const owner = tree.player[node] as 0 | 1;
 	const lists = ctx.active;
 	const listSlot = (lists.roundBase[tree.round[node]] + board) * 2 + owner;
-	const active = lists.list;
 	const activeFrom = lists.start[listSlot];
 	const activeCount = lists.count[listSlot];
 	// Storage, and so the strategy, is laid out by position in this list.
@@ -274,8 +276,12 @@ function walk(
 			for (let c = 0; c < colCount; c++) {
 				const row = cols[c] * COMBOS;
 				for (let i = 0; i < activeCount; i++) {
-					const combo = active[activeFrom + i];
-					out[row + combo] += strategy[a * stride + i] * value[row + combo];
+					// A packed entry's strategy is every hand's it stands for.
+					const share = strategy[a * stride + i];
+					for (let m = lists.memberStart[activeFrom + i]; m < lists.memberStart[activeFrom + i + 1]; m++) {
+						const combo = lists.memberCombo[m];
+						out[row + combo] += share * value[row + combo];
+					}
 				}
 			}
 		}
@@ -287,13 +293,17 @@ function walk(
 	const childCols = buffers.cols[depth + 1];
 	// Each opposing hand's position in the acting player's list here.
 	const position = buffers.position;
-	for (let i = 0; i < activeCount; i++) position[active[activeFrom + i]] = i;
+	for (let i = 0; i < activeCount; i++) {
+		for (let m = lists.memberStart[activeFrom + i]; m < lists.memberStart[activeFrom + i + 1]; m++) position[lists.memberCombo[m]] = i;
+	}
+	const at = buffers.at[depth];
+	for (let c = 0; c < colCount; c++) at[cols[c]] = position[hands[cols[c]]];
 	for (let a = 0; a < actions; a++) {
 		const offset = a * COMBOS;
 		let childCount = 0;
 		for (let c = 0; c < colCount; c++) {
 			const k = cols[c];
-			const r = colReach[k] * strategy[a * stride + position[hands[k]]];
+			const r = colReach[k] * strategy[a * stride + at[k]];
 			childReach[k] = r;
 			if (r !== 0) childCols[childCount++] = k;
 		}

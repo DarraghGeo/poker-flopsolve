@@ -132,6 +132,23 @@ describe('pairValuesAt', () => {
 		}
 	});
 
+	it('matches valuesAt when the opposing hands act again on a later street', () => {
+		// From the root OOP acts, and acts again on every river below each
+		// of their actions: their hand-list positions must not leak between
+		// the two.
+		const all = Float64Array.from(hands, (c) => oop.weights[c]);
+		const fromRoot = solver.pairValuesAt(0, 0, 1, hands, all, live, live.length);
+		for (const k of [0, 64, hands.length - 1]) {
+			const one = new Float64Array(COMBOS);
+			one[hands[k]] = all[k];
+			const expected = solver.valuesAt(0, 0, 1, Float64Array.from(ip.weights), one, live, live.length);
+			for (const combo of ip.combos) {
+				if (!live.includes(combo)) continue;
+				expect(fromRoot[k * COMBOS + combo]).toBeCloseTo(expected[combo], 6);
+			}
+		}
+	});
+
 	it('gives nothing against a hand that never reaches the node', () => {
 		const none = solver.pairValuesAt(bet, 0, 1, hands.subarray(0, 3), new Float64Array(3), live, live.length);
 		expect(none.every((v) => v === 0)).toBe(true);

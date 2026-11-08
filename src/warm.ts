@@ -23,7 +23,6 @@
  */
 
 import type { Context, RegretStore, SumStore } from './cfr.ts';
-import { tieBlock } from './cfr.ts';
 import { COMBOS } from './cards.ts';
 import type { Runouts } from './runouts.ts';
 import { resolveBoard } from './runouts.ts';
@@ -187,7 +186,12 @@ export function warmStart(to: Context, from: Context, averages: boolean): WarmSt
 			const oldLength = oldActions * oldCount;
 			if (hasRegret) readBlock(from.regret, from.regretScale, oldBlock, oldBase, oldLength, oldRegret);
 			readBlock(from.strategySum, from.sumScale, oldBlock, oldBase, oldLength, oldSum);
-			for (let j = 0; j < oldCount; j++) position[from.active.list[oldFrom + j]] = j;
+			// Every hand an old entry stands for is at that entry.
+			for (let j = 0; j < oldCount; j++) {
+				for (let m = from.active.memberStart[oldFrom + j]; m < from.active.memberStart[oldFrom + j + 1]; m++) {
+					position[from.active.memberCombo[m]] = j;
+				}
+			}
 
 			const newSlot = (to.active.roundBase[round] + board) * 2 + owner;
 			const newFrom = to.active.start[newSlot];
@@ -196,23 +200,32 @@ export function warmStart(to: Context, from: Context, averages: boolean): WarmSt
 			newRegret.fill(0, 0, length);
 			newSum.fill(0, 0, length);
 			for (let i = 0; i < count; i++) {
-				const j = position[resolved.combos[to.active.list[newFrom + i]]];
-				if (j < 0) continue;
-				for (let e = 0; e < actions; e++) {
-					const action = actionOf[e];
-					if (action < 0) continue;
-					newRegret[e * count + i] = oldRegret[action * oldCount + j];
-					newSum[e * count + i] = oldSum[action * oldCount + j];
+				// An entry stands for its mirror orbit here, which the old solve
+				// may have stored apart and not played alike: it takes their mean.
+				const firstMember = to.active.memberStart[newFrom + i];
+				const membersEnd = to.active.memberStart[newFrom + i + 1];
+				const share = 1 / (membersEnd - firstMember);
+				for (let m = firstMember; m < membersEnd; m++) {
+					const j = position[resolved.combos[to.active.memberCombo[m]]];
+					if (j < 0) continue;
+					for (let e = 0; e < actions; e++) {
+						const action = actionOf[e];
+						if (action < 0) continue;
+						newRegret[e * count + i] += share * oldRegret[action * oldCount + j];
+						newSum[e * count + i] += share * oldSum[action * oldCount + j];
+					}
 				}
 			}
-			for (let j = 0; j < oldCount; j++) position[from.active.list[oldFrom + j]] = -1;
+			for (let j = 0; j < oldCount; j++) {
+				for (let m = from.active.memberStart[oldFrom + j]; m < from.active.memberStart[oldFrom + j + 1]; m++) {
+					position[from.active.memberCombo[m]] = -1;
+				}
+			}
 
 			const block = to.layout.blockOffset[node] + board;
 			const base = to.layout.offset[node] + actions * to.layout.rowStart[newSlot];
 			if (hasRegret) writeBlock(to.regret, to.regretScale, REGRET_STEPS, block, base, length, newRegret);
 			if (averages) writeBlock(to.strategySum, to.sumScale, SUM_STEPS, block, base, length, newSum);
-			// The old solve may not have kept mirrored hands equal; this one must.
-			tieBlock(to, node, board);
 		}
 	}
 	return { matchedNodes: matched, decisionNodes: tree.decisionNodes.length, averages };

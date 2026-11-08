@@ -54,8 +54,8 @@ export interface Runouts {
 	/**
 	 * The symmetries each stored board still has, as a prefix into
 	 * `stabiliserMap`: map ids, identity first. A board with more than the
-	 * identity holds hands that mirror each other on it, whose strategies the
-	 * solver keeps tied together.
+	 * identity holds hands that mirror each other on it, which the solver
+	 * stores once per orbit.
 	 */
 	readonly stabiliserStart: readonly Int32Array[];
 	readonly stabiliserMap: readonly Int32Array[];
