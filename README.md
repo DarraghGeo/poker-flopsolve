@@ -489,7 +489,19 @@ deterministic at any thread count.
 
 The default update rule is Discounted CFR (`algorithm: 'dcfr'`, α 1.5, β 0, γ 3, with
 positive regret counted from the second iteration so the uniform first iteration is
-forgotten). CFR+ is still available as `algorithm: 'cfr+'`. The table below predates the
+forgotten). CFR+ is still available as `algorithm: 'cfr+'`.
+
+Each iteration adds its strategy to the average without weighting it by the hand's own
+reach, as postflop-solver does. With own-reach weighting, a hand that equilibrium play stops
+sending to a node averaged out to its near-uniform first iterations there, so continuing it
+off the path (browsing the hand, comparing an engine against the solve) played close to
+random. On a turn spot after 300 iterations, near-uniform play among hands reaching a node
+with under 0.1% of their starting weight fell from 8% to 0.6%. The cost, single-threaded on
+the regression spots, is 0–14% more iterations to 0.3% or 0.1% of pot (turn 79 → 88 and
+143 → 163; flop 62 → 69 and 112 → 115) and about the same to 1%. The tables below predate
+this change.
+
+The table below predates the
 0.2.0 schedule, which needs 10–15% fewer iterations on flop and turn spots. `npm run bench` times a fixed river, turn, flop
 and two-tone flop. Measured in a 4-core cloud container, seconds of solving to reach each
 target (exploitability checks excluded):

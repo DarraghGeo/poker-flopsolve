@@ -477,12 +477,12 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 		keepPositive = <f32>positive;
 		keepNegative = <f32>negative;
 		keepSum = <f32>sum;
-		update(base, sumBase, actions, n, reachMe, strategy, actionValues, out);
+		update(base, sumBase, actions, n, strategy, actionValues, out);
 		keepPositive = savedPositive;
 		keepNegative = savedNegative;
 		keepSum = savedSum;
 	} else if (isTraverser && mode === TRAIN && applyUpdates) {
-		update(base, sumBase, actions, n, reachMe, strategy, actionValues, out);
+		update(base, sumBase, actions, n, strategy, actionValues, out);
 	}
 	return out;
 }
@@ -600,7 +600,7 @@ function normaliseRows(strategy: usize, total: usize, actions: i32, n: i32): voi
 }
 
 /** DCFR or CFR+ update of one block, from this visit's action values. */
-function update(base: usize, sumBase: usize, actions: i32, n: i32, reachMe: usize, strategy: usize, actionValues: usize, value: usize): void {
+function update(base: usize, sumBase: usize, actions: i32, n: i32, strategy: usize, actionValues: usize, value: usize): void {
 	const rowStride = <usize>n << 2;
 	const zero = f32x4.splat(0);
 	const pos = f32x4.splat(keepPositive);
@@ -618,7 +618,7 @@ function update(base: usize, sumBase: usize, actions: i32, n: i32, reachMe: usiz
 			let updated = f32x4.add(f32x4.mul(r, factor), f32x4.sub(v128.load(actionValues + row + o), v128.load(value + o)));
 			if (clamp) updated = f32x4.max(updated, zero);
 			v128.store(base + row + o, updated);
-			const s = f32x4.add(f32x4.mul(v128.load(sumBase + row + o), keep), f32x4.mul(w, f32x4.mul(v128.load(reachMe + o), v128.load(strategy + row + o))));
+			const s = f32x4.add(f32x4.mul(v128.load(sumBase + row + o), keep), f32x4.mul(w, v128.load(strategy + row + o)));
 			v128.store(sumBase + row + o, s);
 		}
 		for (; i < n; i++) {
@@ -627,7 +627,7 @@ function update(base: usize, sumBase: usize, actions: i32, n: i32, reachMe: usiz
 			let updated = r * (r > 0 ? keepPositive : keepNegative) + load<f32>(actionValues + row + o) - load<f32>(value + o);
 			if (clamp && updated < 0) updated = 0;
 			store<f32>(base + row + o, updated);
-			store<f32>(sumBase + row + o, load<f32>(sumBase + row + o) * keepSum + weight * load<f32>(reachMe + o) * load<f32>(strategy + row + o));
+			store<f32>(sumBase + row + o, load<f32>(sumBase + row + o) * keepSum + weight * load<f32>(strategy + row + o));
 		}
 	}
 }

@@ -676,6 +676,13 @@ export function treeDepth(tree: Tree): number {
  * `t^γ`. Every slot is visited exactly once per iteration, by its owner's
  * traversal, so discounting at that visit is the same as discounting
  * everything between iterations — without a separate pass over memory.
+ *
+ * Each iteration adds its strategy to the sum as it is, not weighted by the
+ * hand's own reach (as postflop-solver does). A hand that equilibrium play
+ * stops sending to a node then still averages to what its regrets settled on
+ * there; with own-reach weighting the near-uniform early iterations swamped
+ * it, so play continued off the path was close to random (issue #8). This
+ * holds for CFR+ and every precision too, here and in assembly/engine.ts.
  */
 // assembly/engine.ts repeats these in its sampling catch-up; keep in step.
 const DCFR_ALPHA = 1.5;
@@ -1038,7 +1045,7 @@ function traverse(
 	if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.regretScale !== null) {
 		updateQuantised(
 			ctx, ctx.layout.blockOffset[node] + board, slotBase, actions, stride,
-			iterWeight, reachMe, strategy, actionValues, out,
+			iterWeight, strategy, actionValues, out,
 		);
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.dcfr) {
 		// `iterWeight` is the iteration number, counted from 1.
@@ -1068,7 +1075,7 @@ function traverse(
 				const at = slotRow + i;
 				const accumulated = regret[at];
 				regret[at] = accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[offset + i] - out[i];
-				strategySum[at] = strategySum[at] * keepSum + reachMe[i] * strategy[row + i];
+				strategySum[at] = strategySum[at] * keepSum + strategy[row + i];
 			}
 		}
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates) {
@@ -1083,7 +1090,7 @@ function traverse(
 				// CFR+: clamp the accumulated regret at zero in the same pass.
 				const updated = regret[at] + actionValues[offset + i] - out[i];
 				regret[at] = updated > 0 ? updated : 0;
-				strategySum[at] += iterWeight * reachMe[i] * strategy[row + i];
+				strategySum[at] += iterWeight * strategy[row + i];
 			}
 		}
 	}
@@ -1171,7 +1178,6 @@ function updateQuantised(
 	actions: number,
 	count: number,
 	iterWeight: number,
-	reachMe: Float64Array,
 	strategy: Float64Array,
 	actionValues: Float64Array,
 	out: Float64Array,
@@ -1211,7 +1217,7 @@ function updateQuantised(
 			if (magnitude > largestRegret) largestRegret = magnitude;
 			actionValues[offset + i] = updated;
 
-			const sum = strategySum[at] * oldSum * keepSum + weight * reachMe[i] * strategy[a * count + i];
+			const sum = strategySum[at] * oldSum * keepSum + weight * strategy[a * count + i];
 			if (sum > largestSum) largestSum = sum;
 			strategy[a * count + i] = sum;
 		}

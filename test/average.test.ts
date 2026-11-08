@@ -9,7 +9,9 @@ import { COMBOS } from '../src/cards.ts';
  * regrets, rather than every action at an equal share.
  */
 
-// 16-bit sums round small values to zero, so a short solve leaves some.
+// Sums no longer follow the hand's own reach (issue #8), so a solve leaves
+// none at zero by itself; the test zeroes every third hand's sums at each
+// node, as a strategy loaded with gaps would have them.
 const turn = () =>
 	defineSpot({
 		board: '2c7d9hJs', pot: 100, stack: 200, oop: 'JJ,TT,54s,AA,KQo', ip: 'TT,99,A5s,QQ,K7s',
@@ -39,6 +41,9 @@ describe('average strategy where a hand never reached the node', () => {
 				const count = lists.count[listSlot];
 				// Storage is laid out by position in the board's hand list.
 				const base = ctx.layout.offset[node] + actions * ctx.layout.rowStart[listSlot];
+				for (let k = 0; k < count; k += 3) {
+					for (let a = 0; a < actions; a++) ctx.strategySum[base + a * count + k] = 0;
+				}
 				const { probs } = solver.averageStrategyAt(node, board);
 				averageStrategy(ctx.strategySum, base, actions, count, strategy, ctx.regret);
 				for (let k = 0; k < count; k++) {
