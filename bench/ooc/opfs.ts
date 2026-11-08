@@ -122,7 +122,8 @@ const { port } = server.address() as AddressInfo;
 
 const { chromium } = createRequire(import.meta.url)('playwright');
 const profile = mkdtempSync(join(process.env.OOC_PROFILE_DIR ?? tmpdir(), 'opfs-'));
-const context = memory ? await (await chromium.launch()).newContext() : await chromium.launchPersistentContext(profile);
+const browser = memory ? await chromium.launch() : null;
+const context = browser ? await browser.newContext() : await chromium.launchPersistentContext(profile);
 try {
 	const page = await context.newPage();
 	await page.goto(`http://127.0.0.1:${port}/`);
@@ -135,6 +136,7 @@ try {
 		quota: g(v.quotaBefore.quota), usageDuring: g(v.quotaDuring.usage), fileBytes: g(v.fileBytes) }));
 } finally {
 	await context.close();
+	await browser?.close();
 	server.close();
 	rmSync(profile, { recursive: true, force: true });
 }

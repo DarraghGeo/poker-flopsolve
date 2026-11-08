@@ -20,7 +20,6 @@
 import type { OutOfCore } from './index.ts';
 import type { PageFile } from './paging.ts';
 import { PAGING } from './paging.ts';
-import { openPageFile as open } from './platform/node.ts';
 
 export type { PageFile } from './paging.ts';
 export type { OutOfCore, OutOfCoreReport } from './index.ts';
@@ -35,6 +34,4 @@ export function outOfCore(file: PageFile): OutOfCore {
  * `close()` once the run is done with it. Not in a browser, where an OPFS
  * `FileSystemSyncAccessHandle` is the page file.
  */
-export function openPageFile(path: string): PageFile & { close(): void } {
-	return open(path);
-}
+export { openPageFile } from './platform/node.ts';

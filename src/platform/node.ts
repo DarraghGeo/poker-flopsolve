@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import type { WorkerSetup } from '../parallel.ts';
 import type { EngineWorkerSetup } from '../engine.ts';
+import type { PageFile } from '../paging.ts';
 
 /** Which build this is. */
 export const PLATFORM = 'node';
@@ -110,13 +111,7 @@ export async function prepareThreads(count?: number): Promise<number> {
 }
 
 /** A positioned-I/O file on disk, for `poker-flopsolve/out-of-core`. */
-export function openPageFile(path: string): {
-	read(buffer: Uint8Array, options: { at: number }): number;
-	write(buffer: Uint8Array, options: { at: number }): number;
-	truncate(size: number): void;
-	flush(): void;
-	close(): void;
-} {
+export function openPageFile(path: string): PageFile & { close(): void } {
 	const fd = openSync(path, 'w+');
 	// One call moves at most 2 GiB, so larger views go in pieces.
 	const STEP = 1 << 30;

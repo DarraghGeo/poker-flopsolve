@@ -285,9 +285,12 @@ export class Pager {
 		this.active = false;
 	}
 
-	/** Whether a read starting at `node` must find its page first: a river node, no page entered. */
+	/**
+	 * Whether a read starting at `node` must find its page first: a river
+	 * decision, no page entered. Terminals read no storage.
+	 */
 	wants(ctx: Context, node: number): boolean {
-		return !this.active && ctx.tree.round[node] === this.plan.round;
+		return !this.active && ctx.tree.round[node] === this.plan.round && this.plan.groupOf[node] >= 0;
 	}
 
 	/**
@@ -340,19 +343,20 @@ export class Pager {
 
 	private need(which: number): void {
 		if (this.loaded[which]) return;
-		this.loaded[which] = 1;
 		const [view, at, length] = this.range(which);
-		if (length === 0) return;
-		const started = this.now();
-		const got = this.file.read(view, { at });
-		this.stats.ioMs += this.now() - started;
-		if (got !== length) throw new Error(`outOfCore: read ${got} of ${length} bytes at ${at}`);
-		this.stats.bytesRead += length;
+		if (length > 0) {
+			const started = this.now();
+			const got = this.file.read(view, { at });
+			this.stats.ioMs += this.now() - started;
+			if (got !== length) throw new Error(`outOfCore: read ${got} of ${length} bytes at ${at}`);
+			this.stats.bytesRead += length;
+		}
+		// Only once the bytes are in: a failed read leaves the range to be read again.
+		this.loaded[which] = 1;
 	}
 
 	private evict(): void {
-		if (this.group < 0) return;
-		for (let which = 0; which < 4; which++) {
+		for (let which = 0; which < 4 && this.group >= 0; which++) {
 			if (this.dirty[which]) {
 				const [view, at, length] = this.range(which);
 				if (length > 0) {
@@ -362,10 +366,11 @@ export class Pager {
 					if (put !== length) throw new Error(`outOfCore: wrote ${put} of ${length} bytes at ${at}`);
 					this.stats.bytesWritten += length;
 				}
+				this.dirty[which] = 0;
 			}
-			this.loaded[which] = 0;
-			this.dirty[which] = 0;
 		}
+		this.loaded.fill(0);
+		this.dirty.fill(0);
 		this.group = -1;
 		this.page = -1;
 	}

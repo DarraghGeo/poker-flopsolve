@@ -807,6 +807,11 @@ export interface Approximations {
  * or EV pass reads it all once per player. The file is exactly the river's
  * storage.
  *
+ * The file must stay open while the run or any snapshot of it is read:
+ * strategies and values below the turn are read from it, a page at a time,
+ * so read river strategies in tree order rather than at random. `close()`
+ * writes the resident page back.
+ *
  * Made by `outOfCore(file)` from the separate entry `poker-flopsolve/out-of-core`,
  * so that a build that never pages carries none of it. In a browser, `file`
  * is a `FileSystemSyncAccessHandle` on an Origin Private File System file,
@@ -1179,6 +1184,8 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		close() {
 			// Snapshots stay usable afterwards, on this thread alone.
 			solver.useRoot(null);
+			// The file then holds the whole river; snapshots keep reading it.
+			pager?.flush();
 			pool?.close();
 			engine?.close();
 		},

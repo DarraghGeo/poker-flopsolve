@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { createRun, defineSpot, NodeKind } from '../src/index.ts';
+import { Mode } from '../src/cfr.ts';
 import type { Precision, SolveOptions, SpotConfig } from '../src/index.ts';
 import { openPageFile, outOfCore } from '../src/out-of-core.ts';
 import type { PageFile } from '../src/out-of-core.ts';
@@ -149,6 +150,60 @@ describe('out-of-core river storage', () => {
 		expect(bytesRead).toBeGreaterThan(file.bytes.length);
 		expect(bytesWritten).toBeLessThanOrEqual(file.bytes.length);
 		run.close();
+	});
+
+	it('reads values at a river terminal without paging, and recovers from a failed read', () => {
+		const file = memoryFile();
+		const spot = defineSpot(rainbow);
+		const run = createRun(spot, { workers: 1, outOfCore: outOfCore(file), precision: 'f32' });
+		run.step(2);
+		const { tree } = spot;
+		let terminal = -1;
+		for (let node = 0; node < tree.nodeCount && terminal < 0; node++) {
+			if (tree.round[node] === 2 && tree.kind[node] === NodeKind.TerminalFold) terminal = node;
+		}
+		const reach = new Float64Array(1326).fill(1);
+		const live = Uint16Array.from(spot.players[0].combos);
+		expect(() => run.solver.valuesAt(terminal, 0, 0, reach, reach, live, live.length)).not.toThrow();
+
+		// A read that fails must not leave its range marked as loaded. Training
+		// player 0 reads, on the first page, both players' regrets and then
+		// player 0's sums: fail that third read, then read a player-0
+		// strategy on that same page, which must come from the file.
+		const plan = run.solver.ctx.pager!.plan;
+		const node = Array.from(plan.nodes.subarray(plan.nodeStart[0], plan.nodeStart[1])).find((n) => tree.player[n] === 0)!;
+		const board = spot.runouts.childStart[2][0];
+		const expected = run.snapshot().strategyAt(node, board).probs;
+		// Leave that page, so training reads it in again first thing.
+		const groups = plan.nodeStart.length - 1;
+		const elsewhere = plan.nodes[plan.nodeStart[groups - 1]];
+		run.snapshot().strategyAt(elsewhere, spot.runouts.counts[2] - 1);
+		const read = file.read;
+		let reads = 0;
+		file.read = (buffer, options) => {
+			if (++reads === 3) throw new Error('transient');
+			return read(buffer, options);
+		};
+		expect(() => run.step(1)).toThrow(/transient/);
+		file.read = read;
+		expect(firstDifference(run.snapshot().strategyAt(node, board).probs, expected)).toBe(-1);
+		run.close();
+	});
+
+	it('writes the resident page back on close', () => {
+		const file = memoryFile();
+		const spot = defineSpot(monotone);
+		const run = createRun(spot, { workers: 1, outOfCore: outOfCore(file), precision: 'f32' });
+		run.step(3);
+		const written = run.outOfCore()!.bytesWritten;
+		run.close();
+		expect(run.outOfCore()!.bytesWritten).toBeGreaterThan(written);
+	});
+
+	it('mirrors the traversal modes it hard-codes', () => {
+		// paging.ts may not import cfr.ts's values, so it repeats these.
+		expect(Mode.Train).toBe(0);
+		expect(Mode.Current).toBe(3);
 	});
 
 	it('refuses what it cannot page', () => {
