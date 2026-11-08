@@ -26,7 +26,7 @@ const RESOLVE_ITERATIONS = Number(iterArg ?? 300);
 const GADGETS = (gadgetArg ?? 'unsafe,resolve,maxmargin,reach-maxmargin').split(',') as Gadget[];
 // NESTED_VALUES=blueprint guarantees blueprint values instead of best responses.
 const VALUES = process.env.NESTED_VALUES === 'blueprint' ? 'blueprint' : 'best-response';
-// NESTED_REF=T0 measures against the smaller tree's reference instead.
+// NESTED_REF=T0 measures against the smaller tree's reference instead; NESTED_TAG suffixes the output file.
 const refTree = process.env.NESTED_REF === 'T0' ? 'T0' : 'T';
 const full = (refTree === 'T0' ? small : target)(boardName);
 const REF = new URL(`../../scratch/nested/${boardName}-${refTree}/`, import.meta.url);
@@ -362,7 +362,7 @@ for (const key of keys) {
 }
 
 writeFileSync(
-	new URL(`run-${variantName}${VALUES === 'blueprint' ? '-ev' : ''}.json`, REF),
+	new URL(`run-${variantName}${VALUES === 'blueprint' ? '-ev' : ''}${process.env.NESTED_TAG ?? ''}.json`, REF),
 	JSON.stringify(
 		{
 			board: boardName,
