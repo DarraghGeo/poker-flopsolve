@@ -505,14 +505,27 @@ export interface Approximations {
 	 * coarse game only chooses where it starts, and exploitability and
 	 * `targetPercent` measure the real game. Unset, off.
 	 *
-	 * Measured on flop spots single-threaded, given 15 s (issue #24), half of
-	 * it coarse, half fine: TODO numbers.
+	 * Measured on three flop spots in Chromium, one thread, stopped at 15 s,
+	 * with 40 coarse iterations (issue #24): root-EV error per combination
+	 * against a 0.1%-of-pot reference fell from 1.51% to 0.19% of pot on
+	 * AsKh7d (exploitability 0.94% to 0.40%), and 0.26% to 0.06% on the
+	 * wider bench flop. A monotone flop, which a cold solve already settles
+	 * within 15 s, reached 0.5% error in half the time but ended a little
+	 * looser, 0.11% against 0.04%. To an exploitability target in Node it
+	 * was faster on all three: 0.1% on the monotone flop in 13.1 s instead of
+	 * 14.9, 0.2% on the wide one in 14.5 instead of 19.1, 0.3% on AsKh7d in
+	 * 19.4 instead of 26.2. Around 40 iterations suits a flop; far fewer
+	 * leave the coarse solve too rough to help, far more spend the time
+	 * where the real solve would have spent it better.
+	 *
+	 * Carrying the coarse average strategy, restarting DCFR's count (a
+	 * `warmIteration` of 0 or 10), a bucket gap of 1, or forbidding donk bets
+	 * in the coarse spot were measured too, and were all worse.
 	 *
 	 * The coarse iterations count toward `totalIterations`, not `completed`
-	 * or `Solution.iterations`; DCFR carries on counting from them, which
-	 * measured better than restarting the count (`warmIteration`). Its
-	 * average strategy is not carried: measured, that was no better. Both
-	 * solves are in memory at the switch. Where bucketing folds no runouts
+	 * or `Solution.iterations`; DCFR carries on counting from them unless
+	 * `warmIteration` says otherwise. Both solves are in memory at the
+	 * switch, the coarse one about 60% the size of the real one on a flop. Where bucketing folds no runouts
 	 * together — a river spot, ranges with no rank symmetry — it does
 	 * nothing. Not with `warmStart`, which it already is.
 	 */
