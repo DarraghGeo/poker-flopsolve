@@ -1,0 +1,84 @@
+{
+ "tag": "AsKh7d2c-55-975",
+ "raiseOver": [
+  0.75
+ ],
+ "unmatchedPlay": "uniform",
+ "frequencyMatched": false,
+ "bytes": 35612184,
+ "compressedBytes": 18146428,
+ "fullBytes": 67278184,
+ "iterations": 490,
+ "ms": 21849.718307999996,
+ "ownExploitability": 0.292618954946037,
+ "peak": "rss 0.20 GiB, heap 13 MiB, arrayBuffers 0.00 GiB",
+ "rootEvError": [
+  {
+   "mae": 2.1821465450865456,
+   "max": 6.1910499856478,
+   "range": 0.8494131877113146
+  },
+  {
+   "mae": 3.1086781816386395,
+   "max": 7.007696844664844,
+   "range": 0.8494131877113081
+  }
+ ],
+ "sizes": [
+  {
+   "labels": [
+    "0.33",
+    "0.75",
+    "1.50"
+   ],
+   "sizeMaePercent": [
+    2.3875414254413063,
+    2.0384909341183812,
+    2.97765535467733
+   ],
+   "agreement": 0.8715965902960112,
+   "agreementClear": 0.925441673576121,
+   "clearShare": 0.563931949789591
+  },
+  {
+   "labels": [
+    "0.33",
+    "0.75",
+    "1.50"
+   ],
+   "sizeMaePercent": [
+    4.213009872867659,
+    7.983932421611074,
+    9.028515352034985
+   ],
+   "agreement": 0.44725389346473404,
+   "agreementClear": 0.6641173716247853,
+   "clearShare": 0.460885515951516
+  }
+ ],
+ "translated": {
+  "exploitability": 35.039228552091636,
+  "split": {
+   "referenceInTranslated": 0.21057800613124458,
+   "referenceElsewhere": 0.13778050034934855
+  },
+  "brGain": [
+   34.5562391167547,
+   35.5222179874286
+  ],
+  "translatedNodes": 172,
+  "unmatched": 12,
+  "rootEvError": [
+   {
+    "mae": 2.1821465562894105,
+    "max": 6.191049978730092,
+    "range": 0.8494131879086549
+   },
+   {
+    "mae": 3.108678180691349,
+    "max": 7.007696830110312,
+    "range": 0.8494131879086533
+   }
+  ]
+ }
+}

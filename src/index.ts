@@ -773,6 +773,92 @@ export interface Approximations {
 	 * implementation is in this repository's history (commit 0f80fcc);
 	 * `bench/ooc/` keeps the OPFS throughput and sizing benchmarks.
 	 *
+	 * Pruning for space (#52) — freeing the storage under lines no hand plays,
+	 * as best-response pruning does (Brown & Sandholm, 2017), and rebuilding
+	 * it if the line comes back — was measured before building and is not
+	 * offered. `bench/prune-space-census.ts` walks both players' reach under
+	 * the current profile after every iteration and counts the regret and
+	 * strategy-sum storage of blocks (a node on one board) that one player or
+	 * the other reaches with no hand. That is everything freeing could release.
+	 * On T₀ (AsKh7d, pot 55, stack 975, bets 33/75/150%, all-in raise, two
+	 * aggressions, 5.1 GiB at f32) it was 2.8%, 3.4%, 7.6% and 15.8% of
+	 * storage at iterations 20, 50, 100 and 200 (1.1% of pot). Only 6.0% had
+	 * stayed unreached for the last 50 iterations, and no decision node was
+	 * unreached on every board it is dealt on, which is the unit a whole-node
+	 * allocator would free. The target tree itself on Ks9s4s (3.75 GiB) was
+	 * alike: 15.0% per block at iteration 150 (2.5% of pot), 3.3% for 50
+	 * iterations running, 0% per node. Turn-rooted copies of the target's
+	 * betting, solved to 0.3–0.6% of pot, reached 15–20% per block and 3–4%
+	 * per node. Some hand on some board keeps every line alive: per node,
+	 * almost nothing can be freed, and per block, freeing all of it would
+	 * still leave the target at about 14 GiB at f32, where 2 GiB needs a
+	 * cut of about 9×.
+	 *
+	 * The bound that makes freeing safe does not hold here either. With
+	 * DCFR's β = 0 a negative regret halves every iteration, so it never
+	 * falls below about twice the largest one-iteration regret, and the
+	 * number of iterations it proves an action stays unprofitable is zero
+	 * (as for pruning work, above). And WebAssembly memory grows but never
+	 * shrinks, so freed blocks only cut peak memory if storage starts small
+	 * and is allocated when the traversal first reaches it. That means a
+	 * per-block indirection through every kernel, the AssemblyScript engine,
+	 * the threads' shared memory, the 16-bit scales and warm starts, for an
+	 * 8–20% saving at best.
+	 *
+	 * Runout clusters — potential-aware card abstraction (Ganzfried &
+	 * Sandholm, 2014): turn and river cards grouped by k-medoids under the
+	 * earth mover's distance between each range's river-equity distribution,
+	 * plus flush, straight and pair texture, one walk per cluster with reach
+	 * gathered from every member — were built and measured as well, and left
+	 * out (prototype and data in bench/clusters, commit ef1fa9c). Rank swaps
+	 * alone cannot get there: suited connectors leave only ranks 2-5 swappable on
+	 * AsKh7d, so about 37 of 49 turns stay apart whatever k asks for, and the
+	 * rest need hands mapped by strength order, and that is where the error
+	 * comes from. At 15 s in the browser, single-threaded (measured before
+	 * #8 changed how strategy sums are weighted), true exploitability:
+	 * bench flop 2.3% at k = 16 (rivers 20) against 1.8% exact and 0.7% for
+	 * `runoutBuckets`, which also beat it on per-combination EV; both monotone
+	 * flops lost to exact on every measure. It won only where exact gets
+	 * almost nowhere in 15 s — a two-size wide flop, under 10 iterations —
+	 * and on the pairs-and-broadway flop's EVs (mean error 0.3% of pot against
+	 * 1.0%, at 0.8% exploitability against 0.6%). Its error has a floor that
+	 * more iterations do not lower: on the bench flop 1.1-3.2% of pot mean
+	 * per-combination EV error and 2.2-4.7% exploitability from k = 16 down
+	 * to 4, on the wide flop 1.3-2.3% and 4-10%.
+	 *
+	 * Action translation of raises (#54) was built and measured, and is not
+	 * offered. The tree solved sized raises only over opening bets of chosen
+	 * sizes and offered just fold, call and the shove facing any other bet.
+	 * A full-tree raise over a 0.33 or 1.5 bet was read from the solved raise
+	 * over the nearest anchor, 0.75 (the pseudo-harmonic mapping is the
+	 * identity there, since the raise is 0.75 of the pot in both lines). Sized
+	 * raises are 64% of the round's target T (AsKh7d, 17.2 GiB at 32 bits):
+	 * those over a 0.33 bet 35%, over 0.75 20%, over 1.5 9%. Cutting them is
+	 * not enough. Raises over 0.75 alone left 9.1 GiB (4.6 at 16 bits), and
+	 * dropping every sized raise left 5.8 (2.9), both over the 2 GiB mark. On
+	 * the monotone Ks9s4s, where T is 3.75 GiB (1.9 at 16 bits, already
+	 * under the mark), raises over 0.75 alone took it to 2.0 GiB (1.0). That
+	 * solve needed 680 iterations to 0.3% of pot where the full tree needed
+	 * 510, and ran 20 minutes on 4 threads. Its per-combination root EVs were
+	 * 2.1–2.3% of pot off the full tree's on average and 8–9% at worst. Out
+	 * of position still chose the same root bet size for 93% of its range,
+	 * and for every hand with a clear preference. In position, after a check,
+	 * it agreed for 51%: a 0.33 bet that cannot be raised looks too good.
+	 * Translated into the full tree, the strategy was exploitable for 43% of
+	 * the pot. A turn spot with T's betting (AsKh7d2c) said the same: 2.2–3.4%
+	 * mean EV error and 31–68% exploitability across the anchor choices,
+	 * against 92–128% with no translation at all. The leak is the pairing.
+	 * With the full tree's own strategy put into only the translated
+	 * subtrees, exploitability was 0.2%. With the translated subtrees kept and
+	 * the full tree's strategy everywhere else, it was 0.14%. What fails is
+	 * the abstract game's 0.33 and 1.5 bets, shaped knowing they cannot be
+	 * raised, met by responses made for a range that could. Matching the
+	 * anchor's continue frequency at the first translated decision did not
+	 * help (39%). This is the pathology Ganzfried and Sandholm (2013)
+	 * describe. The implementation is in this repository's history (commit
+	 * f40fb76). `bench/translation/census.ts` keeps the storage census, and
+	 * `bench/translation/results/` keeps the measurements.
+	 *
 	 * Strategy grafting over bet sizes (#56; Waugh, Bard & Bowling, 2009) —
 	 * one size at a time in the same memory, stitched by a small game that
 	 * picks each hand's size — was built for the flop's opening bet,

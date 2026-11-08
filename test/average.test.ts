@@ -4,19 +4,21 @@ import { averageStrategy } from '../src/cfr.ts';
 import { COMBOS } from '../src/cards.ts';
 
 /**
- * A hand whose strategy sum at a node is zero never reached it on its own, so
- * the average says nothing about it: it plays the current strategy, from its
+ * A hand whose strategy sum at a node is zero (under CFR+, one that never
+ * reached it on its own) has no average to give there: it plays the current strategy, from its
  * regrets, rather than every action at an equal share.
  */
 
-// 16-bit sums round small values to zero, so a short solve leaves some.
+// Sums no longer follow the hand's own reach (issue #8), so a solve leaves
+// none at zero by itself; the test zeroes every third hand's sums at each
+// node, as a strategy loaded with gaps would have them.
 const turn = () =>
 	defineSpot({
 		board: '2c7d9hJs', pot: 100, stack: 200, oop: 'JJ,TT,54s,AA,KQo', ip: 'TT,99,A5s,QQ,K7s',
 		betSizes: [[0.66]], maxRaises: 1,
 	});
 
-describe('average strategy where a hand never reached the node', () => {
+describe('average strategy where a hand has no strategy sum at the node', () => {
 	const run = createRun(turn(), { precision: 'i16' });
 	run.step(100);
 	const { solver, spot } = run;
@@ -39,6 +41,9 @@ describe('average strategy where a hand never reached the node', () => {
 				const count = lists.count[listSlot];
 				// Storage is laid out by position in the board's hand list.
 				const base = ctx.layout.offset[node] + actions * ctx.layout.rowStart[listSlot];
+				for (let k = 0; k < count; k += 3) {
+					for (let a = 0; a < actions; a++) ctx.strategySum[base + a * count + k] = 0;
+				}
 				const { probs } = solver.averageStrategyAt(node, board);
 				averageStrategy(ctx.strategySum, base, actions, count, strategy, ctx.regret);
 				for (let k = 0; k < count; k++) {

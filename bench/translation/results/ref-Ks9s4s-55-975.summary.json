@@ -1,0 +1,9 @@
+{
+ "tag": "Ks9s4s-55-975",
+ "bytes": 4030328554,
+ "compressedBytes": 2041507734,
+ "iterations": 510,
+ "ms": 3700284.2920120005,
+ "exploitability": 0.2981570257223056,
+ "memory": "rss 4.14 GiB, heap 30 MiB, arrayBuffers 3.76 GiB"
+}
