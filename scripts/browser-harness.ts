@@ -7,9 +7,9 @@
  * The given module is bundled exactly as the browser build is — the platform
  * module swapped, nothing from Node allowed — then run inside a Web Worker in
  * headless Chromium, which is how a page should host a solve. The module's
- * default export is awaited and its result posted back. The page is served
- * without cross-origin isolation headers on purpose: the browser build must not
- * need them.
+ * default export is awaited and its result posted back. By default the page is
+ * served without cross-origin isolation headers on purpose: the browser build
+ * must not need them. `{ isolated: true }` adds them, for the opt-in threads.
  */
 
 import { createServer } from 'node:http';
@@ -78,12 +78,23 @@ worker.onmessage = (event) => { window.__result = event.data; };
 worker.onerror = (event) => { window.__result = { ok: false, error: event.message || 'worker failed to load' }; };
 </script>`;
 
+/** The headers that make a page cross-origin isolated, which threads need. */
+export const ISOLATION_HEADERS = {
+	'cross-origin-opener-policy': 'same-origin',
+	'cross-origin-embedder-policy': 'require-corp',
+} as const;
+
 /**
  * Run a module's default export in a Web Worker in headless Chromium.
  * @param source TypeScript whose default export is an async function returning JSON-safe data
  * @param timeoutMs how long to wait for it
+ * @param options `isolated` serves the page cross-origin isolated
  */
-export async function runInBrowser<T>(source: string, timeoutMs = 120_000): Promise<T> {
+export async function runInBrowser<T>(
+	source: string,
+	timeoutMs = 120_000,
+	options: { isolated?: boolean } = {},
+): Promise<T> {
 	const playwright = loadPlaywright();
 	const entry = await bundleForBrowser(source);
 	const files: Record<string, [string, string]> = {
@@ -97,7 +108,7 @@ export async function runInBrowser<T>(source: string, timeoutMs = 120_000): Prom
 			response.writeHead(404).end();
 			return;
 		}
-		response.writeHead(200, { 'content-type': file[0] }).end(file[1]);
+		response.writeHead(200, { 'content-type': file[0], ...(options.isolated ? ISOLATION_HEADERS : {}) }).end(file[1]);
 	});
 	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 	const { port } = server.address() as AddressInfo;

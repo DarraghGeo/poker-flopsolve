@@ -25,7 +25,7 @@ import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
-import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, THREADS_AVAILABLE } from './platform/node.ts';
+import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit } from './platform/node.ts';
 import type { Context, PlayerIndex, RegretStore, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
@@ -427,7 +427,9 @@ export interface SolveOptions {
 	 * exploitability, so never the largest error in the answer, but do not
 	 * expect two worker counts to agree bit for bit.
 	 *
-	 * The browser build is single-threaded: any count resolves to 1 there.
+	 * The browser build is single-threaded unless `enableThreads` from
+	 * `poker-flopsolve/threads` has started its workers; any count above what
+	 * is available resolves to what is, with one warning.
 	 */
 	readonly workers?: number | 'auto';
 	/**
@@ -722,7 +724,12 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
 	const weights = runoutWeights(spot.runouts);
 
-	const requested = resolveWorkers(options);
+	// The WebAssembly engine, where it applies: 32-bit storage and a platform
+	// with WebAssembly SIMD. Decided before the thread count, because the
+	// browser build can only thread the engine.
+	const wantsEngine =
+		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false;
+	const requested = resolveWorkers(options, wantsEngine);
 	const plan = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
 
 	// Workers need the accumulators in shared memory. Allocating shared for a
@@ -734,19 +741,16 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 
 	const active = buildActiveLists(spot.runouts, spot.players, showdown);
 	const hands = buildHandSpace(spot.runouts, spot.players, active);
-	// The WebAssembly engine, where it applies: one thread, 32-bit storage,
-	// a platform with WebAssembly SIMD. It owns the storage; the context sees
-	// it through views.
-	const engine =
-		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false
-			? createEngine(
-					{
-						tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
-						runoutWeight: weights, chipScale: spot.chipScale,
-					},
-					plan ? { plan, threads: requested, spawn: spawnEngineWorker } : undefined,
-				)
-			: null;
+	// The engine owns the storage; the context sees it through views.
+	const engine = wantsEngine
+		? createEngine(
+				{
+					tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
+					runoutWeight: weights, chipScale: spot.chipScale,
+				},
+				plan ? { plan, threads: requested, spawn: spawnEngineWorker } : undefined,
+			)
+		: null;
 	const ctx: Context = {
 		tree: spot.tree,
 		runouts: spot.runouts,
@@ -786,17 +790,25 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// Seeded before any worker starts, so they all see the inherited values.
 	let warm: WarmStartReport | null = null;
 	let offset = 0;
-	if (options.warmStart) {
-		const source = options.warmStart;
-		warm = warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
-		offset = options.warmIteration ?? source.totalIterations;
-	}
+	let solver: Solver;
+	let pool: Pool | null;
+	try {
+		if (options.warmStart) {
+			const source = options.warmStart;
+			warm = warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
+			offset = options.warmIteration ?? source.totalIterations;
+		}
 
-	const solver = makeSolver(ctx);
-	// The engine runs its own threads; the JavaScript pool is for the rest.
-	const pool: Pool | null = plan && !engine
-		? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
-		: null;
+		solver = makeSolver(ctx);
+		// The engine runs its own threads; the JavaScript pool is for the rest.
+		pool = plan && !engine
+			? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
+			: null;
+	} catch (error) {
+		// The engine's threads would otherwise stay parked on this run for good.
+		engine?.close();
+		throw error;
+	}
 	if (pool) solver.useRoot(pool.traverse);
 	if (engine) solver.useRoot(engine.root(ctx.dcfr));
 	const threadCount = pool ? pool.workers : engine ? engine.threads : 1;
@@ -880,21 +892,27 @@ function rangeRankMerge(players: readonly [PlayerIndex, PlayerIndex], maxGap: nu
 	return { ranks: (a, b) => allowed[a * 13 + b] === 1, maxGap };
 }
 
-let warnedThreads = false;
+const threadWarnings = new Set<string>();
 
 /**
- * Threads a run will use. The browser build has none to offer, so anything
- * above one falls back to the calling thread, with a single warning.
+ * Threads a run will use. Anything above what the platform can run now falls
+ * back to what it can, with one warning per reason: the browser build threads
+ * only the WebAssembly engine, and only after `enableThreads` from
+ * `poker-flopsolve/threads` has started its workers.
+ * @param options solver tuning
+ * @param engine whether the WebAssembly engine is to run
  */
-function resolveWorkers(options: SolveOptions): number {
+function resolveWorkers(options: SolveOptions, engine: boolean): number {
 	if (options.analysisOnly) return 1;
 	const asked = options.workers === 'auto' ? defaultWorkerCount() : (options.workers ?? 1);
-	if (asked > 1 && !THREADS_AVAILABLE) {
-		if (!warnedThreads) {
-			warnedThreads = true;
-			console.warn(`poker-flopsolve: worker threads are Node-only; solving on one thread (${PLATFORM} build)`);
+	const limit = threadLimit(engine);
+	if (asked > limit) {
+		const advice = threadAdvice(engine);
+		if (!threadWarnings.has(advice)) {
+			threadWarnings.add(advice);
+			console.warn(`poker-flopsolve: ${asked} threads asked for, solving on ${limit} (${PLATFORM} build): ${advice}`);
 		}
-		return 1;
+		return limit;
 	}
 	return asked;
 }
