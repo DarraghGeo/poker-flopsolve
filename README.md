@@ -416,6 +416,46 @@ accuracy. On AhKdQc, 4 threads, to 0.3% of pot in the bucketed game:
 | | 1 | 1,396 | 4.9 s | 0.482% |
 | | 3 | 1,088 | 4.2 s | 0.542% |
 
+### History sharing (approximate, for memory)
+
+`shareHistories: true` keeps one set of river regrets and strategy sums for every betting
+line that reaches the river with the same pot. With pot-fraction sizes many lines meet:
+check, bet, call and bet, call, and every raise line taken in either order. Their river
+subtrees are identical, so their nodes can share storage. Each line is still walked with
+its own reach, so an iteration costs what it did; only storage shrinks. Off by default.
+
+It is lossy. A player plays one river strategy for every line that met, though each line
+brings different ranges. The strategy is still one for the whole game, so
+`exploitabilityPercent()` measures it exactly. Each line's regret is weighted by how often
+the hand plays into it (`weighting: 'reach'`, the default), which cost four times less
+than plain CFR's sum. Bench ranges, As Kh 7d, pot 55, stack 975, 4 threads, root EVs
+against the exact solve:
+
+| Tree | Storage, f32 | Exploitability | Root EV error, mean / max | Iterations |
+|---|---|---|---|---|
+| 3 sizes, all-in raise, 2 aggressions (exact: 0.28%) | 5.8 GiB → 1.22 GiB | 8.0% of pot | 0.72% / 2.5% of pot | 400 |
+| 2 sizes, all-in raise, 2 aggressions (exact: 0.25%) | 1.93 GiB → 0.48 GiB | 5.8% of pot | 0.94% / 2.4% of pot | 400 |
+| 1 size, all-in raise, 2 aggressions (exact: 0.25%) | 0.39 GiB → 0.14 GiB | 4.0% of pot | 0.67% / 6.8% of pot | 300 |
+
+On the two-size tree, out of position's EV at each root action was off by 1.7% of pot on
+average, and 85% of the range still picked the same bet size as the exact solve (70%
+with plain CFR's sum, which was left 24% of pot exploitable).
+
+On the three-size tree with a 75% raise and three aggressions, which does not fit
+otherwise, 173 river starts collapse to 23: 17.2 GiB becomes 2.9 GiB at 32 bits, and
+8.7 GiB becomes 1.5 GiB at 16. In Node at 16 bits the whole process peaked at 1.6 GiB
+on one thread (about 100 s an iteration) and 2.0 GiB on four (30 s an iteration), and the
+strategy was 27% of pot exploitable after 50 iterations, 15% after 100 and 12% after 150. At 32 bits it runs on the
+WebAssembly engine in 10.4 s an iteration on four threads, peaking at 3.2 GiB. An
+iteration costs what the unshared tree's would, so this makes the spot fit, not fast.
+Expect a strategy several percent of the pot from equilibrium, with EVs about 1% off on
+average, in a spot that would not otherwise fit. `{ fromRound: 1 }` shares the turn too, which saves about 1% more and
+measured less accurate (9.4% on the first tree). `{ spr: w }` also merges subtrees of one
+shape whose stack-to-pot ratios fall in a log-bucket of width `w`. On the three-size tree
+that is 1.5 times less storage at `w = 0.1` and 2 times at `w = 4`, but much lossier: a
+one-size tree was left 20% of pot exploitable at `w = 4`. A shared spot can warm-start
+only from another shared solve.
+
 ### Chance sampling (opt-in)
 
 `approximations: { chanceSampling: {} }` walks each turn and river deal on only some
@@ -489,8 +529,22 @@ deterministic at any thread count.
 
 The default update rule is Discounted CFR (`algorithm: 'dcfr'`, α 1.5, β 0, γ 3, with
 positive regret counted from the second iteration so the uniform first iteration is
-forgotten). CFR+ is still available as `algorithm: 'cfr+'`. The table below predates the
-0.2.0 schedule, which needs 10–15% fewer iterations on flop and turn spots. `npm run bench` times a fixed river, turn, flop
+forgotten). CFR+ is still available as `algorithm: 'cfr+'`.
+
+Under DCFR, each iteration adds its strategy to the average without weighting it by the
+hand's own reach, as postflop-solver does. With own-reach weighting, a hand that equilibrium
+play stops sending to a node averaged out to its near-uniform first iterations there, so
+continuing it off the path (browsing the hand, comparing an engine against the solve) played
+close to random. On a turn spot after 300 iterations, near-uniform play among hands reaching
+a node with under 0.1% of their starting weight fell from 8% to 0.6%. The cost, single-threaded
+on the regression spots: exploitability at a fixed iteration count is up to about 50% higher
+once it is small (turn, 400 iterations: 0.016% → 0.024% of pot), which is 0–14% more
+iterations to 0.3% or 0.1% of pot (turn 79 → 88 and 143 → 163; flop 62 → 69 and 112 → 115)
+and about the same to 1%. CFR+ keeps the own-reach weighting: its iterates oscillate, and
+unweighted they averaged to 2–3× the exploitability.
+
+The table below predates both this change and the 0.2.0 schedule, which needs 10–15% fewer
+iterations on flop and turn spots. `npm run bench` times a fixed river, turn, flop
 and two-tone flop. Measured in a 4-core cloud container, seconds of solving to reach each
 target (exploitability checks excluded):
 
@@ -576,6 +630,12 @@ Measured on a 133 vs 145 combo spot, 8 cores:
 `workers: 'auto'` uses one less than the machine's parallelism, but never fewer than two, so
 a 2-core machine still splits; `workers: 1` stays on one thread. A river spot has a single runout and silently stays single-threaded whatever is
 asked for.
+
+A thread that fails mid-iteration fails the solve instead of hanging it: the step throws, as
+does every step after, and the run must be closed and solved again. A thread killed without
+any chance to report it (a Node worker out of heap, a worker the browser kills) is caught by
+a backstop instead: the main thread waits for the others at most 20× its own share of the
+step, and never less than a minute, before it gives up on them.
 
 Results are bitwise deterministic at a fixed worker count, but agree with a different count
 only to floating point: a worker sums its own slice before the totals are summed across

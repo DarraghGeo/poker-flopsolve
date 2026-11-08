@@ -135,6 +135,20 @@ export function setSampling(
 	blockOffset = blockOffsets;
 }
 
+// History sharing (`SpotConfig.shareHistories`): per block, the iteration
+// DCFR last discounted it in, so a block shared by several histories is
+// discounted once an iteration, as `discounted` in src/cfr.ts. Off while 0.
+let discounted: usize = 0;
+// Per node, nonzero where a shared node's regret is weighted by own reach; 0 for none.
+let weightedNodes: usize = 0;
+
+/** Turn the once-an-iteration discount on: its marks, the block table, the weighted nodes (or 0). */
+export function setShared(marks: usize, blockOffsets: usize, weighted: usize): void {
+	discounted = marks;
+	blockOffset = blockOffsets;
+	weightedNodes = weighted;
+}
+
 /** The iteration a training walk is for, counted from 1, and whether it runs DCFR. */
 export function setIteration(t: i32, dcfr: i32): void {
 	iteration = t;
@@ -451,29 +465,53 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 		}
 	}
 
-	if (isTraverser && mode === TRAIN && applyUpdates && sampleRounds !== 0 && dcfrRule) {
-		// A subtree sampling skipped missed those iterations' discounts;
-		// nothing was added meanwhile, so each sign held.
-		const block = lastUpdate + (<usize>(i32At(blockOffset, node) + board) << 2);
+	if (weightedNodes !== 0 && isTraverser && mode === TRAIN && applyUpdates && load<u8>(weightedNodes + <usize>node) !== 0) {
+		// Each history's regret counts as often as this hand plays into it.
+		for (let a = 0; a < actions; a++) {
+			const actionRow = actionValues + <usize>a * rowStride;
+			for (let i = 0; i < myCount; i++) {
+				const o = <usize>i << 2;
+				const v = load<f32>(out + o);
+				store<f32>(actionRow + o, v + load<f32>(reachMe + o) * (load<f32>(actionRow + o) - v));
+			}
+		}
+	}
+	if (isTraverser && mode === TRAIN && applyUpdates && (sampleRounds !== 0 || discounted !== 0) && dcfrRule) {
+		const index = <usize>(i32At(blockOffset, node) + board) << 2;
 		const savedPositive = keepPositive;
 		const savedNegative = keepNegative;
 		const savedSum = keepSum;
 		let positive = <f64>keepPositive;
 		let negative = <f64>keepNegative;
 		let sum = <f64>keepSum;
-		if (catchUp) {
-			for (let t = load<i32>(block) + 1; t < iteration; t++) {
-				// `dcfrFactors` in src/cfr.ts at α 1.5, β 0, γ 3, without
-				// pulling a general power function into the module.
-				const age: f64 = t > 2 ? <f64>(t - 2) : 0;
-				const grown = age * Math.sqrt(age);
-				const kept = <f64>(t - 1) / <f64>t;
-				positive *= grown / (grown + 1);
-				negative *= 0.5;
-				sum *= kept * kept * kept;
+		if (discounted !== 0) {
+			// Another history already discounted this shared block this iteration.
+			const mark = discounted + index;
+			if (load<i32>(mark) === iteration) {
+				positive = 1;
+				negative = 1;
+				sum = 1;
 			}
+			store<i32>(mark, iteration);
 		}
-		store<i32>(block, iteration);
+		if (sampleRounds !== 0) {
+			// A subtree sampling skipped missed those iterations' discounts;
+			// nothing was added meanwhile, so each sign held.
+			const block = lastUpdate + index;
+			if (catchUp) {
+				for (let t = load<i32>(block) + 1; t < iteration; t++) {
+					// `dcfrFactors` in src/cfr.ts at α 1.5, β 0, γ 3, without
+					// pulling a general power function into the module.
+					const age: f64 = t > 2 ? <f64>(t - 2) : 0;
+					const grown = age * Math.sqrt(age);
+					const kept = <f64>(t - 1) / <f64>t;
+					positive *= grown / (grown + 1);
+					negative *= 0.5;
+					sum *= kept * kept * kept;
+				}
+			}
+			store<i32>(block, iteration);
+		}
 		keepPositive = <f32>positive;
 		keepNegative = <f32>negative;
 		keepSum = <f32>sum;
@@ -562,7 +600,7 @@ function matchAverage(sumBase: usize, regretBase: usize, actions: i32, n: i32, s
 			store<f32>(total + o, load<f32>(total + o) + v);
 		}
 	}
-	// Hands that never reached this node fall back to the current strategy.
+	// Hands with no sum here (under CFR+, never reached) fall back to the current strategy.
 	for (let i = 0; i < n; i++) {
 		const o = <usize>i << 2;
 		if (load<f32>(total + o) > 0) continue;
@@ -618,7 +656,11 @@ function update(base: usize, sumBase: usize, actions: i32, n: i32, reachMe: usiz
 			let updated = f32x4.add(f32x4.mul(r, factor), f32x4.sub(v128.load(actionValues + row + o), v128.load(value + o)));
 			if (clamp) updated = f32x4.max(updated, zero);
 			v128.store(base + row + o, updated);
-			const s = f32x4.add(f32x4.mul(v128.load(sumBase + row + o), keep), f32x4.mul(w, f32x4.mul(v128.load(reachMe + o), v128.load(strategy + row + o))));
+			// DCFR adds the strategy unweighted by own reach (issue #8); CFR+ keeps the weight.
+			let played = v128.load(strategy + row + o);
+			if (clamp) played = f32x4.mul(v128.load(reachMe + o), played);
+			const added = f32x4.mul(w, played);
+			const s = f32x4.add(f32x4.mul(v128.load(sumBase + row + o), keep), added);
 			v128.store(sumBase + row + o, s);
 		}
 		for (; i < n; i++) {
@@ -627,7 +669,9 @@ function update(base: usize, sumBase: usize, actions: i32, n: i32, reachMe: usiz
 			let updated = r * (r > 0 ? keepPositive : keepNegative) + load<f32>(actionValues + row + o) - load<f32>(value + o);
 			if (clamp && updated < 0) updated = 0;
 			store<f32>(base + row + o, updated);
-			store<f32>(sumBase + row + o, load<f32>(sumBase + row + o) * keepSum + weight * load<f32>(reachMe + o) * load<f32>(strategy + row + o));
+			let played = load<f32>(strategy + row + o);
+			if (clamp) played = load<f32>(reachMe + o) * played;
+			store<f32>(sumBase + row + o, load<f32>(sumBase + row + o) * keepSum + weight * played);
 		}
 	}
 }
