@@ -160,6 +160,19 @@ dropped from both, which suits imported ranges full of hands at a percent or two
 
 ## Reading a solved spot
 
+`solution.handEvs(player)` gives each combination's root EV in chips, indexed like
+`COMBO_CARDS` (0 outside the range, on the board, or with no opponent hand to face). Weighted by range weight times the
+opponent mass each hand can face, it averages to `solution.ev(player)`, and one pass serves
+both.
+
+Both read the average strategy by default. With `approximations: { currentProfileEv: true }`
+they read the current (regret-matched) profile instead: the strategy the next iteration would
+play. Its per-hand EVs settle sooner. After 15 s single-threaded in a browser, their mean error
+against a 0.045%-of-pot reference was 1.23% of pot against the average's 2.18% on As Kh 7d,
+0.11% against 0.37% on Ks 9s 4s, and 1.40% against 2.02% on a wide Qs Jh 2c. The cost is the
+same. `strategyAt` and `reachAt` still show the average, so the EVs then belong to a
+different profile from the strategy you read.
+
 `createRun` returns the solver itself as `run.solver`, for analysis after (or between)
 iterations, without changing anything:
 

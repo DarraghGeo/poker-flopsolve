@@ -264,7 +264,11 @@ export function createEngine(
 		}
 	}
 
-	const run = (mode: number, traverser: 0 | 1, iterWeight: number, dcfr: boolean): Float64Array => {
+	const run = (asked: number, traverser: 0 | 1, iterWeight: number, dcfr: boolean): Float64Array => {
+		// The engine knows three modes; the current profile is its Train
+		// with updates off.
+		const apply = asked === Mode.Current ? 0 : 1;
+		const mode = asked === Mode.Current ? Mode.Train : asked;
 		for (const player of [0, 1] as const) {
 			const [from, count] = rootList(player);
 			const into = player === traverser ? me : opp;
@@ -274,7 +278,12 @@ export function createEngine(
 		const [positive, negative, sum, weight, clamp] = settingsFor(mode, iterWeight, dcfr);
 		let at: number;
 		if (!pool) {
-			at = exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
+			if (apply === 0) exports.setPhase(0, 0);
+			try {
+				at = exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
+			} finally {
+				if (apply === 0) exports.setPhase(0, 1);
+			}
 		} else {
 			const plan = pool.plan;
 			// Collect: walk above the split, recording what the workers need.
@@ -282,7 +291,7 @@ export function createEngine(
 			exports.setPhase(1, 0);
 			exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
 			// Every thread walks its slice of the split round.
-			settings!.set([positive, negative, sum, weight, clamp]);
+			settings!.set([positive, negative, sum, weight, clamp, apply]);
 			Atomics.store(control!, ENGINE_CONTROL.done, 0);
 			Atomics.store(control!, ENGINE_CONTROL.mode, mode);
 			Atomics.store(control!, ENGINE_CONTROL.traverser, traverser);
@@ -290,7 +299,7 @@ export function createEngine(
 			Atomics.add(control!, ENGINE_CONTROL.generation, 1);
 			Atomics.notify(control!, ENGINE_CONTROL.generation);
 			exports.setShard(plan.round, plan.bounds[0], plan.bounds[1]);
-			exports.setPhase(0, 1);
+			exports.setPhase(0, apply);
 			const valueView = new Float32Array(memory.buffer, offsets[values], entries * stride);
 			for (let entry = 0; entry < entries; entry++) {
 				const slot = offsets[reach] + entry * 2 * rowBytes;
@@ -307,9 +316,10 @@ export function createEngine(
 			for (let w = 0; w < threads - 1; w++) {
 				for (let i = 0; i < entries * stride; i++) valueView[i] += partialView[w * entries * stride + i];
 			}
-			// Finish above the split from the totals, now applying updates.
+			// Finish above the split from the totals, now applying updates
+			// unless this is a current-profile read.
 			exports.setShard(plan.round, 0, 0);
-			exports.setPhase(2, 1);
+			exports.setPhase(2, apply);
 			at = exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
 			exports.setPhase(0, 1);
 			exports.setShard(-1, 0, 0);
