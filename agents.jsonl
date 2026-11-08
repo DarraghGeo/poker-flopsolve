@@ -1,7 +1,7 @@
 {"url":"https://claude.ai/code/session_014RSNFgzG6rsYZ7k1wisheG","title":"Quickest Path to Approximate EV","issue":20,"state":"active","updated":"2026-11-08T14:54:05.880Z"}
 {"url":"https://claude.ai/code/session_014RSNFjbF6JaJpTRCkyXpaV","title":"Approx EV: depth-limited solve with multi-continuation river leaves","issue":21,"state":"active","updated":"2026-11-08T14:54:53.692Z"}
 {"url":null,"title":"Approx EV: learned or analytic leaf values for turn leaves (DeepStack-style)","issue":22,"state":"active","updated":"2026-11-08T14:54:26.651Z"}
-{"url":null,"title":"Approx EV: potential-aware runout clustering (EMD k-means of turn/river cards)","issue":23,"state":"active","updated":"2026-11-08T14:54:29.925Z"}
+{"url":"https://claude.ai/code/session_014RSNFjsiYE5StpnD5QnDDm","title":"Approx EV: potential-aware runout clustering (EMD k-means of turn/river cards)","issue":23,"state":"active","updated":"2026-11-08T15:01:34.596Z"}
 {"url":"https://claude.ai/code/session_014RSNFkj4QfXEWftJziuvNP","title":"Approx EV: coarse-to-fine solve — abstract spot first, warm-start the real one","issue":24,"state":"active","updated":"2026-11-08T15:01:34.596Z"}
 {"url":"https://claude.ai/code/session_014RSNFhUfu3HxkS1tKaZfwF","title":"Approx EV: variance-reduced chance sampling with last-value baselines","issue":25,"state":"active","updated":"2026-11-08T15:01:34.596Z"}
 {"url":"https://claude.ai/code/session_014RSNFiWz5dRTkeirX512Rf","title":"Approx EV: stop on EV stability, bracket with best response, extrapolate","issue":27,"state":"active","updated":"2026-11-08T15:01:34.596Z"}
