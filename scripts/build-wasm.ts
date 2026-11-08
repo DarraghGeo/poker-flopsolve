@@ -27,6 +27,9 @@ const MODULES = [
 		source: 'assembly/engine.ts', out: 'engine-shared.ts', name: 'ENGINE_SHARED_WASM', what: 'The traversal engine over shared memory',
 		flags: ['--enable', 'threads', '--sharedMemory', '--maximumMemory', '65536'],
 	},
+	// The engine's river kernels batched over boards: the CPU side of the
+	// WebGPU experiment (#39). Imported by the GPU bench and tests only.
+	{ source: 'assembly/river.ts', out: 'river.ts', name: 'RIVER_WASM', what: "The engine's river kernels, batched for the GPU bench" },
 ];
 
 try {
