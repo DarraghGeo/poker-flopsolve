@@ -434,7 +434,12 @@ against the exact solve:
 | Tree | Storage, f32 | Exploitability | Root EV error, mean / max | Iterations |
 |---|---|---|---|---|
 | 3 sizes, all-in raise, 2 aggressions (exact: 0.28%) | 5.8 GiB → 1.22 GiB | 8.0% of pot | 0.72% / 2.5% of pot | 400 |
+| 2 sizes, all-in raise, 2 aggressions (exact: 0.25%) | 1.93 GiB → 0.48 GiB | 5.8% of pot | 0.94% / 2.4% of pot | 400 |
 | 1 size, all-in raise, 2 aggressions (exact: 0.25%) | 0.39 GiB → 0.14 GiB | 4.0% of pot | 0.67% / 6.8% of pot | 300 |
+
+On the two-size tree, out of position's EV at each root action was off by 1.7% of pot on
+average, and 85% of the range still picked the same bet size as the exact solve (70%
+with plain CFR's sum, which was left 24% of pot exploitable).
 
 On the three-size tree with a 75% raise and three aggressions, which does not fit
 otherwise, 173 river starts collapse to 23: 17.2 GiB becomes 2.9 GiB at 32 bits, and
