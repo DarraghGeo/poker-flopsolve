@@ -40,6 +40,19 @@
  *
  * Nested: a re-solved subgame is a `Solution` like any other, so a node below
  * it can be re-solved from it in turn.
+ *
+ * Measured (issue #47; Ks 9s 4s, a flop blueprint with three flop sizes and
+ * one turn/river size, its turns re-solved at three sizes with raises,
+ * against a full-tree reference): an opponent's best response under the
+ * reference's ranges gained, weighted by how often each turn is reached,
+ * about 3.5–4% of the subgame's pot against 'unsafe', 4.2–4.6% against
+ * 'resolve' and 4.7–6.2% against the maxmargin gadgets. Most of what is
+ * left is the refined player's own range at the node, which comes from the
+ * blueprint and which no gadget changes; and with more actions in the
+ * subgame than in the blueprint, the guarantees often cannot all be met,
+ * so pushing toward them moves the strategy away from equilibrium. Hence
+ * 'unsafe' is the default; the gadgets are there for blueprints whose
+ * subgame betting matches their own, where they hold (see the tests).
  */
 
 import { COMBO_CARDS, COMBOS } from './cards.ts';
@@ -56,7 +69,12 @@ export type Gadget = 'unsafe' | 'resolve' | 'maxmargin' | 'reach-maxmargin';
 export interface ResolveOptions {
 	/** The player whose strategy is refined; the gadget guards against the other. */
 	readonly player: 0 | 1;
-	/** Default 'resolve'. */
+	/**
+	 * Default 'unsafe', which measured best on issue #47's bench: under the
+	 * reference's ranges an opponent gained less against it than against any
+	 * safe gadget, because most of a re-solve's error is the refined
+	 * player's own range at the node, which no gadget changes.
+	 */
 	readonly gadget?: Gadget;
 	/** The subgame's betting; unset, the blueprint's carries over. */
 	readonly betting?: SubgameBetting;
@@ -112,7 +130,7 @@ export interface ResolvedSubgame {
  * @param board the board index at that node's round
  */
 export function resolveSubgame(blueprint: Solution, node: number, board: number, options: ResolveOptions): ResolvedSubgame {
-	const gadget = options.gadget ?? 'resolve';
+	const gadget = options.gadget ?? 'unsafe';
 	const { player } = options;
 	const opponent = (1 - player) as 0 | 1;
 	const iterations = options.iterations ?? 200;
