@@ -46,7 +46,12 @@ const measure = new Function(`${MEASURE}; return measure;`)() as (
 ) => Timing;
 
 const node: Record<string, Timing> = {};
-for (const [name, config] of Object.entries(EV_SPOTS)) node[name] = measure(createRun, defineSpot, config, iterations);
+const f = (t: Timing) => `${t.iterMs.toFixed(0).padStart(6)} ${t.evalMs.toFixed(0).padStart(6)} ${t.exploitMs.toFixed(0).padStart(6)}`;
+console.log('spot       node iter / ev / exploit ms');
+for (const [name, config] of Object.entries(EV_SPOTS)) {
+	node[name] = measure(createRun, defineSpot, config, iterations);
+	console.log(`${name.padEnd(10)} ${f(node[name])}`);
+}
 
 const browser = await runInBrowser<Record<string, Timing>>(
 	`
@@ -65,6 +70,5 @@ const browser = await runInBrowser<Record<string, Timing>>(
 console.log('spot       node iter / ev / exploit ms      browser iter / ev / exploit ms    ratio');
 for (const name of Object.keys(EV_SPOTS)) {
 	const [n, b] = [node[name], browser[name]];
-	const f = (t: Timing) => `${t.iterMs.toFixed(0).padStart(6)} ${t.evalMs.toFixed(0).padStart(6)} ${t.exploitMs.toFixed(0).padStart(6)}`;
 	console.log(`${name.padEnd(10)} ${f(n)}              ${f(b)}            ${(b.iterMs / n.iterMs).toFixed(2)}`);
 }

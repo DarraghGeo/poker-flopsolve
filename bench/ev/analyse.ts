@@ -2,6 +2,7 @@
  * Score EV estimators offline against a logged solve (issue #27).
  *
  *   node --import tsx bench/ev/analyse.ts ev-flop.json [--iterMs 900 --evalMs 500 --browser 1.3]
+ *     [--budget 15000] [--lambda 0.25]
  *
  * Reads what bench/ev/log.ts wrote. The reference is the last checkpoint's
  * average-profile EVs. Every error is in % of the pot: the range-weighted
@@ -12,7 +13,9 @@
  *
  * `--iterMs` and `--evalMs` (one average-profile EV pass for both players,
  * single-threaded Node) turn iterations into modelled wall time, and
- * `--browser` is the browser/Node per-iteration ratio.
+ * `--browser` is the browser/Node per-iteration ratio. `--budget` is the
+ * browser time budget in ms; `--lambda` fixes the blend weight, which the
+ * checkpoint table otherwise fits in hindsight and the summaries set to 0.25.
  */
 
 import { readFileSync } from 'node:fs';
@@ -85,30 +88,48 @@ function score(estimate: Vec, reference: Vec = ref.avg): Score {
 const map = (a: Vec, f: (x: number, p: number, i: number) => number): Vec =>
 	a.map((row, p) => row.map((x, i) => f(x, p, i)));
 
-/** The checkpoint nearest `t` from below. */
+/** The checkpoint nearest `t` from below, never the reference; −1 if none. */
 function at(t: number): number {
-	let best = 0;
-	for (let k = 0; k < cps.length; k++) if (cps[k].t <= t) best = k;
+	let best = -1;
+	for (let k = 0; k < cps.length - 1; k++) if (cps[k].t <= t) best = k;
 	return best;
 }
 
 /** avg + λ (br − avg), per hand. */
 const blend = (k: number, lambda: number): Vec => map(cps[k].avg, (x, p, i) => x + lambda * (cps[k].br[p][i] - x));
 
+/** Largest extrapolation correction, as a multiple of the last step. */
+const MAX_CORRECTION = 3;
+
 /**
  * Richardson-style extrapolation on x(t) = x∞ + C t^−q from three checkpoints
  * near t/r², t/r, t: one exponent q for the whole vector, fitted so the
  * second differences line up with the first in least squares, then each
- * hand's own C. Falls back to the last value where the fit says nothing.
+ * hand's own C. With `perHand`, Aitken's Δ² on each hand's own triple
+ * instead, needing no shared q. Either way a correction is capped at
+ * MAX_CORRECTION times the hand's last step, and the estimate falls back to
+ * the last value where the fit says nothing.
  */
 function extrapolate(k: number, r: number, perHand: boolean): Vec {
 	const kb = at(cps[k].t / r);
 	const ka = at(cps[k].t / (r * r));
-	if (!(ka < kb && kb < k)) return cps[k].avg;
+	if (!(ka >= 0 && ka < kb && kb < k)) return cps[k].avg;
 	const [ta, tb, tk] = [cps[ka].t, cps[kb].t, cps[k].t];
 	const xa = cps[ka].avg;
 	const xb = cps[kb].avg;
 	const xk = cps[k].avg;
+	const capped = (x: number, d2: number, correction: number): number =>
+		Math.abs(correction) <= MAX_CORRECTION * Math.abs(d2) ? x + correction : x + Math.sign(correction) * MAX_CORRECTION * Math.abs(d2);
+	if (perHand) {
+		return map(xk, (x, p, i) => {
+			const d1 = xb[p][i] - xa[p][i];
+			const d2 = x - xb[p][i];
+			const ratio = d1 !== 0 ? d2 / d1 : NaN;
+			// Converging monotonically: same sign, shrinking.
+			if (!(ratio > 0 && ratio < 0.9)) return x;
+			return capped(x, d2, (d2 * ratio) / (1 - ratio));
+		});
+	}
 	// Ratio of successive differences, range-weighted.
 	let num = 0;
 	let den = 0;
@@ -121,11 +142,11 @@ function extrapolate(k: number, r: number, perHand: boolean): Vec {
 		}
 	}
 	const rho = den > 0 ? num / den : 0;
-	// Solve (tk^−q − tb^−q) / (tb^−q − ta^−q) = rho for q by bisection.
+	// Solve (tk^−q − tb^−q) / (tb^−q − ta^−q) = rho for q by bisection, within
+	// exponents a CFR average plausibly shows.
 	const ratio = (q: number) => (tk ** -q - tb ** -q) / (tb ** -q - ta ** -q);
-	if (!(rho > 0 && rho < 1)) return xk;
-	let lo = 1e-3;
-	let hi = 8;
+	let lo = Q_RANGE[0];
+	let hi = Q_RANGE[1];
 	if (!(ratio(lo) > rho && ratio(hi) < rho)) return xk;
 	for (let n = 0; n < 60; n++) {
 		const mid = (lo + hi) / 2;
@@ -137,16 +158,12 @@ function extrapolate(k: number, r: number, perHand: boolean): Vec {
 	const step = g - tb ** -q;
 	return map(xk, (x, p, i) => {
 		const d2 = x - xb[p][i];
-		if (perHand) {
-			// Per-hand Aitken on the same triple, with a guard on the denominator.
-			const d1 = xb[p][i] - xa[p][i];
-			const dd = d2 - d1;
-			if (Math.abs(dd) < 1e-12 || Math.sign(d1) !== Math.sign(d2) || Math.abs(d2) >= Math.abs(d1)) return x;
-			return x - (d2 * d2) / dd;
-		}
-		return x - (d2 / step) * g;
+		return capped(x, d2, -(d2 / step) * g);
 	});
 }
+
+/** Exponents the vector fit may choose. */
+const Q_RANGE = [0.3, 4];
 
 /**
  * EV-stability stopping: checks on a geometric schedule (ratio `growth`), stop
@@ -169,7 +186,7 @@ function stability(eps: number, growth: number): { k: number; checks: number } {
 			}
 			prev = k;
 		}
-		if (k === cps.length - 1) return { k, checks };
+		if (k >= cps.length - 2) return { k: -1, checks };
 		t = Math.max(t + 1, Math.ceil(t * growth));
 	}
 }
@@ -194,7 +211,7 @@ function bestLambda(k: number): number {
 }
 
 console.log('\nError in % of pot: mae / max / range-EV, at each checkpoint');
-console.log('     t  expl%   avg                      current                  midpoint(avg,BR)         blend λ                   extrap r=1.5 (vec)       aitken r=1.5 (hand)');
+console.log('     t  expl%   avg                      current                  midpoint(avg,BR)         blend λ (fitted)          extrap r=1.5 (vec)       aitken r=1.5 (hand)');
 for (let k = 0; k < cps.length - 1; k++) {
 	const c = cps[k];
 	if (k > 12 && k % 2 === 1 && k < cps.length - 4) continue;
@@ -210,7 +227,7 @@ const estimators: Record<string, (k: number) => Vec> = {
 	current: (k) => cps[k].cur,
 	'mean(avg,cur)': (k) => map(cps[k].avg, (x, p, i) => (x + cps[k].cur[p][i]) / 2),
 	midpoint: (k) => blend(k, 0.5),
-	'blend λ': (k) => blend(k, Number.isNaN(blendFixed) ? 0.25 : blendFixed),
+	[`blend λ=${Number.isNaN(blendFixed) ? 0.25 : blendFixed}`]: (k) => blend(k, Number.isNaN(blendFixed) ? 0.25 : blendFixed),
 	'extrap r=1.5': (k) => extrapolate(k, 1.5, false),
 	'extrap r=2': (k) => extrapolate(k, 2, false),
 	'aitken r=1.5': (k) => extrapolate(k, 1.5, true),
@@ -218,7 +235,7 @@ const estimators: Record<string, (k: number) => Vec> = {
 // Evaluation passes each estimator needs at the end (in average-EV passes;
 // a best-response pass costs about the same, the current profile likewise).
 const evalsNeeded: Record<string, number> = {
-	avg: 1, current: 1, 'mean(avg,cur)': 2, midpoint: 2, 'blend λ': 2, 'extrap r=1.5': 3, 'extrap r=2': 3, 'aitken r=1.5': 3,
+	avg: 1, current: 1, 'mean(avg,cur)': 2, midpoint: 2, [`blend λ=${Number.isNaN(blendFixed) ? 0.25 : blendFixed}`]: 2, 'extrap r=1.5': 3, 'extrap r=2': 3, 'aitken r=1.5': 3,
 };
 
 console.log(`\nFirst iteration under each mean-error level, staying under after (modelled browser s, ratio ${browser})`);
@@ -241,11 +258,19 @@ console.log(`\nAt a ${budgetMs / 1000} s browser budget (iterMs ${iterMs}, evalM
 for (const [name, f] of Object.entries(estimators)) {
 	const t = tBudget(evalsNeeded[name]);
 	const k = at(t);
+	if (k < 0) {
+		console.log(`  ${name.padEnd(14)} not affordable`);
+		continue;
+	}
 	console.log(`  ${name.padEnd(14)} t=${String(cps[k].t).padStart(4)}  ${fmt(score(f(k)))}`);
 }
 
 console.log('\nEV-stability stopping (checks every ×1.15, two calm checks in a row)');
 for (const eps of [0.5, 0.25, 0.1, 0.05, 0.025]) {
 	const { k, checks } = stability(eps, 1.15);
+	if (k < 0) {
+		console.log(`  ε=${String(eps).padEnd(5)} never fired before the reference`);
+		continue;
+	}
 	console.log(`  ε=${String(eps).padEnd(5)} stops t=${String(cps[k].t).padStart(4)} after ${checks} checks, ${seconds(cps[k].t, checks)} s;  error ${fmt(score(cps[k].avg))}, exploitability ${cps[k].exploit.toFixed(3)}%`);
 }

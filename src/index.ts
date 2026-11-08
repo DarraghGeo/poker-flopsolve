@@ -533,9 +533,11 @@ export interface Approximations {
 	 * the average was worse than the average alone, and the best blend, fitted
 	 * in hindsight, gained at most 10% with a weight that drifted from 0.1 to
 	 * 0.85 over a run. Extrapolating the EV sequence was unstable because
-	 * DCFR's average values do not follow a clean C/T^p. Richardson on the
-	 * whole vector sometimes helped and sometimes left 5–9% of pot error, and
-	 * per-hand Aitken diverged. The one win was evaluating EVs under the
+	 * DCFR's average values do not follow a clean C/T^p. Even with each
+	 * correction capped at three times the last step, Richardson on the
+	 * whole vector beat the plain average at only 11 of 51 checkpoints and
+	 * was up to 8 times worse; per-hand Aitken beat it at 17 of 51 and was
+	 * up to 4 times worse. The one win was evaluating EVs under the
 	 * current profile rather than the average: at equal iterations its error
 	 * was lower at 62 of 65 checkpoints, often by 2 to 4 times. Issue #35 takes
 	 * that up as its own opt-in.
