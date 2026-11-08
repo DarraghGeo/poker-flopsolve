@@ -22,7 +22,7 @@ import { defineSpot } from '../../src/index.ts';
 import type { SolveRun, SpotConfig } from '../../src/index.ts';
 import { ActionKind } from '../../src/tree.ts';
 import type { GrowRound } from './grow.ts';
-import { baseKept, budgetedConfig, cutsFor, indexFull, probeAll, release, solveTo, treeBytes } from './grow.ts';
+import { budgetedConfig, cutsFor, indexFull, probeAll, release, solveTo, treeBytes } from './grow.ts';
 import type { FullTree, SizedEdge } from './grow.ts';
 import type { ComboEvs } from './measure.ts';
 import { comboError, rootActionEvs, rootEvs } from './measure.ts';
@@ -44,7 +44,7 @@ const STATIC_RULES: Record<string, (edge: SizedEdge) => boolean> = {
 	/** The one-size base itself. */
 	base: (e) => e.base,
 };
-const [board = 'rainbow', fullName = 'T', third = '2', fourth = '4', fifth = '4'] = process.argv.slice(2);
+const [board = 'rainbow', fullName = 'T', third = '2', fourth = '4', fifth = '4', seed = 'base'] = process.argv.slice(2);
 const isStatic = third === 'static';
 const workers = Number(fifth);
 const log = (message: string): void => console.log(message);
@@ -68,7 +68,8 @@ if (isStatic && fourth in STATIC_RULES) {
 } else {
 	const budget = Number(third) * GiB;
 	const maxRounds = Number(fourth);
-	kept = baseKept(full);
+	// Growth starts from a static rule: the one-size base unless another is named.
+	kept = new Set([...full.sized.values()].filter(STATIC_RULES[seed]).map((info) => info.path));
 	let current = solveTo(budgetedConfig(full, kept), 1, 400, options);
 	log(`base: ${(treeBytes(full, kept) / GiB).toFixed(3)} GiB, ${current.exploitability.toFixed(2)}% in ${current.seconds.toFixed(0)} s`);
 	for (let round = 0; round < maxRounds; round++) {
@@ -108,7 +109,7 @@ const growSeconds = (performance.now() - started) / 1000;
 const final = solveTo(config, 0.3, 2000, options);
 final.run.close();
 const measured = measure(final.run, final.seconds, final.exploitability);
-const name = isStatic ? `static-${fourth}` : `adaptive-${third}`;
+const name = isStatic ? `static-${fourth}` : `adaptive-${third}${seed === 'base' ? '' : `-${seed}`}`;
 const out = {
 	board, full: fullName, name, config, growSeconds: isStatic ? 0 : growSeconds, rounds, ...measured,
 	sizes: kept ? sizesSummary(full, kept) : null,
