@@ -10,12 +10,12 @@ import { COMBOS } from '../src/cards.ts';
 import type { Context } from '../src/cfr.ts';
 import { buildActiveLists, buildLayout, makeSolver, makeTerminalScratch, matchupMass, runoutWeights } from '../src/cfr.ts';
 import type { Engine, SpawnEngineWorker } from '../src/engine.ts';
-import { createEngine } from '../src/engine.ts';
+import { createEngine, ENGINE_CONTROL } from '../src/engine.ts';
 import { buildHandSpace } from '../src/hands.ts';
 import type { SpotConfig } from '../src/index.ts';
 import { defineSpot, makeRegretStore, makeSumStore } from '../src/index.ts';
 import type { Pool, SpawnWorker } from '../src/parallel.ts';
-import { planShards, startPool } from '../src/parallel.ts';
+import { CONTROL, planShards, startPool } from '../src/parallel.ts';
 import { buildShowdownTable } from '../src/showdown.ts';
 
 const config: SpotConfig = {
@@ -106,5 +106,59 @@ export function brokenPool(spawn: SpawnWorker, threads = 2): Pool {
 	const payload = { config: spot.source, dcfr: true, precision: 'f32', simd: true };
 	return startPool(ctx, makeSolver(ctx), plan, payload, threads, (setup, onError) =>
 		spawn({ ...setup, plan: { ...setup.plan, entryNodes: setup.plan.entryNodes.map(() => 1 << 30) } }, onError),
+	);
+}
+
+/**
+ * A spawn that starts a thread which says it is ready and then never runs
+ * again: no `done`, no `failed` and no event the waiting main thread could
+ * see, which is how a thread looks once it is killed without unwinding (a
+ * Node worker out of V8 heap, a browser-killed worker).
+ * @param control the setup's control buffer
+ * @param ready that buffer's `ready` slot
+ */
+function vanish(control: SharedArrayBuffer, ready: number): { terminate(): void } {
+	const slots = new Int32Array(control);
+	Atomics.add(slots, ready, 1);
+	Atomics.notify(slots, ready);
+	return { terminate() {} };
+}
+
+/**
+ * A threaded WebAssembly engine whose last spawned thread vanishes once ready.
+ * @param spawn the platform's `spawnEngineWorker`
+ * @param threads threads, this one included
+ * @param backstopFloorMs the shortest the main thread waits for the others
+ */
+export function vanishingEngine(spawn: SpawnEngineWorker, threads: number, backstopFloorMs: number): Engine {
+	const { spot, plan, ctx } = prepare(threads, false);
+	const engine = createEngine(
+		{
+			tree: spot.tree, runouts: spot.runouts, players: spot.players, layout: ctx.layout, active: ctx.active,
+			hands: ctx.hands, runoutWeight: ctx.runoutWeight, chipScale: spot.chipScale,
+		},
+		{
+			plan, threads, backstopFloorMs,
+			spawn: (setup, onError) =>
+				setup.shard[2] === plan.bounds[threads] ? vanish(setup.control, ENGINE_CONTROL.ready) : spawn(setup, onError),
+		},
+	);
+	if (!engine) throw new Error('The WebAssembly engine is not available here');
+	return engine;
+}
+
+/**
+ * A JavaScript worker pool whose last spawned worker vanishes once ready.
+ * @param spawn the platform's `spawnWorker`
+ * @param threads threads, this one included
+ * @param backstopFloorMs the shortest the main thread waits for the others
+ */
+export function vanishingPool(spawn: SpawnWorker, threads: number, backstopFloorMs: number): Pool {
+	const { spot, plan, ctx } = prepare(threads, true);
+	const payload = { config: spot.source, dcfr: true, precision: 'f32', simd: true };
+	return startPool(
+		ctx, makeSolver(ctx), plan, payload, threads,
+		(setup, onError) => (setup.workerId === threads - 2 ? vanish(setup.control, CONTROL.ready) : spawn(setup, onError)),
+		backstopFloorMs,
 	);
 }

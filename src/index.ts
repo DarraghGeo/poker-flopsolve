@@ -24,6 +24,7 @@ import { buildHandSpace } from './hands.ts';
 import { createEngine } from './engine.ts';
 import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
+import { aliasHistories } from './history-merge.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
 import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit } from './platform/node.ts';
@@ -158,6 +159,50 @@ export interface SpotConfig {
 	 */
 	readonly runoutBuckets?: boolean | number;
 	/**
+	 * Share river storage between betting histories that reach the same pot,
+	 * a lossy approximation for fitting a spot in memory (issue #49). Off by
+	 * default.
+	 *
+	 * Every earlier line gets its own copy of the streets below it, yet with
+	 * pot-fraction sizes many lines meet: check, bet, call and bet, call
+	 * reach the same pot, and so does every raise line taken in either order.
+	 * Their subtrees are identical, so their nodes keep one set of regrets and
+	 * strategy sums. Each history is still walked with its own reach, so an
+	 * iteration costs exactly what it did; only storage shrinks. On the
+	 * three-size target spot (AsKh7d, pot 55, stack 975, sizes 33/75/150%, a
+	 * 75% raise and all-in, three aggressions) 173 river starts collapse to 23
+	 * and storage falls 5.9 times: 17.2 GiB to 2.9 at 32 bits, 8.7 to 1.5 at 16.
+	 * There, at 16 bits, a Node solve peaked at 1.6 GiB on one thread and 2.0
+	 * on four (30 s an iteration), and was 12% of pot exploitable after 150
+	 * iterations.
+	 *
+	 * What is lost is recall: a player plays one strategy for every line that
+	 * met, though the ranges each line brings differ. Each history's regret is
+	 * weighted by how often the acting hand plays into it, which cut the cost
+	 * fourfold against plain CFR's sum. Measured on AsKh7d, pot 55, stack
+	 * 975, against the exact solve, 4 threads: with sizes 33/75/150%, an
+	 * all-in raise and two aggressions, 5.8 GiB became 1.22 GiB, and after
+	 * 400 iterations the strategy was 8.0% of pot exploitable, with
+	 * per-combination root EVs 0.72% of pot off on average and 2.5% at worst
+	 * (the exact solve: 0.28%). With one 50% size, 4.0% exploitable after
+	 * 300 iterations, EVs 0.67% off on average and 6.8% at worst.
+	 * Exploitability is measured in the full game, which the strategy covers
+	 * node by node, so it is exact. Do not expect it to approach
+	 * equilibrium: expect a strategy several percent of the pot from it, in
+	 * a spot that otherwise does not fit.
+	 *
+	 * Two consequences of one block serving several histories, both part of
+	 * the approximation: within an iteration, a history visited later plays
+	 * the regrets an earlier one has already updated, so the result depends a
+	 * little on the order of the tree; and under `algorithm: 'cfr+'` each
+	 * history's update is clamped at zero on its own, rather than their sum.
+	 * A spot with it can warm-start only from a solve that shares too.
+	 *
+	 * `true` shares the river. See `ShareHistories` for the turn and for
+	 * lossier buckets.
+	 */
+	readonly shareHistories?: boolean | ShareHistories;
+	/**
 	 * Store regrets and strategy sums at 8 bits — an approximation, off by
 	 * default. See `CompactStorage`. Set here rather than on the solve because it
 	 * decides how much memory the spot needs, which `maxBytes` is checked
@@ -253,6 +298,33 @@ export interface CompactStorage {
 	readonly float?: boolean;
 }
 
+/** See `SpotConfig.shareHistories`. */
+export interface ShareHistories {
+	/**
+	 * Also share subtrees of the same actions whose stack-to-pot ratio falls
+	 * in one bucket of this log-width, their amounts and payoffs different.
+	 * Measured, it saves nothing over exact meetings up to a width of 1 on
+	 * one-size trees; on the three-size target, 1.5 times more storage at
+	 * 0.1 and 2 times at 4, where a one-size tree was left 20% of pot
+	 * exploitable. Unset, exact meetings only.
+	 */
+	readonly spr?: number;
+	/**
+	 * First round shared, counted from the spot's first: from a flop, 1
+	 * shares the turn too. Default the river alone. Sharing the turn as well
+	 * saves about 1% more storage on a flop spot, and measured less accurate (9.4% of pot
+	 * exploitability against 8.0%, and 5.7% against 4.0%), so it is rarely
+	 * worth it.
+	 */
+	readonly fromRound?: number;
+	/**
+	 * How a shared node weighs the histories meeting in it. 'reach' (the
+	 * default) weights each one's regret by how often the acting hand plays
+	 * into it; 'counterfactual' adds them as plain CFR would.
+	 */
+	readonly weighting?: 'reach' | 'counterfactual';
+}
+
 /** Projected cost of solving a spot. */
 export interface Estimate {
 	readonly rounds: number;
@@ -323,6 +395,8 @@ export interface Spot {
 	readonly stackUnits: number;
 	/** The configuration this was built from, so a worker can rebuild it. */
 	readonly source: SpotConfig;
+	/** Each node's storage owner under `shareHistories`; unset without it. */
+	readonly historyAlias?: Int32Array;
 	/**
 	 * Find the stored board standing for a real one, and how hands relabel
 	 * onto it. Board indices everywhere else — `strategyAt`, `reachAt`,
@@ -427,13 +501,18 @@ export function defineSpot(config: SpotConfig): Spot {
 		runouts,
 	);
 
-	const layout = buildLayout(tree, runouts, players, 4);
+	const historyAlias = config.shareHistories ? shareHistories(tree, runouts, config, chipScale) : undefined;
+	const layout = buildLayout(tree, runouts, players, 4, historyAlias, reachWeighted(config));
 	const last = runouts.rounds - 1;
 	const showdownBytes = runouts.counts[last] * (2 * COMBOS + COMBOS + 1) * 2;
 	const bytes = layout.bytes + showdownBytes;
-	const compressedBytes = buildLayout(tree, runouts, players, 2).bytes + showdownBytes;
+	const compressedBytes = buildLayout(tree, runouts, players, 2, historyAlias).bytes + showdownBytes;
+	// Shared storage is walked once per history all the same.
+	const walkedSlots = layout.walkedSlots;
 	const compact = config.compactStorage ? compactPlan(config.compactStorage, runouts.rounds) : null;
-	const compactBytes = compact ? buildLayout(tree, runouts, players, 4, compact).bytes + showdownBytes : null;
+	const compactBytes = compact
+		? buildLayout(tree, runouts, players, 4, historyAlias, reachWeighted(config), compact).bytes + showdownBytes
+		: null;
 	const needed = compactBytes ?? compressedBytes;
 
 	const suggestions: string[] = [];
@@ -455,7 +534,7 @@ export function defineSpot(config: SpotConfig): Spot {
 		bytes,
 		compressedBytes,
 		compactBytes,
-		secondsPerThousandIterations: (layout.totalSlots * 4 * 1000) / OPS_PER_SECOND,
+		secondsPerThousandIterations: (walkedSlots * 4 * 1000) / OPS_PER_SECOND,
 		fits: needed <= maxBytes,
 		suggestions,
 	};
@@ -471,10 +550,43 @@ export function defineSpot(config: SpotConfig): Spot {
 		potUnits: Math.round(config.pot * chipScale),
 		stackUnits: Math.round(config.stack * chipScale),
 		source: config,
+		...(historyAlias ? { historyAlias } : {}),
 		resolveBoard(cards) {
 			return resolveBoard(runouts, typeof cards === 'string' ? parseCards(cards) : cards);
 		},
 	};
+}
+
+/** Whether shared nodes weight regrets by own reach; see `ShareHistories.weighting`. */
+export function reachWeighted(config: SpotConfig): boolean {
+	const asked = config.shareHistories;
+	return !!asked && (asked === true || asked.weighting !== 'counterfactual');
+}
+
+/** `SpotConfig.shareHistories` resolved into each node's storage owner. */
+function shareHistories(
+	tree: Tree,
+	runouts: Runouts,
+	config: SpotConfig,
+	chipScale: number,
+): Int32Array {
+	const asked: ShareHistories = config.shareHistories === true ? {} : config.shareHistories || {};
+	const width = asked.spr;
+	if (width !== undefined && !(width > 0)) throw new Error(`shareHistories.spr must be positive, got ${width}`);
+	const from = asked.fromRound;
+	if (from !== undefined && !(Number.isInteger(from) && from >= 1 && from < runouts.rounds)) {
+		throw new Error(
+			`shareHistories.fromRound must be a later round of this spot, 1 to ${runouts.rounds - 1}; got ${from}`,
+		);
+	}
+	if (asked.weighting !== undefined && asked.weighting !== 'reach' && asked.weighting !== 'counterfactual') {
+		throw new Error(`shareHistories.weighting must be 'reach' or 'counterfactual', got ${String(asked.weighting)}`);
+	}
+	return aliasHistories(
+		tree, runouts,
+		{ key: width === undefined ? { kind: 'exact' } : { kind: 'spr', width }, fromRound: from ?? runouts.rounds - 1 },
+		Math.round(config.stack * chipScale),
+	).alias;
 }
 
 /** Solver tuning. */
@@ -785,6 +897,42 @@ export interface Approximations {
 	 * much as the full tree. Cutting at the turn was cheaper still, and worse:
 	 * 3–14% mean error. The implementation is in this repository's history
 	 * (commit 32e8424, issue #21).
+	 *
+	 * The same idea was measured again for memory (issue #48), with
+	 * continuations from a solved blueprint instead of fixed rules and the cut
+	 * at the turn deal, and is not offered either. A one-size blueprint (0.75
+	 * pot, no raise, 235 MiB) was solved first. Each flop line into the turn
+	 * took the blueprint's turn and river strategy from the blueprint line most
+	 * like it, played out from the line's real pot and stacks. Both players
+	 * then picked per hand among k continuations: the blueprint, and copies
+	 * leaning ×5 toward folding, calling or raising. The flop was solved with
+	 * every size and raise.
+	 *
+	 * Leaf values were stored as each player's EV per hand for each pair of
+	 * picks, a pair of hands worth the difference. Plain per-hand vectors
+	 * made the leaf game non-zero-sum and CFR cycled. Exact per-pair tables
+	 * cost about n times the walks (n the opponent's hands) to build.
+	 *
+	 * It fit easily. On the round's target spot (As Kh 7d, pot 55, stack 975,
+	 * sizes 0.33 / 0.75 / 1.5, a 0.75 raise, three aggressions; 17 GiB exact)
+	 * it peaked at 0.5–0.8 GiB and took 31–55 s on 4 threads in Chromium. It
+	 * lost on accuracy.
+	 *
+	 * Root EV per combination was off by these amounts on average, in % of
+	 * pot, OOP / IP:
+	 *
+	 * - 4.5 / 4.4 against an exact T₀ (all-in-only raise, 0.84% of pot),
+	 *   where the one-size blueprint alone was 5.2 / 6.4;
+	 * - 3.1–3.6 / 2.3–3.8 on Ks 9s 4s, against 3.5 / 4.4;
+	 * - 6.3 / 4.7–6.1 on a T-shaped spot at SPR 3, against 2.0 / 3.0.
+	 *
+	 * Single hands were off by up to 35% of pot. The best root bet size per
+	 * hand matched the exact solve for 32–37% of the range on As Kh 7d,
+	 * chance for three sizes. More continuations (k = 2, 4) never helped.
+	 * Exact per-pair leaf tables only brought it level with the blueprint
+	 * alone. So it does no better than solving its own blueprint, which
+	 * already fits. The implementation and bench are in this repository's
+	 * history (commit ab0b66a, issue #48).
 	 *
 	 * Cheaper EV estimates (issue #27) were measured offline with bench/ev on
 	 * three flops, against each solve run on to 0.045% of pot, and none is
@@ -1252,7 +1400,10 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 	const showdown = buildShowdownTable(spot.runouts, relevant);
-	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], compact ?? undefined);
+	const layout = buildLayout(
+		spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], spot.historyAlias, reachWeighted(spot.source),
+		compact ?? undefined,
+	);
 	const weights = runoutWeights(spot.runouts);
 
 	// The WebAssembly engine, where it applies: 32-bit storage and a platform
@@ -1341,6 +1492,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		dcfr: (options.algorithm ?? 'dcfr') === 'dcfr',
 	};
 	if (samplingPlan) ctx.sampling = makeSampling(samplingPlan, engine?.sampling ?? undefined);
+	if (layout.shared) ctx.discounted = engine?.discounted ?? new Int32Array(layout.blocks);
 
 	// Seeded before any worker starts, so they all see the inherited values.
 	let warm: WarmStartReport | null = null;

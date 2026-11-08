@@ -135,6 +135,20 @@ export function setSampling(
 	blockOffset = blockOffsets;
 }
 
+// History sharing (`SpotConfig.shareHistories`): per block, the iteration
+// DCFR last discounted it in, so a block shared by several histories is
+// discounted once an iteration, as `discounted` in src/cfr.ts. Off while 0.
+let discounted: usize = 0;
+// Per node, nonzero where a shared node's regret is weighted by own reach; 0 for none.
+let weightedNodes: usize = 0;
+
+/** Turn the once-an-iteration discount on: its marks, the block table, the weighted nodes (or 0). */
+export function setShared(marks: usize, blockOffsets: usize, weighted: usize): void {
+	discounted = marks;
+	blockOffset = blockOffsets;
+	weightedNodes = weighted;
+}
+
 /** The iteration a training walk is for, counted from 1, and whether it runs DCFR. */
 export function setIteration(t: i32, dcfr: i32): void {
 	iteration = t;
@@ -451,29 +465,53 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 		}
 	}
 
-	if (isTraverser && mode === TRAIN && applyUpdates && sampleRounds !== 0 && dcfrRule) {
-		// A subtree sampling skipped missed those iterations' discounts;
-		// nothing was added meanwhile, so each sign held.
-		const block = lastUpdate + (<usize>(i32At(blockOffset, node) + board) << 2);
+	if (weightedNodes !== 0 && isTraverser && mode === TRAIN && applyUpdates && load<u8>(weightedNodes + <usize>node) !== 0) {
+		// Each history's regret counts as often as this hand plays into it.
+		for (let a = 0; a < actions; a++) {
+			const actionRow = actionValues + <usize>a * rowStride;
+			for (let i = 0; i < myCount; i++) {
+				const o = <usize>i << 2;
+				const v = load<f32>(out + o);
+				store<f32>(actionRow + o, v + load<f32>(reachMe + o) * (load<f32>(actionRow + o) - v));
+			}
+		}
+	}
+	if (isTraverser && mode === TRAIN && applyUpdates && (sampleRounds !== 0 || discounted !== 0) && dcfrRule) {
+		const index = <usize>(i32At(blockOffset, node) + board) << 2;
 		const savedPositive = keepPositive;
 		const savedNegative = keepNegative;
 		const savedSum = keepSum;
 		let positive = <f64>keepPositive;
 		let negative = <f64>keepNegative;
 		let sum = <f64>keepSum;
-		if (catchUp) {
-			for (let t = load<i32>(block) + 1; t < iteration; t++) {
-				// `dcfrFactors` in src/cfr.ts at α 1.5, β 0, γ 3, without
-				// pulling a general power function into the module.
-				const age: f64 = t > 2 ? <f64>(t - 2) : 0;
-				const grown = age * Math.sqrt(age);
-				const kept = <f64>(t - 1) / <f64>t;
-				positive *= grown / (grown + 1);
-				negative *= 0.5;
-				sum *= kept * kept * kept;
+		if (discounted !== 0) {
+			// Another history already discounted this shared block this iteration.
+			const mark = discounted + index;
+			if (load<i32>(mark) === iteration) {
+				positive = 1;
+				negative = 1;
+				sum = 1;
 			}
+			store<i32>(mark, iteration);
 		}
-		store<i32>(block, iteration);
+		if (sampleRounds !== 0) {
+			// A subtree sampling skipped missed those iterations' discounts;
+			// nothing was added meanwhile, so each sign held.
+			const block = lastUpdate + index;
+			if (catchUp) {
+				for (let t = load<i32>(block) + 1; t < iteration; t++) {
+					// `dcfrFactors` in src/cfr.ts at α 1.5, β 0, γ 3, without
+					// pulling a general power function into the module.
+					const age: f64 = t > 2 ? <f64>(t - 2) : 0;
+					const grown = age * Math.sqrt(age);
+					const kept = <f64>(t - 1) / <f64>t;
+					positive *= grown / (grown + 1);
+					negative *= 0.5;
+					sum *= kept * kept * kept;
+				}
+			}
+			store<i32>(block, iteration);
+		}
 		keepPositive = <f32>positive;
 		keepNegative = <f32>negative;
 		keepSum = <f32>sum;

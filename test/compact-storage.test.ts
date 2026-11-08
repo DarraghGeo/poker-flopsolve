@@ -205,6 +205,23 @@ describe('compact storage', () => {
 		run.close();
 	});
 
+	it('combines with shared histories, which point their nodes at their owner\'s compact storage', () => {
+		const deep: SpotConfig = { ...flop, stack: 200, betSizes: [[0.5]], maxRaises: 1 };
+		const plain = defineSpot({ ...deep, shareHistories: true });
+		const both = defineSpot({ ...deep, shareHistories: true, compactStorage: {} });
+		const alone = defineSpot({ ...deep, compactStorage: {} });
+		expect(both.estimate.compactBytes!).toBeLessThan(alone.estimate.compactBytes!);
+		const shared = createRun(plain, { workers: 1, engine: 'js' });
+		const compact = createRun(both, { workers: 1 });
+		expect(compact.solver.ctx.layout.shared).toBe(true);
+		// Sharing has its own plateau, near 3% of pot here; compact storage reaches it.
+		shared.step(80);
+		compact.step(80);
+		expect(compact.exploitabilityPercent()).toBeLessThan(shared.exploitabilityPercent() * 1.5 + 0.2);
+		shared.close();
+		compact.close();
+	});
+
 	it('refuses what it does not combine with', () => {
 		const spot = defineSpot(withStorage({}));
 		const clashes: SolveOptions[] = [

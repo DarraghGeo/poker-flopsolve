@@ -96,8 +96,21 @@ export interface Layout {
 	readonly blockOffset: Int32Array;
 	readonly blocks: number;
 	readonly totalSlots: number;
+	/** Slots one iteration walks: `totalSlots`, and with shared storage what it would be unshared. */
+	readonly walkedSlots: number;
 	readonly maxActions: number;
 	readonly bytes: number;
+	/**
+	 * Whether some nodes share another's storage (`SpotConfig.shareHistories`):
+	 * a block may then be visited more than once an iteration.
+	 */
+	readonly shared: boolean;
+	/**
+	 * Per node, 1 where regret updates are weighted by the actor's own reach:
+	 * nodes whose storage more than one history shares, under
+	 * `shareHistories` with that weighting. Null otherwise.
+	 */
+	readonly reachWeighted: Uint8Array | null;
 	/**
 	 * The first round stored compactly (see `CompactStorage`); the round
 	 * count when none is, so `round >= compactFrom` says whether a node is.
@@ -150,12 +163,18 @@ export interface CompactPlan {
  * Size storage. A node's block is `boards * actions * combosOfItsOwner`.
  * @param bytesPerElement 8 for float64, 4 for float32, 2 for 16-bit, which
  *   also keeps one float64 scale per block for each accumulator
+ * @param alias each node's storage owner, from `aliasHistories`: a node
+ *   owned by another takes its owner's blocks and adds none. Unset, every
+ *   node owns its own.
+ * @param compact compact storage's plan, for `SpotConfig.compactStorage`
  */
 export function buildLayout(
 	tree: Tree,
 	runouts: Runouts,
 	players: readonly [PlayerIndex, PlayerIndex],
 	bytesPerElement: number,
+	alias?: Int32Array,
+	reachWeighted = false,
 	compact?: CompactPlan,
 ): Layout {
 	// How many of each player's hands each board leaves live: a block's rows.
@@ -199,12 +218,29 @@ export function buildLayout(
 	let compactHands = 0;
 	let blocks = 0;
 	let maxActions = 0;
+	let shared = false;
+	let walked = 0;
 	for (let i = 0; i < tree.decisionNodes.length; i++) {
 		const node = tree.decisionNodes[i];
 		const actions = tree.numEdges[node];
 		if (actions > maxActions) maxActions = actions;
-		blockOffset[node] = blocks;
 		const hands = totals[tree.round[node] * 2 + tree.player[node]];
+		// An owner always comes before the nodes it owns, so its blocks are placed.
+		walked += actions * hands;
+		if (alias !== undefined && alias[node] !== node) {
+			const owner = alias[node];
+			if (owner > node) throw new Error('buildLayout: a storage owner must come before the nodes it owns');
+			offset[node] = offset[owner];
+			blockOffset[node] = blockOffset[owner];
+			if (compact) {
+				handOffset![node] = handOffset![owner];
+				compactChunk![node] = compactChunk![owner];
+			}
+			shared = true;
+			continue;
+		}
+		blockOffset[node] = blocks;
+		blocks += runouts.counts[tree.round[node]];
 		if (tree.round[node] >= compactFrom) {
 			const slots = actions * hands;
 			let chunk = chunkSlots.length - 1;
@@ -230,7 +266,6 @@ export function buildLayout(
 			offset[node] = total;
 			total += actions * hands;
 		}
-		blocks += runouts.counts[tree.round[node]];
 	}
 	const scales = bytesPerElement === 2 ? blocks * 8 * 2 : 0;
 	const compactBytes = !compact
@@ -240,10 +275,21 @@ export function buildLayout(
 			: (compactSlots + (compact.perHand ? compactHands : blocks * 8)) * (compact.sums ? 2 : 1);
 	return {
 		offset: Math.max(total, ...chunkSlots) <= INT32_MAX ? Int32Array.from(offset) : offset,
-		blockOffset, blocks, totalSlots: total, maxActions, rowStart, roundBase,
+		blockOffset, blocks, totalSlots: total, walkedSlots: walked, maxActions, rowStart, roundBase,
 		bytes: total * bytesPerElement * 2 + scales + compactBytes,
+		shared,
+		reachWeighted: shared && reachWeighted ? sharedNodes(tree, alias!) : null,
 		compactFrom, compactSlots, handOffset, compactHands, compactChunk, chunkSlots, chunkHands, chunkStart,
 	};
+}
+
+/** 1 for every node whose storage more than one node uses, owner included. */
+function sharedNodes(tree: Tree, alias: Int32Array): Uint8Array {
+	const marks = new Uint8Array(tree.nodeCount);
+	for (let node = 0; node < tree.nodeCount; node++) {
+		if (alias[node] !== node) marks[node] = marks[alias[node]] = 1;
+	}
+	return marks;
 }
 
 /**
@@ -354,6 +400,13 @@ export interface Context {
 	 * unset or null for the exact traversal.
 	 */
 	sampling?: Sampling | null;
+	/**
+	 * With shared storage (`Layout.shared`), per block the iteration DCFR
+	 * last discounted it in. A shared block is visited once per history that
+	 * reaches it, and only the first visit of an iteration discounts. Unset or
+	 * null for unshared storage, where every block is visited once.
+	 */
+	discounted?: Int32Array | null;
 }
 
 /** How chance sampling picks deals; see `Approximations.chanceSampling`. */
@@ -1167,6 +1220,16 @@ function traverse(
 		}
 	}
 
+	const weighted = ctx.layout.reachWeighted;
+	if (weighted !== null && weighted[node] && isTraverser && mode === Mode.Train && ctx.applyUpdates) {
+		// Each history's regret counts as often as this hand plays into it.
+		for (let a = 0; a < actions; a++) {
+			const offset = a * myCount;
+			for (let i = 0; i < myCount; i++) {
+				actionValues[offset + i] = out[i] + reachMe[i] * (actionValues[offset + i] - out[i]);
+			}
+		}
+	}
 	if (isTraverser && mode === Mode.Train && ctx.applyUpdates && compactNode) {
 		updateCompact(
 			ctx, chunk, ctx.layout.blockOffset[node] + board, slotBase,
@@ -1181,6 +1244,13 @@ function traverse(
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.dcfr) {
 		// `iterWeight` is the iteration number, counted from 1.
 		let { keepPositive, keepNegative, keepSum } = dcfrFactors(iterWeight);
+		const discounted = ctx.discounted;
+		if (discounted !== undefined && discounted !== null) {
+			// Another history already discounted this shared block this iteration.
+			const block = ctx.layout.blockOffset[node] + board;
+			if (discounted[block] === iterWeight) keepPositive = keepNegative = keepSum = 1;
+			discounted[block] = iterWeight;
+		}
 		const sampling = ctx.sampling;
 		if (sampling !== undefined && sampling !== null) {
 			// A subtree chance sampling skipped missed those iterations'
@@ -1332,6 +1402,12 @@ function updateQuantised(
 	if (ctx.dcfr) {
 		({ keepPositive, keepNegative, keepSum } = dcfrFactors(iterWeight));
 		weight = 1;
+		const discounted = ctx.discounted;
+		if (discounted !== undefined && discounted !== null) {
+			// Another history already discounted this shared block this iteration.
+			if (discounted[block] === iterWeight) keepPositive = keepNegative = keepSum = 1;
+			discounted[block] = iterWeight;
+		}
 	}
 
 	let largestRegret = 0;
