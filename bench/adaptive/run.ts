@@ -22,7 +22,7 @@ import { defineSpot } from '../../src/index.ts';
 import type { SolveRun, SpotConfig } from '../../src/index.ts';
 import { ActionKind } from '../../src/tree.ts';
 import type { GrowRound } from './grow.ts';
-import { baseKept, budgetedConfig, cutsFor, indexFull, probeAll, solveTo, treeBytes } from './grow.ts';
+import { baseKept, budgetedConfig, cutsFor, indexFull, probeAll, release, solveTo, treeBytes } from './grow.ts';
 import type { FullTree, SizedEdge } from './grow.ts';
 import type { ComboEvs } from './measure.ts';
 import { comboError, rootActionEvs, rootEvs } from './measure.ts';
@@ -76,7 +76,7 @@ if (isStatic && fourth in STATIC_RULES) {
 		const bytes = treeBytes(full, kept);
 		const left = budget - bytes;
 		const allowance = round === maxRounds - 1 ? left : left / 2;
-		const probed = probeAll(full, kept, current.run, { ...options, probeBytes: Math.max(budget, bytes * 1.5) });
+		const probed = await probeAll(full, kept, current.run, { ...options, probeBytes: Math.max(budget, bytes * 1.5) });
 		probed.sort((a, b) => b.gain / b.bytes - a.gain / a.bytes);
 		const added: GrowRound['added'] = [];
 		let spent = 0;
@@ -96,8 +96,10 @@ if (isStatic && fourth in STATIC_RULES) {
 		const previous = current.run;
 		current = solveTo(budgetedConfig(full, kept), 1, 400, options, previous, 10);
 		previous.close();
+		await release();
 	}
 	current.run.close();
+	await release();
 	config = budgetedConfig(full, kept);
 }
 

@@ -10,6 +10,8 @@
  * exactly its `removeActions`, and each of them is a candidate to add back.
  */
 
+import v8 from 'node:v8';
+import vm from 'node:vm';
 import { COMBO_CARDS, createRun, defineSpot, DECK } from '../../src/index.ts';
 import type { Precision, SolveRun, Spot, SpotConfig } from '../../src/index.ts';
 import { orbitLeader } from '../../src/cfr.ts';
@@ -17,6 +19,19 @@ import { ActionKind, actionLabel, NodeKind } from '../../src/tree.ts';
 import type { Tree } from '../../src/tree.ts';
 import { warmStart } from '../../src/warm.ts';
 import { boardDeals } from './measure.ts';
+
+v8.setFlagsFromString('--expose-gc');
+const collect = vm.runInNewContext('gc') as () => void;
+
+/**
+ * Let closed runs go: their worker threads finish terminating only once the
+ * event loop turns, and their storage, outside the JS heap, is freed only by
+ * a collection. A synchronous chain of runs otherwise keeps every one of them.
+ */
+export async function release(): Promise<void> {
+	await new Promise((resolve) => setTimeout(resolve, 250));
+	collect();
+}
 
 /** One bet, raise or shove of the full tree. */
 export interface SizedEdge {
@@ -361,12 +376,12 @@ export interface GrowRound {
  * chunks of candidates whose probe tree fits `probeBytes`, each warm-started
  * from `run`, iterated a little, and measured. Returns each line's gain and cost.
  */
-export function probeAll(
+export async function probeAll(
 	full: FullTree,
 	kept: ReadonlySet<string>,
 	run: SolveRun,
 	options: GrowOptions,
-): { line: string; gain: number; firstOrder: number; bytes: number }[] {
+): Promise<{ line: string; gain: number; firstOrder: number; bytes: number }[]> {
 	const log = options.log ?? (() => {});
 	const cap = options.probeBytes ?? 2 * 2 ** 30;
 	const lines = cutsFor(full, kept).map((line) => ({ line, bytes: lineBytes(full, kept, line) }));
@@ -389,7 +404,7 @@ export function probeAll(
 	if (chunk.length) chunks.push(chunk);
 
 	const out: { line: string; gain: number; firstOrder: number; bytes: number }[] = [];
-	chunks.forEach((entries, i) => {
+	for (const [i, entries] of chunks.entries()) {
 		const withChunk = new Set(kept);
 		for (const entry of entries) withChunk.add(entry.line);
 		const config = budgetedConfig(full, withChunk);
@@ -409,7 +424,8 @@ export function probeAll(
 			const value = options.estimator === 'firstOrder' ? gain?.firstOrder : gain?.bestResponse;
 			out.push({ ...entry, gain: value ?? 0, firstOrder: gain?.firstOrder ?? 0 });
 		}
-		log(`  probe ${i + 1}/${chunks.length}: ${entries.length} lines, ${((performance.now() - started) / 1000).toFixed(0)} s`);
-	});
+		log(`  probe ${i + 1}/${chunks.length}: ${entries.length} lines, ${((performance.now() - started) / 1000).toFixed(0)} s, rss ${(process.memoryUsage().rss / 2 ** 30).toFixed(2)} GiB`);
+		await release();
+	}
 	return out;
 }
