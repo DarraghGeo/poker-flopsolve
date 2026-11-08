@@ -160,6 +160,19 @@ dropped from both, which suits imported ranges full of hands at a percent or two
 
 ## Reading a solved spot
 
+`solution.handEvs(player)` gives each combination's root EV in chips, indexed like
+`COMBO_CARDS` (0 outside the range, on the board, or with no opponent hand to face). Weighted by range weight times the
+opponent mass each hand can face, it averages to `solution.ev(player)`, and one pass serves
+both.
+
+Both read the average strategy by default. With `approximations: { currentProfileEv: true }`
+they read the current (regret-matched) profile instead: the strategy the next iteration would
+play. Its per-hand EVs settle sooner. After 15 s single-threaded in a browser, their mean error
+against a 0.045%-of-pot reference was 1.23% of pot against the average's 2.18% on As Kh 7d,
+0.11% against 0.37% on Ks 9s 4s, and 1.40% against 2.02% on a wide Qs Jh 2c. The cost is the
+same. `strategyAt` and `reachAt` still show the average, so the EVs then belong to a
+different profile from the strategy you read.
+
 `createRun` returns the solver itself as `run.solver`, for analysis after (or between)
 iterations, without changing anything:
 
@@ -202,6 +215,21 @@ resumes a solve exactly. Measured on a river spot to 0.1% of pot:
 | Range reweighted | 130 | 80 |
 | Stack 120 → 100 | 125 | 75 |
 | Pot 60 → 72 | 125 | 100 |
+
+A solve of a nearby flop can seed one too, through a card relabelling that takes its board
+onto this one. A rank swap keeps every hand's role, so a solve of AsKh6d read through
+`rankSwap` of the 6 and the 7 plays 66 as 77:
+
+```ts
+import { rankSwap } from 'poker-flopsolve';
+const six = solve(defineSpot({ ...config, board: 'As Kh 6d' }), { targetPercent: 0.1 });
+const seven = solve(defineSpot({ ...config, board: 'As Kh 7d' }), {
+  targetPercent: 0.5, warmStart: six, warmCards: rankSwap(4, 5),   // ranks 0 = deuce … 12 = ace
+});
+```
+
+On the bench flop that reaches 0.5% of pot in 8 iterations instead of 52 (from AsQh7d,
+20). It needs the whole old solve: seeding only the flop's decisions saved at most 15%.
 
 ## Re-solving from a node
 
@@ -413,6 +441,27 @@ exact 0.1% solve falls from 1.0–1.1% of pot to 0.12–0.16% on the first, and 
 third on the others. It runs on one thread only, in both engines; the baselines count against
 `maxBytes`. With `p: 1` it is the exact solve, bit for bit. `rounds: [2]` samples
 river deals only.
+
+### Coarse start (approximate start, exact answer)
+
+`approximations: { coarseStart: { iterations: 40 } }` first solves a coarse copy of the
+spot, with runouts bucketed as by `runoutBuckets: 3`, for that many iterations. It then
+starts the real spot from those regrets. Coarse iterations are cheaper, and the real solve
+picks up roughly where they left off. The answer is still the real spot's, and
+exploitability measures the real game. Off by default.
+
+Measured in Chromium on one thread, stopped at 15 s, 40 coarse iterations, with root-EV
+error per combination (range-weighted mean, % of pot) against a 0.1% reference:
+
+| Flop | Cold | Coarse start | Exploitability, cold → coarse start |
+|---|---|---|---|
+| AsKh7d, compare ranges, 50% bet | 1.51% | 0.19% | 0.94% → 0.40% |
+| AsKh7d, bench ranges, 66% bet | 0.26% | 0.06% | 0.24% → 0.15% |
+| Ks9s4s, monotone | 0.04% | 0.11% | 0.10% → 0.07% |
+
+The monotone flop reaches 0.5% error in half the time, but a cold solve has already settled
+it by 15 s. To an exploitability target in Node, coarse start was faster on all three.
+`bench/coarse-to-fine/` has the harness.
 
 ### 16-bit storage
 

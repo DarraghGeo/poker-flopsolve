@@ -14,6 +14,7 @@ import type { PerPlayer } from './tree.ts';
 import { ACTION_LABELS, ActionKind, buildTree, forPlayer, isPerPlayer, mapPlayers, NodeKind, raisesPerRound } from './tree.ts';
 import type { Runouts } from './runouts.ts';
 import type { ResolvedBoard } from './runouts.ts';
+export { rankSwap } from './runouts.ts';
 import type { RunoutMerge } from './runouts.ts';
 import { boardAtRound, enumerateRunouts, rankSwap, resolveBoard } from './runouts.ts';
 import { suitSymmetries } from './abstraction.ts';
@@ -26,7 +27,7 @@ import { warmStart } from './warm.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
 import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit } from './platform/node.ts';
-import type { Context, PlayerIndex, RegretStore, SamplingOptions, Solver, SumStore } from './cfr.ts';
+import type { Context, PlayerIndex, RegretStore, RootValues, SamplingOptions, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
@@ -37,6 +38,7 @@ import {
 	makeSolver,
 	makeTerminalScratch,
 	matchupMass,
+	Mode,
 	runoutWeights,
 } from './cfr.ts';
 
@@ -472,6 +474,24 @@ export interface SolveOptions {
 	 */
 	readonly warmStart?: Solution | SolveRun;
 	/**
+	 * For a `warmStart` from a solve of a different board: each card of this
+	 * spot's deck to the card of the old spot's it plays as, a permutation of
+	 * the 52 cards taking this board onto the old one. A rank swap (`6` and
+	 * `7` in every suit, say) carries a solve of AsKh6d onto AsKh7d with every
+	 * hand keeping its role: 66 there is 77 here (`rankSwap` builds that map).
+	 * Hands and runouts relabel through it; whatever the old ranges lacked
+	 * starts cold. Unset, a warm start must come from the same board. The
+	 * average strategy never carries over through it, even for a relabelling
+	 * that leaves the game unchanged: only regrets do.
+	 *
+	 * Measured on the bench flop (AsKh7d, single-threaded, to 0.5% of pot):
+	 * 52 iterations cold, 8 warm from a 0.1% solve of AsKh6d, 20 from AsQh7d.
+	 * It pays only when the whole old solve is at hand: seeding the flop's
+	 * decisions alone, as a downloadable library could, saved at most 15%
+	 * (see `Approximations`).
+	 */
+	readonly warmCards?: Uint8Array;
+	/**
 	 * The iteration to carry on counting from, which sets how heavily DCFR
 	 * discounts the inherited regrets and how CFR+ weights the averages. Unset,
 	 * the old solve's own count: the new solve continues it. Lower it to let
@@ -500,6 +520,67 @@ export interface SolveOptions {
 
 /** See `SolveOptions.approximations`. */
 export interface Approximations {
+	/**
+	 * Solve a coarser copy of the spot first and start the real one from its
+	 * regrets — coarse to fine, as multigrid methods do. The copy buckets
+	 * turn and river cards like `runoutBuckets`, so each of its iterations
+	 * is cheaper (a flop stores ~40% fewer runouts at a gap of 3), and its
+	 * equilibrium is close enough to the real one's that the real solve picks
+	 * up roughly where it left off. The answer is still the real spot's: the
+	 * coarse game only chooses where it starts, and exploitability and
+	 * `targetPercent` measure the real game. Unset, off.
+	 *
+	 * Measured on three flop spots in Chromium, one thread, stopped at 15 s,
+	 * with 40 coarse iterations (issue #24): root-EV error per combination
+	 * against a 0.1%-of-pot reference fell from 1.51% to 0.19% of pot on
+	 * AsKh7d (exploitability 0.94% to 0.40%), and 0.26% to 0.06% on the
+	 * wider bench flop. A monotone flop, which a cold solve already settles
+	 * within 15 s, reached 0.5% error in half the time but ended a little
+	 * looser, 0.11% against 0.04%. To an exploitability target in Node it
+	 * was faster on all three: 0.1% on the monotone flop in 14.5 s instead of
+	 * 15.3, 0.2% on the wide one in 15.5 instead of 19.3, 0.3% on AsKh7d in
+	 * 23.8 instead of 31.5. Around 40 iterations suits a flop; far fewer
+	 * leave the coarse solve too rough to help, far more spend the time
+	 * where the real solve would have spent it better.
+	 *
+	 * Carrying the coarse average strategy, restarting DCFR's count (a
+	 * `warmIteration` of 0 or 10), a bucket gap of 1, or forbidding donk bets
+	 * in the coarse spot were measured too, and were all worse.
+	 *
+	 * The coarse iterations count toward `totalIterations`, not `completed`
+	 * or `Solution.iterations`; DCFR carries on counting from them unless
+	 * `warmIteration` says otherwise. Both solves are in memory at the
+	 * switch, the coarse one about 60% the size of the real one on a flop.
+	 * Where bucketing folds no runouts together — a river spot, ranges with no rank symmetry — it does
+	 * nothing. Not with `warmStart`, which it already is. The coarse solve
+	 * runs inside `createRun`, all at once and without progress reports, so
+	 * a caller stepping a run to stay responsive should keep it short; it
+	 * must fit in what `maxBytes` leaves beside the real spot, at 16 bits if
+	 * not 32, or `createRun` refuses.
+	 */
+	readonly coarseStart?: CoarseStart;
+	/**
+	 * Report `Solution.ev` and `Solution.handEvs` under the current profile —
+	 * the regret-matched strategy the next iteration would play — instead of
+	 * the average strategy. Default off. Measured under DCFR, the default
+	 * update rule; it applies to CFR+ alike.
+	 *
+	 * Measured against a solve to 0.045% of pot, after a 15 s single-threaded
+	 * browser budget, the current profile's per-hand root EVs had a mean error
+	 * of 1.23% of pot where the average's had 2.18% (flop As Kh 7d), 0.11%
+	 * against 0.37% (monotone Ks 9s 4s) and 1.40% against 2.02% (wide Qs Jh
+	 * 2c). Across those three spots it was the closer one at 62 of 65
+	 * checkpoints from 15 s down to 0.1% exploitability, often by 2–4 times.
+	 * It costs the same one pass per player as reading the average's EVs.
+	 *
+	 * Those EVs then belong to a different profile from the strategy
+	 * `strategyAt` and `reachAt` show, which stays the average: the average is
+	 * what converges to equilibrium and what exploitability measures, while
+	 * the current profile's values happen to settle sooner. Read them as the
+	 * better estimate of the equilibrium's EVs, not as the EVs of the strategy
+	 * on screen. A run with `analysisOnly` has no regrets and cannot use this.
+	 */
+	readonly currentProfileEv?: boolean;
 	/*
 	 * Threshold pruning — skipping opponent actions taken with negligible
 	 * reach — was built and measured, and is deliberately not offered: a
@@ -614,6 +695,37 @@ export interface Approximations {
 	 * would it be faster: the network over one leaf's turn cards took about
 	 * 140 ms, three leaves more than an exact flop iteration (about 350 ms),
 	 * before the range-dependent features it needs.
+	 *
+	 * A library of precomputed flops (#30) — the 1,755 suit-isomorphic flops
+	 * solved for a few archetype ranges, answering a query by lookup and then
+	 * warm-starting — was measured and is not offered. The experiment is in
+	 * `bench/library/`: the bench `flop` (AsKh7d) and `monotone` (Ks9s4s)
+	 * spots and a wide AsKh7d (213 vs 205 combos), references solved to 0.1%
+	 * of pot, a budget of 15 s single-threaded in Chromium (36, 96 and 36
+	 * iterations), errors in per-combination root EV, % of pot.
+	 *
+	 * - A lookup is only as good as the nearest stored spot. From a flop a
+	 *   rank swap away (AsKh6d for AsKh7d, Ks9s5s for Ks9s4s) the mean error
+	 *   was 0.8–1.8 and the largest 7–40, since the hands whose role changes
+	 *   are simply wrong; from AsQh7d or Ks8s4s the mean was 3–8. For a custom range on the same flop,
+	 *   re-weighting the archetype's per-matchup values (the strategies cannot
+	 *   adapt) gave a mean of 1.3–4.5 and a largest of 3–14. Cold solves
+	 *   reached a mean of 0.2–2.4 and a largest of 0.4–4.9 inside the budget,
+	 *   so a lookup wins only in the first seconds and never on the worst
+	 *   hands.
+	 * - A warm start from the whole of a neighbour's solve is fast (0.5% in 8
+	 *   iterations instead of 52) and stays available in-session as
+	 *   `SolveOptions.warmCards`. But the whole tree is 9–33 MB per flop at a
+	 *   byte per value, 16–58 GB per archetype for every flop. What a library
+	 *   can ship is the flop's decisions (~2 KB a flop) or the flop's and the
+	 *   turn's (~0.2 MB). Seeded with the flop's alone, solves took 76–92
+	 *   iterations to 0.5% where cold took 40–52: the later streets start cold
+	 *   but are discounted as if late in the solve. Restarting the count at 10
+	 *   recovered 44–52 on rainbow flops and 44–56 on monotone ones (a cold
+	 *   solve restarted at 10, nothing seeded, took 52–68); flop and turn,
+	 *   52–68. At most 15% fewer iterations on some spots and more on others,
+	 *   for thousands of precomputed solves per tree and archetype, rebuilt
+	 *   whenever the defaults change.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
@@ -643,6 +755,17 @@ export interface Approximations {
 	 * Off, nothing changes; at `p: 1` it is the exact solve, bit for bit.
 	 */
 	readonly chanceSampling?: SamplingOptions;
+}
+
+/** See `Approximations.coarseStart`. */
+export interface CoarseStart {
+	/** Iterations of the coarse spot to run before the real one. */
+	readonly iterations: number;
+	/**
+	 * The coarse spot's `runoutBuckets`, at least the spot's own. Default 3;
+	 * a wider gap folds more runouts only where the ranges allow it.
+	 */
+	readonly runoutBuckets?: number;
 }
 
 export type Algorithm = 'cfr+' | 'dcfr';
@@ -675,8 +798,22 @@ export interface Solution {
 	readonly workers: number;
 	/** The solver behind this solution, for analysis and warm starts. */
 	readonly solver: Solver;
-	/** Chips per hand for a player, under the average strategy. */
+	/**
+	 * Chips per hand for a player, under the average strategy — or under the
+	 * current profile with `approximations.currentProfileEv`.
+	 */
 	ev(player: 0 | 1): number;
+	/**
+	 * Root EV in chips for each combination a player can hold, indexed like
+	 * `COMBO_CARDS` (as `reachAt` is): what that hand wins on average, over
+	 * the opponent hands it can be dealt against. Zero for combinations outside
+	 * the range or blocked by the board, and for a hand no opponent hand can be
+	 * dealt against, which has no EV to give. Weighted by range weight times
+	 * compatible opponent mass, the mean is `ev(player)`, and the same pass
+	 * serves both. Under the average strategy, or the current profile with
+	 * `approximations.currentProfileEv`. Returns a fresh copy.
+	 */
+	handEvs(player: 0 | 1): Float64Array;
 	/** Distance from equilibrium, in chips per hand. */
 	exploitability(): number;
 	/**
@@ -778,6 +915,9 @@ export interface SolveRun {
  * @param options solver setup
  */
 export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
+	if (options.analysisOnly && options.approximations?.currentProfileEv) {
+		throw new Error('approximations.currentProfileEv needs regrets, and an analysisOnly run has none');
+	}
 	// A saved strategy is loaded as float32 sums, so analysis stays there.
 	const maxBytes = spot.source.maxBytes ?? DEFAULT_MAX_BYTES;
 	const { totalSlots, bytes } = spot.estimate;
@@ -785,6 +925,10 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		? 'f32'
 		: options.precision ??
 			(bytes <= maxBytes ? 'f32' : 'i16');
+
+	// Planned before anything is allocated, so a bad option or a coarse spot
+	// that does not fit fails here; solved only once the real run exists.
+	const coarsePlan = planCoarseStart(spot, options, precision, maxBytes);
 
 	// Hands neither player holds never carry reach, so they need no ranking.
 	const relevant = new Uint8Array(COMBOS);
@@ -877,15 +1021,30 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	let solver: Solver;
 	let pool: Pool | null;
 	try {
+		if (options.warmCards && !options.warmStart) {
+			throw new Error('`warmCards` relabels a warm start, so it needs `warmStart` too');
+		}
 		if (options.warmStart) {
 			const source = options.warmStart;
-			warm = warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
+			warm = options.warmCards
+				? warmStart(ctx, source.solver.ctx, false, options.warmCards)
+				: warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
 			offset = options.warmIteration ?? source.totalIterations;
-			// Inherited accumulators are discounted up to where the count resumes.
-			ctx.sampling?.lastUpdate.fill(offset);
+		} else if (coarsePlan && coarsePlan.iterations > 0) {
+			// Regrets only: the bucketed game's average would have to be outweighed.
+			const coarse = solveCoarse(coarsePlan, options);
+			try {
+				warm = warmStart(ctx, coarse.solver.ctx, false);
+			} finally {
+				coarse.close();
+			}
+			offset = options.warmIteration ?? coarse.totalIterations;
 		}
+		// Inherited accumulators are discounted up to where the count resumes.
+		if (warm) ctx.sampling?.lastUpdate.fill(offset);
 
 		solver = makeSolver(ctx);
+		if (warm && coarsePlan) coarseMs.set(solver, coarsePlan.elapsed);
 		// The engine runs its own threads; the JavaScript pool is for the rest.
 		pool = plan && !engine
 			? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
@@ -940,9 +1099,93 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			}
 		},
 		snapshot(history = [], stoppedAt = 'iterations') {
-			return makeSolution(spot, ctx, solver, completed, offset + completed, [...history], stoppedAt, threadCount);
+			return makeSolution(
+				spot, ctx, solver, completed, offset + completed, [...history], stoppedAt, threadCount,
+				options.approximations?.currentProfileEv === true,
+			);
 		},
 	};
+}
+
+/** Bucket gap of the coarse spot when `CoarseStart.runoutBuckets` is unset. */
+const DEFAULT_COARSE_GAP = 3;
+
+/** A coarse start to run: its spot and settings, and once solved, how long it took. */
+interface CoarsePlan {
+	readonly spot: Spot;
+	readonly iterations: number;
+	readonly precision: Precision;
+	elapsed: number;
+}
+
+/** Milliseconds a run's coarse start took, by the real run's solver, for `solve()`'s clock. */
+const coarseMs = new WeakMap<Solver, number>();
+
+/**
+ * Validate `approximations.coarseStart` and define its spot, or null when
+ * there is nothing to solve: the option unset, no iterations, or bucketing
+ * folds no more runouts than the spot itself does.
+ *
+ * The coarse spot must fit in what `maxBytes` leaves beside the real one,
+ * since both are in memory at the switch; at 32 bits if it can, else 16.
+ */
+function planCoarseStart(spot: Spot, options: SolveOptions, precision: Precision, maxBytes: number): CoarsePlan | null {
+	const settings = options.approximations?.coarseStart;
+	if (!settings) return null;
+	const { iterations, runoutBuckets = DEFAULT_COARSE_GAP } = settings;
+	if (!(Number.isInteger(iterations) && iterations >= 0)) {
+		throw new Error(`coarseStart.iterations must be a whole number of iterations; got ${iterations}`);
+	}
+	if (!(Number.isInteger(runoutBuckets) && runoutBuckets >= 1)) {
+		throw new Error(`coarseStart.runoutBuckets must be a rank gap of 1 or more; got ${runoutBuckets}`);
+	}
+	if (options.warmStart) throw new Error('coarseStart is a warm start of its own; give one or the other, not both');
+	if (options.analysisOnly) throw new Error('coarseStart solves; an analysis-only run must never be stepped');
+
+	// Never a narrower gap than the spot already uses, and only a wider one helps.
+	const own = spot.source.runoutBuckets;
+	const ownGap = own === true ? DEFAULT_BUCKET_GAP : own || 0;
+	if (iterations === 0 || spot.board.length === 5 || runoutBuckets <= ownGap) return null;
+	const coarseSpot = defineSpot({ ...spot.source, runoutBuckets });
+	if (coarseSpot.runouts.counts.at(-1)! >= spot.runouts.counts.at(-1)!) return null;
+
+	const used = precision === 'i16' ? spot.estimate.compressedBytes : spot.estimate.bytes * (precision === 'f64' ? 2 : 1);
+	const left = maxBytes - used;
+	const coarsePrecision: Precision =
+		options.precision ?? (coarseSpot.estimate.bytes <= left ? 'f32' : 'i16');
+	const needs =
+		coarsePrecision === 'i16'
+			? coarseSpot.estimate.compressedBytes
+			: coarseSpot.estimate.bytes * (coarsePrecision === 'f64' ? 2 : 1);
+	if (needs > left) {
+		throw new Error(
+			`coarseStart needs ~${formatBytes(needs)} beside this spot's ~${formatBytes(used)}, ` +
+				`over the ${formatBytes(maxBytes)} limit; raise maxBytes or leave coarseStart off`,
+		);
+	}
+	return { spot: coarseSpot, iterations, precision: coarsePrecision, elapsed: 0 };
+}
+
+/** Solve a planned coarse start, returning the run to warm-start from. */
+function solveCoarse(plan: CoarsePlan, options: SolveOptions): SolveRun {
+	const started = Date.now();
+	const { coarseStart: _, ...rest } = options.approximations!;
+	const run = createRun(plan.spot, {
+		workers: options.workers,
+		precision: plan.precision,
+		algorithm: options.algorithm,
+		simd: options.simd,
+		engine: options.engine,
+		approximations: rest,
+	});
+	try {
+		run.step(plan.iterations);
+	} catch (error) {
+		run.close();
+		throw error;
+	}
+	plan.elapsed = Date.now() - started;
+	return run;
 }
 
 /**
@@ -1026,7 +1269,12 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 	const fixed = options.exploitEvery ?? 0;
 	const run = createRun(spot, options);
 	const history: Progress[] = [];
-	const started = Date.now();
+	// A coarse start solves inside createRun, and that is solving time too.
+	const started = Date.now() - (coarseMs.get(run.solver) ?? 0);
+	// Where DCFR's count stands before this run's first iteration, for
+	// predicting the target; only a coarse start shifts it, as a warm start's
+	// checks were always scheduled from zero.
+	const before = coarseMs.has(run.solver) ? run.totalIterations : 0;
 
 	try {
 		return runAll();
@@ -1074,13 +1322,13 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 				// Aim just short of where the target is predicted to be met, so
 				// the overshoot is a few iterations rather than a whole doubling.
 				const predicted = predictCrossing(
-					prevIteration,
+					before + prevIteration,
 					prevExploitability,
-					done,
+					before + done,
 					info.exploitability,
 					(target * spot.potUnits) / (100 * spot.chipScale),
 				);
-				const aim = predicted > 0 ? predicted * 0.95 : done * MAX_GROWTH;
+				const aim = predicted > 0 ? predicted * 0.95 - before : done * MAX_GROWTH;
 				const bounded = Math.min(Math.max(aim, done * MIN_GROWTH), done * MAX_GROWTH);
 				next = Math.max(done + 1, Math.ceil(bounded));
 				prevIteration = done;
@@ -1136,6 +1384,7 @@ function makeSolution(
 	history: Progress[],
 	stoppedAt: 'target' | 'iterations',
 	workers: number,
+	currentProfileEv: boolean,
 ): Solution {
 	const { tree } = spot;
 	const parent = new Int32Array(tree.nodeCount).fill(-1);
@@ -1171,7 +1420,11 @@ function makeSolution(
 		return reach;
 	};
 
-	let cachedEv: [number, number] | null = null;
+	// One pass per player serves `ev` and `handEvs` alike.
+	let cachedEv: RootValues | null = null;
+	const rootValues = (): RootValues =>
+		(cachedEv ??= solver.rootValues(currentProfileEv ? Mode.Current : Mode.Average));
+	const cachedHands: [Float64Array | null, Float64Array | null] = [null, null];
 	let cachedExploit: number | null = null;
 
 	return {
@@ -1183,8 +1436,11 @@ function makeSolution(
 		solver,
 		history,
 		ev(player) {
-			cachedEv ??= solver.expectedValue();
-			return cachedEv[player];
+			return rootValues().totals[player];
+		},
+		handEvs(player) {
+			cachedHands[player] ??= solver.handEvs(player, rootValues().values[player]);
+			return cachedHands[player].slice();
 		},
 		exploitability() {
 			cachedExploit ??= solver.exploitability();

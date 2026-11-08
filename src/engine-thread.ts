@@ -88,6 +88,8 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 		const sum = settings[2];
 		const weight = settings[3];
 		const clamp = settings[4];
+		// Off for a current-profile read, which updates nothing.
+		engine.setPhase(0, settings[5]);
 		for (let entry = 0; entry < entries; entry++) {
 			const slot = reach + entry * 2 * rowBytes;
 			const out = engine.runChance(

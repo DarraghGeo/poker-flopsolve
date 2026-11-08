@@ -20,10 +20,14 @@
  * their real cards, so two spots may store different runouts (one folding
  * mirrored deals, the other not); hands match by combination, so a range may
  * have grown or shrunk.
+ *
+ * A solve of another board can seed this one through a card relabelling — a
+ * permutation of the deck taking one board onto the other, a rank swap for a
+ * nearby flop — through which its runouts and hands are read.
  */
 
 import type { Context, RegretStore, SumStore } from './cfr.ts';
-import { COMBOS } from './cards.ts';
+import { COMBO_CARDS, COMBOS, DECK, comboIndex } from './cards.ts';
 import { markMembers } from './hands.ts';
 import type { Runouts } from './runouts.ts';
 import { resolveBoard } from './runouts.ts';
@@ -137,16 +141,30 @@ function realCards(runouts: Runouts, round: number, board: number): number[] {
 }
 
 /**
- * Seed `to` from `from`. Both must be built on the same board.
+ * Seed `to` from `from`. Both must be built on the same board, unless `cards`
+ * relabels one onto the other.
  *
+ * @param cards for a solve of a different board: each card of `to` to the card
+ *   of `from` it plays as, a permutation of the deck taking `to`'s board onto
+ *   `from`'s. Hands and dealt cards map through it too. Unset, the identity.
  * @returns what matched
- * @throws if the boards differ
+ * @throws if the boards differ, or `cards` does not take one onto the other
  */
-export function warmStart(to: Context, from: Context, averages: boolean): WarmStartReport {
+export function warmStart(to: Context, from: Context, averages: boolean, cards?: Uint8Array): WarmStartReport {
 	const a = to.runouts.initial;
 	const b = from.runouts.initial;
-	if (a.length !== b.length || a.some((card, i) => card !== b[i])) {
-		throw new Error('A warm start must come from a solve of the same board');
+	if (cards) checkRelabelling(cards, a, b);
+	else if (a.length !== b.length || a.some((card, i) => card !== b[i])) {
+		throw new Error('A warm start must come from a solve of the same board, unless `warmCards` relabels one onto the other');
+	}
+	// A real board of `to` as `from` sees it: its own given board first, in
+	// its order, then the dealt cards relabelled.
+	const asSource = (real: number[]): number[] =>
+		cards ? [...b, ...real.slice(a.length).map((card) => cards[card])] : real;
+	// Each hand of `to` as the hand of `from` it plays as.
+	const comboOf = new Uint16Array(COMBOS);
+	for (let combo = 0; combo < COMBOS; combo++) {
+		comboOf[combo] = cards ? comboIndex(cards[COMBO_CARDS[combo * 2]], cards[COMBO_CARDS[combo * 2 + 1]]) : combo;
 	}
 	const match = matchNodes(to.tree, from.tree);
 	const { tree } = to;
@@ -177,7 +195,7 @@ export function warmStart(to: Context, from: Context, averages: boolean): WarmSt
 		}
 
 		for (let board = 0; board < to.runouts.counts[round]; board++) {
-			const resolved = resolveBoard(from.runouts, realCards(to.runouts, round, board));
+			const resolved = resolveBoard(from.runouts, asSource(realCards(to.runouts, round, board)));
 			// Blocks are laid out by position in each board's hand list.
 			const oldSlot = (from.active.roundBase[round] + resolved.board) * 2 + owner;
 			const oldFrom = from.active.start[oldSlot];
@@ -203,7 +221,7 @@ export function warmStart(to: Context, from: Context, averages: boolean): WarmSt
 				const membersEnd = to.active.memberStart[newFrom + i + 1];
 				const share = 1 / (membersEnd - firstMember);
 				for (let m = firstMember; m < membersEnd; m++) {
-					const j = position[resolved.combos[to.active.memberCombo[m]]];
+					const j = position[resolved.combos[comboOf[to.active.memberCombo[m]]]];
 					if (j < 0) continue;
 					for (let e = 0; e < actions; e++) {
 						const action = actionOf[e];
@@ -222,4 +240,18 @@ export function warmStart(to: Context, from: Context, averages: boolean): WarmSt
 		}
 	}
 	return { matchedNodes: matched, decisionNodes: tree.decisionNodes.length, averages };
+}
+
+/** Throw unless `cards` is a permutation of the deck taking board `a` onto board `b`. */
+function checkRelabelling(cards: Uint8Array, a: readonly number[], b: readonly number[]): void {
+	const seen = new Uint8Array(DECK);
+	if (cards.length !== DECK) throw new Error(`A card relabelling maps all ${DECK} cards; got ${cards.length}`);
+	for (const card of cards) {
+		if (card >= DECK || seen[card]) throw new Error('A card relabelling must be a permutation of the deck');
+		seen[card] = 1;
+	}
+	const target = new Set(b);
+	if (a.length !== b.length || a.some((card) => !target.has(cards[card]))) {
+		throw new Error('The card relabelling must take the board onto the warm start\'s board');
+	}
 }
