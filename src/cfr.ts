@@ -1195,6 +1195,9 @@ export function makeSolver(ctx: Context): Solver {
 			const opponent = ctx.players[1 - player];
 			const evs = new Float64Array(COMBOS);
 			const [from, count] = listOf(0, 0, player);
+			if (values.length !== count) {
+				throw new Error(`Player ${player} has ${count} root hands, but ${values.length} values were given`);
+			}
 			const scale = ctx.runoutWeight[0];
 			for (let i = 0; i < count; i++) {
 				const combo = lists.list[from + i];

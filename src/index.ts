@@ -634,7 +634,8 @@ export interface Solution {
 	 * Root EV in chips for each combination a player can hold, indexed like
 	 * `COMBO_CARDS` (as `reachAt` is): what that hand wins on average, over
 	 * the opponent hands it can be dealt against. Zero for combinations outside
-	 * the range or blocked by the board. Weighted by range weight times
+	 * the range or blocked by the board, and for a hand no opponent hand can be
+	 * dealt against, which has no EV to give. Weighted by range weight times
 	 * compatible opponent mass, the mean is `ev(player)`, and the same pass
 	 * serves both. Under the average strategy, or the current profile with
 	 * `approximations.currentProfileEv`. Returns a fresh copy.
@@ -741,6 +742,9 @@ export interface SolveRun {
  * @param options solver setup
  */
 export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
+	if (options.analysisOnly && options.approximations?.currentProfileEv) {
+		throw new Error('approximations.currentProfileEv needs regrets, and an analysisOnly run has none');
+	}
 	// A saved strategy is loaded as float32 sums, so analysis stays there.
 	const maxBytes = spot.source.maxBytes ?? DEFAULT_MAX_BYTES;
 	const { totalSlots, bytes } = spot.estimate;

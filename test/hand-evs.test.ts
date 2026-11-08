@@ -215,9 +215,21 @@ describe('currentProfileEv', () => {
 	});
 
 	it('needs regrets, which an analysis-only run lacks', () => {
-		const run = createRun(defineSpot(SPOTS.river), { analysisOnly: true, ...CURRENT });
+		expect(() => createRun(defineSpot(SPOTS.river), { analysisOnly: true, ...CURRENT })).toThrow(/regrets/);
+		const run = createRun(defineSpot(SPOTS.river), { analysisOnly: true });
 		try {
-			expect(() => run.snapshot().ev(0)).toThrow(/regrets/);
+			expect(() => run.solver.rootValues(Mode.Current)).toThrow(/regrets/);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('rejects root values from the other player', () => {
+		const { run } = stepped(twotone, 5);
+		try {
+			const { values } = run.solver.rootValues(Mode.Average);
+			expect(values[0].length).not.toBe(values[1].length);
+			expect(() => run.solver.handEvs(1, values[0])).toThrow(/root hands/);
 		} finally {
 			run.close();
 		}

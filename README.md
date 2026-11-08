@@ -161,7 +161,7 @@ dropped from both, which suits imported ranges full of hands at a percent or two
 ## Reading a solved spot
 
 `solution.handEvs(player)` gives each combination's root EV in chips, indexed like
-`COMBO_CARDS` (0 outside the range or on the board). Weighted by range weight times the
+`COMBO_CARDS` (0 outside the range, on the board, or with no opponent hand to face). Weighted by range weight times the
 opponent mass each hand can face, it averages to `solution.ev(player)`, and one pass serves
 both.
 
