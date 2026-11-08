@@ -180,8 +180,11 @@ if (mode === 'ref') {
 		...(opt('aggressions') ? { aggressions: Number(opt('aggressions')) } : {}),
 		band: Number(opt('band', '13')),
 	};
-	const label = `${name} ${JSON.stringify(rule)}`;
-	const { run, seconds, exploitability } = solveTo({ ...SPOTS[name], lineRunouts: rule }, Number(opt('iters', String(reference.iterations))), label, false);
+	// `--buckets g` instead: the existing global `runoutBuckets`, for comparison at equal memory.
+	const buckets = opt('buckets');
+	const config: SpotConfig = buckets ? { ...SPOTS[name], runoutBuckets: Number(buckets) } : { ...SPOTS[name], lineRunouts: rule };
+	const label = `${name} ${buckets ? `runoutBuckets ${buckets}` : JSON.stringify(rule)}`;
+	const { run, seconds, exploitability } = solveTo(config, Number(opt('iters', String(reference.iterations))), label, false);
 	const peakRss = process.resourceUsage().maxRSS * 1024;
 	const heap = process.memoryUsage().heapUsed;
 	const [oop, ip] = rootError(rootEvs(run), reference.evs, run);
@@ -208,7 +211,7 @@ if (mode === 'ref') {
 	const truth = run.trueExploitabilityPercent();
 	run.close();
 	const result = {
-		spot: name, rule, iterations: run.completed, seconds: Math.round(seconds), storage: gib(storage), peakRss: gib(peakRss), heap: gib(heap),
+		spot: name, rule: buckets ? { runoutBuckets: Number(buckets) } : rule, iterations: run.completed, seconds: Math.round(seconds), storage: gib(storage), peakRss: gib(peakRss), heap: gib(heap),
 		ownExploitability: +exploitability.toFixed(3), trueExploitability: +truth.toFixed(3),
 		rootEv: { oop: { mae: +oop.mae.toFixed(3), max: +oop.max.toFixed(3) }, ip: { mae: +ip.mae.toFixed(3), max: +ip.max.toFixed(3) } },
 		rootBetEvMae: +(actionError / actionMass).toFixed(3),
@@ -217,5 +220,6 @@ if (mode === 'ref') {
 		trueExploitabilitySeconds: Math.round((performance.now() - t) / 1000),
 	};
 	console.log(JSON.stringify(result));
-	writeFileSync(new URL(`${name}-${Object.entries(rule).map(([k, v]) => `${k}${v}`).join('-')}.json`, dir), JSON.stringify(result, null, 1));
+	const tag = buckets ? `buckets${buckets}` : Object.entries(rule).map(([k, v]) => `${k}${v}`).join('-');
+	writeFileSync(new URL(`${name}-${tag}.json`, dir), JSON.stringify(result, null, 1));
 }
