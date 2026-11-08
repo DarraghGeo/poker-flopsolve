@@ -825,6 +825,39 @@ export interface Approximations {
 	 * more iterations do not lower: on the bench flop 1.1-3.2% of pot mean
 	 * per-combination EV error and 2.2-4.7% exploitability from k = 16 down
 	 * to 4, on the wide flop 1.3-2.3% and 4-10%.
+	 *
+	 * Action translation of raises (#54) was built and measured, and is not
+	 * offered. The tree solved sized raises only over opening bets of chosen
+	 * sizes and offered just fold, call and the shove facing any other bet.
+	 * A full-tree raise over a 0.33 or 1.5 bet was read from the solved raise
+	 * over the nearest anchor, 0.75 (the pseudo-harmonic mapping is the
+	 * identity there, since the raise is 0.75 of the pot in both lines). Sized
+	 * raises are 64% of the round's target T (AsKh7d, 17.2 GiB at 32 bits):
+	 * those over a 0.33 bet 35%, over 0.75 20%, over 1.5 9%. Cutting them is
+	 * not enough. Raises over 0.75 alone left 9.1 GiB (4.6 at 16 bits), and
+	 * dropping every sized raise left 5.8 (2.9), both over the 2 GiB mark. On
+	 * the monotone Ks9s4s, where T is 3.75 GiB (1.9 at 16 bits, already
+	 * under the mark), raises over 0.75 alone took it to 2.0 GiB (1.0). That
+	 * solve needed 680 iterations to 0.3% of pot where the full tree needed
+	 * 510, and ran 20 minutes on 4 threads. Its per-combination root EVs were
+	 * 2.1–2.3% of pot off the full tree's on average and 8–9% at worst. Out
+	 * of position still chose the same root bet size for 93% of its range,
+	 * and for every hand with a clear preference. In position, after a check,
+	 * it agreed for 51%: a 0.33 bet that cannot be raised looks too good.
+	 * Translated into the full tree, the strategy was exploitable for 43% of
+	 * the pot. A turn spot with T's betting (AsKh7d2c) said the same: 2.2–3.4%
+	 * mean EV error and 31–68% exploitability across the anchor choices,
+	 * against 92–128% with no translation at all. The leak is the pairing.
+	 * With the full tree's own strategy put into only the translated
+	 * subtrees, exploitability was 0.2%. With the translated subtrees kept and
+	 * the full tree's strategy everywhere else, it was 0.14%. What fails is
+	 * the abstract game's 0.33 and 1.5 bets, shaped knowing they cannot be
+	 * raised, met by responses made for a range that could. Matching the
+	 * anchor's continue frequency at the first translated decision did not
+	 * help (39%). This is the pathology Ganzfried and Sandholm (2013)
+	 * describe. The implementation is in this repository's history (commit
+	 * f40fb76). `bench/translation/census.ts` keeps the storage census, and
+	 * `bench/translation/results/` keeps the measurements.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each

@@ -1,0 +1,76 @@
+{
+ "tag": "AsKh7d2c-55-975",
+ "raiseOver": [
+  0.33,
+  0.75,
+  1.5
+ ],
+ "bytes": 67278184,
+ "compressedBytes": 34111716,
+ "fullBytes": 67278184,
+ "iterations": 400,
+ "ms": 16066.70880599999,
+ "ownExploitability": 0.29706843447900344,
+ "peak": "rss 0.22 GiB, heap 10 MiB, arrayBuffers 0.00 GiB",
+ "rootEvError": [
+  {
+   "mae": 0,
+   "max": 0,
+   "range": 0
+  },
+  {
+   "mae": 0,
+   "max": 0,
+   "range": 0
+  }
+ ],
+ "sizes": [
+  {
+   "labels": [
+    "0.33",
+    "0.75",
+    "1.50"
+   ],
+   "sizeMaePercent": [
+    0,
+    0,
+    0
+   ],
+   "agreement": 1,
+   "agreementClear": 1,
+   "clearShare": 0.563931949789591
+  },
+  {
+   "labels": [
+    "0.33",
+    "0.75",
+    "1.50"
+   ],
+   "sizeMaePercent": [
+    0,
+    0,
+    0
+   ],
+   "agreement": 1,
+   "agreementClear": 1,
+   "clearShare": 0.460885515951516
+  }
+ ],
+ "translated": {
+  "exploitability": 0.2970683641807497,
+  "translatedNodes": 0,
+  "unmatched": 0,
+  "rootEvError": [
+   {
+    "mae": 2.8434588353903935e-8,
+    "max": 1.6059126230836476e-7,
+    "range": 5.153566462468007e-10
+   },
+   {
+    "mae": 2.1266057466786895e-8,
+    "max": 1.7535233548022172e-7,
+    "range": 5.153364603736256e-10
+   }
+  ]
+ }
+}
