@@ -892,7 +892,6 @@ function traverse(
 		}
 	}
 
-
 	return out;
 }
 
@@ -1143,18 +1142,30 @@ export function makeSolver(ctx: Context): Solver {
 			return (br0 + br1) / 2;
 		},
 		valuesAt(node, board, traverser, reachMe, reachOpp, live, liveCount) {
+			void live;
+			void liveCount;
 			const round = ctx.tree.round[node];
 			const opponent = (1 - traverser) as 0 | 1;
-			const here = (lists.roundBase[round] + board) * 2;
-			if (lists.packed[here] || lists.packed[here + 1]) {
-				// The caller's reach need not be symmetric, and packed lists
-				// can only carry reach that is. Values are linear in the
-				// opponent's reach, so they are the sum of the values against
-				// each opposing hand alone, which walk every hand apart.
-				const members = (player: 0 | 1): Uint16Array => {
-					const [from, count] = listOf(round, board, player);
-					return lists.memberCombo.slice(lists.memberStart[from], lists.memberStart[from + count]);
-				};
+			// Values depend on the opponent's reach alone. A packed list can
+			// carry it only when mirrored hands hold equally much, as they do
+			// for any reach the solve itself produces.
+			const [oppFrom, oppCount] = listOf(round, board, opponent);
+			let symmetric = true;
+			for (let j = 0; j < oppCount && symmetric; j++) {
+				const own = reachOpp[lists.list[oppFrom + j]];
+				for (let m = lists.memberStart[oppFrom + j] + 1; m < lists.memberStart[oppFrom + j + 1]; m++) {
+					if (reachOpp[lists.memberCombo[m]] !== own) symmetric = false;
+				}
+			}
+			const members = (player: 0 | 1): Uint16Array => {
+				const [from, count] = listOf(round, board, player);
+				return lists.memberCombo.slice(lists.memberStart[from], lists.memberStart[from + count]);
+			};
+			if (!symmetric) {
+				// Values are linear in the opponent's reach, so they are the
+				// sum of the values against each opposing hand alone, which
+				// are walked with every hand apart. Slower, by about the
+				// number of opposing hands over 64.
 				const theirs = members(opponent).filter((combo) => reachOpp[combo] !== 0);
 				const mine = members(traverser);
 				const handReach = Float64Array.from(theirs, (combo) => reachOpp[combo]);
@@ -1163,12 +1174,9 @@ export function makeSolver(ctx: Context): Solver {
 				for (let k = 0; k < theirs.length; k++) {
 					for (const combo of mine) result[combo] += rows[k * COMBOS + combo];
 				}
-				void reachMe;
-				void live;
-				void liveCount;
 				return result;
 			}
-			// The caller's reach need not be symmetric, so mirrored deals are
+			// Mirrored deals below need not see symmetric reach, so they are
 			// walked rather than assumed.
 			const expanded = ctx.expandOrbits;
 			ctx.expandOrbits = true;
@@ -1185,8 +1193,6 @@ export function makeSolver(ctx: Context): Solver {
 						result[lists.memberCombo[m]] = value[i];
 					}
 				}
-				void live;
-				void liveCount;
 				return result;
 			} finally {
 				ctx.expandOrbits = expanded;

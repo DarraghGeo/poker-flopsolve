@@ -24,6 +24,7 @@
 import { COMBO_CARDS, COMBOS } from './cards.ts';
 import type { Context } from './cfr.ts';
 import { averageStrategy } from './cfr.ts';
+import { markMembers } from './hands.ts';
 import { NodeKind } from './tree.ts';
 
 /** Opposing hands per walk; more share the walk better but need more memory. */
@@ -38,9 +39,9 @@ interface PairBuffers {
 	readonly hands: Uint16Array[];
 	readonly strategy: Float64Array[];
 	readonly rank: Int32Array;
-	/** A combination's position in the current decision's hand list. */
+	/** A combination's position in the current decision's hand list; -1 between uses. */
 	readonly position: Int32Array;
-	/** Each opposing hand's position in the acting list, per depth: deeper walks reuse `position`. */
+	/** Each opposing hand's position in the acting list, or -1, per depth: deeper walks reuse `position`. */
 	readonly at: Int32Array[];
 }
 
@@ -73,7 +74,7 @@ function makeBuffers(ctx: Context, width: number): PairBuffers {
 		hands: make(() => new Uint16Array(width)),
 		strategy: make(() => new Float64Array(actions * COMBOS)),
 		rank: new Int32Array(COMBOS),
-		position: new Int32Array(COMBOS),
+		position: new Int32Array(COMBOS).fill(-1),
 		at: make(() => new Int32Array(width)),
 	};
 }
@@ -293,17 +294,17 @@ function walk(
 	const childCols = buffers.cols[depth + 1];
 	// Each opposing hand's position in the acting player's list here.
 	const position = buffers.position;
-	for (let i = 0; i < activeCount; i++) {
-		for (let m = lists.memberStart[activeFrom + i]; m < lists.memberStart[activeFrom + i + 1]; m++) position[lists.memberCombo[m]] = i;
-	}
+	markMembers(lists, activeFrom, activeCount, position, false);
 	const at = buffers.at[depth];
 	for (let c = 0; c < colCount; c++) at[cols[c]] = position[hands[cols[c]]];
+	markMembers(lists, activeFrom, activeCount, position, true);
 	for (let a = 0; a < actions; a++) {
 		const offset = a * COMBOS;
 		let childCount = 0;
 		for (let c = 0; c < colCount; c++) {
 			const k = cols[c];
-			const r = colReach[k] * strategy[a * stride + at[k]];
+			// A hand not in the list here cannot be holding it.
+			const r = at[k] < 0 ? 0 : colReach[k] * strategy[a * stride + at[k]];
 			childReach[k] = r;
 			if (r !== 0) childCols[childCount++] = k;
 		}

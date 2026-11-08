@@ -4,8 +4,8 @@
  * Purpose: what `traverse` in src/cfr.ts does, over 32-bit vectors and
  * storage, with SIMD wherever a loop runs over a contiguous row. It is the
  * same algorithm, step for step — deals through the `up` maps, folds and
- * showdowns over the hand lists, regret matching, DCFR or CFR+ updates — so the two engines agree to float precision, and the tests hold them
- * to that.
+ * showdowns over the hand lists, regret matching, DCFR or CFR+ updates — so
+ * the two engines agree to float precision, and the tests hold them to that.
  *
  * Everything lives in one memory that src/engine.ts lays out: a header of
  * pointers written by `init`, the spot's structures copied in, the storage

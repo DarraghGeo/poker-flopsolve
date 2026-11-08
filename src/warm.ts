@@ -24,6 +24,7 @@
 
 import type { Context, RegretStore, SumStore } from './cfr.ts';
 import { COMBOS } from './cards.ts';
+import { markMembers } from './hands.ts';
 import type { Runouts } from './runouts.ts';
 import { resolveBoard } from './runouts.ts';
 import type { Tree } from './tree.ts';
@@ -187,11 +188,7 @@ export function warmStart(to: Context, from: Context, averages: boolean): WarmSt
 			if (hasRegret) readBlock(from.regret, from.regretScale, oldBlock, oldBase, oldLength, oldRegret);
 			readBlock(from.strategySum, from.sumScale, oldBlock, oldBase, oldLength, oldSum);
 			// Every hand an old entry stands for is at that entry.
-			for (let j = 0; j < oldCount; j++) {
-				for (let m = from.active.memberStart[oldFrom + j]; m < from.active.memberStart[oldFrom + j + 1]; m++) {
-					position[from.active.memberCombo[m]] = j;
-				}
-			}
+			markMembers(from.active, oldFrom, oldCount, position, false);
 
 			const newSlot = (to.active.roundBase[round] + board) * 2 + owner;
 			const newFrom = to.active.start[newSlot];
@@ -216,11 +213,7 @@ export function warmStart(to: Context, from: Context, averages: boolean): WarmSt
 					}
 				}
 			}
-			for (let j = 0; j < oldCount; j++) {
-				for (let m = from.active.memberStart[oldFrom + j]; m < from.active.memberStart[oldFrom + j + 1]; m++) {
-					position[from.active.memberCombo[m]] = -1;
-				}
-			}
+			markMembers(from.active, oldFrom, oldCount, position, true);
 
 			const block = to.layout.blockOffset[node] + board;
 			const base = to.layout.offset[node] + actions * to.layout.rowStart[newSlot];

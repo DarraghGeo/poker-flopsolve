@@ -52,8 +52,17 @@ export interface HandSpace {
 	readonly same: Int32Array;
 }
 
-/** Point every hand an entry stands for at that entry's position, or at -1. */
-function mark(lists: HandLists, from: number, count: number, indexOf: Int32Array, clear: boolean): void {
+/**
+ * Point every hand the entries of one list stand for at its entry's position
+ * in that list, or back at -1 with `clear`.
+ */
+export function markMembers(
+	lists: Pick<HandLists, 'memberStart' | 'memberCombo'>,
+	from: number,
+	count: number,
+	indexOf: Int32Array,
+	clear: boolean,
+): void {
 	for (let i = 0; i < count; i++) {
 		for (let m = lists.memberStart[from + i]; m < lists.memberStart[from + i + 1]; m++) {
 			indexOf[lists.memberCombo[m]] = clear ? -1 : i;
@@ -86,7 +95,7 @@ export function buildHandSpace(
 			const parent = runouts.parent[round][child];
 			for (let player = 0; player < 2; player++) {
 				const [parentFrom, parentCount] = span(lists, round - 1, parent, player);
-				mark(lists, parentFrom, parentCount, indexOf, false);
+				markMembers(lists, parentFrom, parentCount, indexOf, false);
 				const [childFrom, childCount] = span(lists, round, child, player);
 				for (let m = orbitStart[child]; m < orbitStart[child + 1]; m++) {
 					// The member's map sends a real hand onto the stored board;
@@ -100,7 +109,7 @@ export function buildHandSpace(
 						up.push(at);
 					}
 				}
-				mark(lists, parentFrom, parentCount, indexOf, true);
+				markMembers(lists, parentFrom, parentCount, indexOf, true);
 			}
 		}
 		upStart.push(starts);
@@ -115,11 +124,11 @@ export function buildHandSpace(
 			for (let player = 0; player < 2; player++) {
 				const slot = (lists.roundBase[round] + board) * 2 + player;
 				const [otherFrom, otherCount] = span(lists, round, board, 1 - player);
-				mark(lists, otherFrom, otherCount, indexOf, false);
+				markMembers(lists, otherFrom, otherCount, indexOf, false);
 				const [from, count] = span(lists, round, board, player);
 				sameStart[slot] = same.length;
 				for (let i = 0; i < count; i++) same.push(indexOf[lists.list[from + i]]);
-				mark(lists, otherFrom, otherCount, indexOf, true);
+				markMembers(lists, otherFrom, otherCount, indexOf, true);
 			}
 		}
 	}
