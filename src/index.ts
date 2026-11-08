@@ -772,6 +772,43 @@ export interface Approximations {
 	 * each iteration, would cost tens of times more and was not built. The
 	 * implementation is in this repository's history (commit 0f80fcc);
 	 * `bench/ooc/` keeps the OPFS throughput and sizing benchmarks.
+	 *
+	 * Strategy grafting over bet sizes (#56; Waugh, Bard & Bowling, 2009) —
+	 * one size at a time in the same memory, stitched by a small game that
+	 * picks each hand's size — was built for the flop's opening bet,
+	 * measured, and is not offered. `bench/graft/` has it. R, the game it
+	 * approximates, is T's three sizes (and the shove) on the flop's opening
+	 * bet with 0.75 after it. Its grafts are cut down to the subtrees they
+	 * add: R's tree with every opening edge but one taken out, below OOP's
+	 * bet and below IP's bet after a check, plus check-check. Each is solved
+	 * alone for the ranges the stitch sends in, and only per-hand root values
+	 * are kept. The stitch is RM+ at the two opening decisions on those
+	 * values, one update per round of re-solving every piece; the trunk is
+	 * CFR-D's, two decisions deep.
+	 *
+	 * Memory is what it promises: the largest piece is 868 MiB at 32 bits on
+	 * AsKh7d (191 MiB on Ks9s4s) where R is 3.7 GiB (0.81), and grafting
+	 * every street's opening bet would not grow it. Time and accuracy are
+	 * not. The pieces partition R, so a round costs about one solve of R,
+	 * and the stitch needs many rounds. The ranges move from round to round,
+	 * every piece re-equilibrates, and the trunk oscillates as CFR-D's does.
+	 * On Ks9s4s, 4 threads in Node, R itself solved to 0.25% of pot in 158
+	 * s. Grafted with 150 iterations a piece: the 0.75 blueprint's opening
+	 * spread over the three sizes, then one round, took 130 s and was 61% of
+	 * pot exploitable in R, with root EVs 1.1–2.9% of pot off per combination
+	 * on average and the preferred size agreeing with R's for 86% (OOP) and
+	 * 47% (IP after a check) of hands. Four rounds took 396 s: 15%, 13–16%
+	 * off. Eight took 809 s: 6.6%, 8.5–9.8% off, 78% and 28%; RM+'s latest
+	 * stitch instead of its average, 820 s: 13%, 12–13% off. On AsKh7d one
+	 * round after the blueprint took 417 s and was 91% exploitable, 2.2% off,
+	 * the size agreeing for 22% and 41% of hands. On a small turn
+	 * spot that R solves to 0.18% in 4 s, 64 rounds took 186 s and were
+	 * still 7–11% exploitable. Even the reference's own opening strategy,
+	 * fed in for one round, came out 42% exploitable: an opening a hand never
+	 * takes (the shove, IP's bets after a check) gets an answer to the
+	 * pieces' floor range, not an equilibrium one, until the stitch's rounds
+	 * correct it. And it is still only R: T's turn and river sizes need
+	 * grafts per flop line, which multiplies the solves.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
