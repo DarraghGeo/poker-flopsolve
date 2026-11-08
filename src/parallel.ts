@@ -53,14 +53,14 @@ export const CONTROL = {
 	iterWeight: 4,
 	ready: 5,
 	mode: 6,
-	/** Set, never cleared, by a worker whose walk threw; see src/worker.ts. */
+	/** Set, never cleared, once any thread's part of a step threw; see src/worker.ts. */
 	failed: 7,
 	size: 8,
 } as const;
 
-/** What a step throws once a worker has failed mid-iteration. */
-export const WORKER_FAILED_ERROR =
-	'A solver thread failed mid-iteration (out of memory, or a bug); this run cannot continue. Close it and solve again, or use workers: 1.';
+/** What a threaded step throws once a thread has failed mid-iteration, here or in src/engine.ts. */
+export const THREAD_FAILED_ERROR =
+	'A solver thread failed mid-iteration; this run cannot continue. Close it and solve again, or use workers: 1.';
 
 export const COMMAND = { work: 0, exit: 1 } as const;
 
@@ -225,11 +225,9 @@ export function startPool(
 	const mainReachOpp = new Float64Array(COMBOS);
 
 	const failed = (): Error | null =>
-		failure ?? (Atomics.load(control, CONTROL.failed) ? new Error(WORKER_FAILED_ERROR) : null);
+		failure ?? (Atomics.load(control, CONTROL.failed) ? new Error(THREAD_FAILED_ERROR) : null);
 
 	const dispatch = (mode: Mode, traverser: 0 | 1, iterWeight: number): void => {
-		const before = failed();
-		if (before) throw before;
 		Atomics.store(control, CONTROL.done, 0);
 		Atomics.store(control, CONTROL.mode, mode);
 		Atomics.store(control, CONTROL.traverser, traverser);
@@ -270,46 +268,61 @@ export function startPool(
 			if (done >= spawned || failure) break;
 			Atomics.wait(control, CONTROL.done, done, 50);
 		}
-		const after = failed();
-		if (after) throw after;
+		const dead = failed();
+		if (dead) throw dead;
+	};
+
+	const traverseAll: RootTraversal = (mode, traverser, iterWeight) => {
+		// Pass A: walk the round above the split to capture what each worker
+		// needs, applying nothing.
+		ctx.applyUpdates = false;
+		ctx.chanceOverride = null;
+		ctx.chanceCollect = (node, reachMe, reachOpp) => {
+			const entry = plan.entryIndexOf[node];
+			exchange.set(reachMe.subarray(0, COMBOS), entry * 2 * COMBOS);
+			exchange.set(reachOpp.subarray(0, COMBOS), entry * 2 * COMBOS + COMBOS);
+		};
+		try {
+			solver.traverseRoot(mode, traverser, iterWeight);
+		} finally {
+			ctx.chanceCollect = null;
+		}
+
+		// Leaves this thread's own partial in `chanceValues`.
+		dispatch(mode, traverser, iterWeight);
+
+		for (let w = 0; w < spawned; w++) {
+			const base = reachFloats + w * entryCount * COMBOS;
+			for (let i = 0; i < entryCount * COMBOS; i++) chanceValues[i] += exchange[base + i];
+		}
+
+		// Pass B: finish that round from the totals, now applying updates.
+		ctx.chanceOverride = chanceValues;
+		ctx.applyUpdates = true;
+		try {
+			const value = solver.traverseRoot(mode, traverser, iterWeight);
+			total.set(value.subarray(0, COMBOS));
+		} finally {
+			ctx.chanceOverride = null;
+		}
+		return total;
 	};
 
 	return {
 		workers,
 		traverse(mode, traverser, iterWeight) {
-			// Pass A: walk the round above the split to capture what each worker
-			// needs, applying nothing.
-			ctx.applyUpdates = false;
-			ctx.chanceOverride = null;
-			ctx.chanceCollect = (node, reachMe, reachOpp) => {
-				const entry = plan.entryIndexOf[node];
-				exchange.set(reachMe.subarray(0, COMBOS), entry * 2 * COMBOS);
-				exchange.set(reachOpp.subarray(0, COMBOS), entry * 2 * COMBOS + COMBOS);
-			};
+			// Once any thread has failed, so does every step after, before it
+			// touches anything.
+			const dead = failed();
+			if (dead) throw dead;
 			try {
-				solver.traverseRoot(mode, traverser, iterWeight);
-			} finally {
-				ctx.chanceCollect = null;
+				return traverseAll(mode, traverser, iterWeight);
+			} catch (error) {
+				// This thread's own part may have thrown with the workers still
+				// walking; no later step may run over them.
+				Atomics.store(control, CONTROL.failed, 1);
+				throw error;
 			}
-
-			// Leaves this thread's own partial in `chanceValues`.
-			dispatch(mode, traverser, iterWeight);
-
-			for (let w = 0; w < spawned; w++) {
-				const base = reachFloats + w * entryCount * COMBOS;
-				for (let i = 0; i < entryCount * COMBOS; i++) chanceValues[i] += exchange[base + i];
-			}
-
-			// Pass B: finish that round from the totals, now applying updates.
-			ctx.chanceOverride = chanceValues;
-			ctx.applyUpdates = true;
-			try {
-				const value = solver.traverseRoot(mode, traverser, iterWeight);
-				total.set(value.subarray(0, COMBOS));
-			} finally {
-				ctx.chanceOverride = null;
-			}
-			return total;
 		},
 		close() {
 			Atomics.store(control, CONTROL.command, COMMAND.exit);

@@ -114,15 +114,14 @@ for (;;) {
 		}
 	} catch (error) {
 		// The main thread is blocked in Atomics.wait and cannot see this
-		// thread's error event, so say so in shared memory and count as done.
+		// thread's error event, so say so in shared memory (and count as
+		// done, below).
 		Atomics.store(control, CONTROL.failed, 1);
+		throw error;
+	} finally {
 		Atomics.add(control, CONTROL.done, 1);
 		Atomics.notify(control, CONTROL.done);
-		throw error;
 	}
-
-	Atomics.add(control, CONTROL.done, 1);
-	Atomics.notify(control, CONTROL.done);
 }
 
 parentPort?.close();

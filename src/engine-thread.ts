@@ -101,14 +101,13 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 			}
 		} catch (error) {
 			// The main thread is blocked in Atomics.wait and cannot see this
-			// thread's error event, so say so in shared memory and count as
-			// done. Then let the thread die: its engine state is not to be trusted.
+			// thread's error event, so say so in shared memory (and count as
+			// done, below). Then let the thread die: its engine is not to be trusted.
 			Atomics.store(control, FAILED, 1);
+			throw error;
+		} finally {
 			Atomics.add(control, DONE, 1);
 			Atomics.notify(control, DONE);
-			throw error;
 		}
-		Atomics.add(control, DONE, 1);
-		Atomics.notify(control, DONE);
 	}
 }
