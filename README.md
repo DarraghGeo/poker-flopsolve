@@ -160,6 +160,19 @@ dropped from both, which suits imported ranges full of hands at a percent or two
 
 ## Reading a solved spot
 
+`solution.handEvs(player)` gives each combination's root EV in chips, indexed like
+`COMBO_CARDS` (0 outside the range, on the board, or with no opponent hand to face). Weighted by range weight times the
+opponent mass each hand can face, it averages to `solution.ev(player)`, and one pass serves
+both.
+
+Both read the average strategy by default. With `approximations: { currentProfileEv: true }`
+they read the current (regret-matched) profile instead: the strategy the next iteration would
+play. Its per-hand EVs settle sooner. After 15 s single-threaded in a browser, their mean error
+against a 0.045%-of-pot reference was 1.23% of pot against the average's 2.18% on As Kh 7d,
+0.11% against 0.37% on Ks 9s 4s, and 1.40% against 2.02% on a wide Qs Jh 2c. The cost is the
+same. `strategyAt` and `reachAt` still show the average, so the EVs then belong to a
+different profile from the strategy you read.
+
 `createRun` returns the solver itself as `run.solver`, for analysis after (or between)
 iterations, without changing anything:
 
@@ -203,6 +216,21 @@ resumes a solve exactly. Measured on a river spot to 0.1% of pot:
 | Stack 120 → 100 | 125 | 75 |
 | Pot 60 → 72 | 125 | 100 |
 
+A solve of a nearby flop can seed one too, through a card relabelling that takes its board
+onto this one. A rank swap keeps every hand's role, so a solve of AsKh6d read through
+`rankSwap` of the 6 and the 7 plays 66 as 77:
+
+```ts
+import { rankSwap } from 'poker-flopsolve';
+const six = solve(defineSpot({ ...config, board: 'As Kh 6d' }), { targetPercent: 0.1 });
+const seven = solve(defineSpot({ ...config, board: 'As Kh 7d' }), {
+  targetPercent: 0.5, warmStart: six, warmCards: rankSwap(4, 5),   // ranks 0 = deuce … 12 = ace
+});
+```
+
+On the bench flop that reaches 0.5% of pot in 8 iterations instead of 52 (from AsQh7d,
+20). It needs the whole old solve: seeding only the flop's decisions saved at most 15%.
+
 ## Re-solving from a node
 
 Solve the whole spot with a coarse tree, then re-solve the street you are looking at
@@ -235,7 +263,7 @@ earlier streets any more accurate than their coarse model of the future.
 
 The package also runs in a browser, for the small solves a page wants: river spots and
 narrow turn spots. Bundlers pick the browser build (`dist/browser.js`) automatically
-through the `browser` export condition. It is the same solver, single-threaded:
+through the `browser` export condition. It is the same solver, single-threaded by default:
 
 - no worker threads, so `workers` resolves to 1 (asking for more logs one warning);
 - no `SharedArrayBuffer`, so the page needs no cross-origin isolation headers;
@@ -245,10 +273,54 @@ through the `browser` export condition. It is the same solver, single-threaded:
 A solve blocks the thread it runs on, so host it in a Web Worker and step it in chunks;
 [`examples/browser-worker.ts`](examples/browser-worker.ts) does that with progress and a
 stop message in about sixty lines. Flop spots and wide turn spots belong in Node, where
-`workers` splits the runouts across cores.
+`workers` splits the runouts across cores, or in a browser with threads turned on.
 
-`npm test` checks the browser build in headless Chromium against Node (skipped where
-Playwright is not installed), and `npm run bench:browser` times it beside Node.
+### Threads in the browser (opt-in)
+
+A page can split a solve across cores as Node does, with no approximation. Import
+`enableThreads` from `poker-flopsolve/threads` and await it once, in the Web Worker that
+solves, before solving:
+
+```ts
+import { createRun, defineSpot } from 'poker-flopsolve';
+import { enableThreads } from 'poker-flopsolve/threads';
+
+const threads = await enableThreads();   // navigator.hardwareConcurrency, or 1 if unavailable
+const run = createRun(defineSpot(config), { workers: threads });
+```
+
+It starts `threads − 1` engine workers that share the WebAssembly engine's memory, exactly
+as Node's threads do, so a fixed thread count gives the same answer as Node at that count
+(bit for bit where the browser's V8 agrees with Node's on `Math.pow`, as it did in every
+measurement here). They stay started between solves; a solve borrows them and gives them back on
+`close()`. `enableThreads(1)` stops every thread no open run holds. Only the WebAssembly engine (the default) is
+threaded; `engine: 'js'` or `precision: 'f64'`/`'i16'` solve on one thread.
+
+Threads need:
+
+- a **cross-origin isolated** page, which gives `SharedArrayBuffer`. Serve the page
+  with these headers, and every script it loads from the same origin or with CORS:
+
+  ```
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  ```
+
+- the solve to run in a **Web Worker**, since a page's main thread may not block on
+  `Atomics.wait`;
+- `blob:` workers allowed, if the page sets a Content Security Policy (`worker-src blob:`).
+
+Where any of these is missing, `enableThreads` resolves to 1 and solves stay on one
+thread; `threadsUnavailable()` says why. Without the import nothing changes: the main
+bundle carries only a lookup for the threads, and a solve gives the same results as
+before. The UI's dev server (`npm run ui`) sends the two headers.
+
+On a 4-core container, headless Chromium, a flop solve to 0.3% of pot took 24.0 s on one
+thread and 8.7 s on four (`npm run bench:browser:threads`).
+
+`npm test` checks the browser build in headless Chromium against Node, single-threaded and
+threaded (skipped where Playwright is not installed). `npm run bench:browser` times it
+beside Node, and `npm run bench:browser:threads` times flop solves at each thread count.
 
 ## Performance
 
@@ -293,8 +365,21 @@ Chromium, exploitability checks ~8%.
 When swapping suits leaves the board and both ranges unchanged, a deal in one of those
 suits is the mirror image of a deal in another, and only one is solved. On a two-tone flop
 the two absent suits are interchangeable; on a monotone flop, all three. This is exact —
-the solver keeps mirrored hands' strategies tied together, so a stored runout stands for
-its mirrors with nothing lost — and it is on by default (`isomorphism: false` turns it off).
+mirrored hands play alike, so a stored runout stands for its mirrors with nothing lost —
+and it is on by default (`isomorphism: false` turns it off).
+
+The same symmetry is used a second time inside each stored board: hands that mirror each
+other there (on Ks9s4s, AhAd, AhAc and AdAc) are stored once, and every vector, regret and
+strategy sum on that board shrinks with them. Card removal stays exact, because the fold and
+showdown kernels still count each opposing hand's own cards. Measured single-threaded, ms
+per iteration with the same iterations to every target:
+
+| Flop | Hands stored on the river | ms per iteration | Memory |
+|---|---|---|---|
+| Ks9s4s, monotone, bench ranges | 245,916 → 171,442 | 78 → 62 | 38 → 27 MB |
+| Ks9s4s, pairs and broadway | 264,184 → 177,944 | 80 → 59 | 41 → 28 MB |
+| Ts9s4h, two-tone | 522,944 → 458,484 | 154 → 143 | 81 → 71 MB |
+| AsKh7d, rainbow | 784,806 → 784,806 | unchanged | unchanged |
 
 | Flop, 4 threads | Runouts stored | To 0.3% of pot |
 |---|---|---|
@@ -331,6 +416,53 @@ accuracy. On AhKdQc, 4 threads, to 0.3% of pot in the bucketed game:
 | | 1 | 1,396 | 4.9 s | 0.482% |
 | | 3 | 1,088 | 4.2 s | 0.542% |
 
+### Chance sampling (opt-in)
+
+`approximations: { chanceSampling: {} }` walks each turn and river deal on only some
+training iterations, with probability `p` (default 0.35). A deal left out stands in with
+the per-hand values it returned the last time it was walked. A walked deal adds
+`b + (v − b) / p`, its baseline corrected by how far its values moved (VR-MCCFR,
+Schmid et al. 2019). Iterations get several times cheaper, convergence per iteration
+loses less than that, and exploitability is still measured exactly in the full game.
+Single-threaded, Node, time to 0.3% of pot:
+
+| Flop | Exact | Sampled | Baselines |
+|---|---|---|---|
+| AsKh7d, bench ranges, pot 100 | 23.7 s | 15.9 s | 29 MB |
+| Ks9s4s, bench ranges, pot 100 | 6.0 s | 4.3 s | 6 MB |
+| AsKh7d, bench ranges, pot 60 (wide) | 13.4 s | 9.3 s | 29 MB |
+| AsKh7d, pairs and broadway | 16.7 s | 12.9 s | 31 MB |
+| Ks9s4s, pairs and broadway | 5.5 s | 4.5 s | 7 MB |
+
+Stopped at 15 s, single-threaded in Chromium, it leaves 0.29% of pot on the first spot
+where the exact solve leaves 0.69%, 0.11% for 0.20% on the wide flop and 0.17% for
+0.28% on pairs and broadway; the range-weighted error of per-hand root EVs against an
+exact 0.1% solve falls from 1.0–1.1% of pot to 0.12–0.16% on the first, and to about a
+third on the others. It runs on one thread only, in both engines; the baselines count against
+`maxBytes`. With `p: 1` it is the exact solve, bit for bit. `rounds: [2]` samples
+river deals only.
+
+### Coarse start (approximate start, exact answer)
+
+`approximations: { coarseStart: { iterations: 40 } }` first solves a coarse copy of the
+spot, with runouts bucketed as by `runoutBuckets: 3`, for that many iterations. It then
+starts the real spot from those regrets. Coarse iterations are cheaper, and the real solve
+picks up roughly where they left off. The answer is still the real spot's, and
+exploitability measures the real game. Off by default.
+
+Measured in Chromium on one thread, stopped at 15 s, 40 coarse iterations, with root-EV
+error per combination (range-weighted mean, % of pot) against a 0.1% reference:
+
+| Flop | Cold | Coarse start | Exploitability, cold → coarse start |
+|---|---|---|---|
+| AsKh7d, compare ranges, 50% bet | 1.51% | 0.19% | 0.94% → 0.40% |
+| AsKh7d, bench ranges, 66% bet | 0.26% | 0.06% | 0.24% → 0.15% |
+| Ks9s4s, monotone | 0.04% | 0.11% | 0.10% → 0.07% |
+
+The monotone flop reaches 0.5% error in half the time, but a cold solve has already settled
+it by 15 s. To an exploitability target in Node, coarse start was faster on all three.
+`bench/coarse-to-fine/` has the harness.
+
 ### 16-bit storage
 
 A spot too big for 32-bit storage under `maxBytes` is solved at 16 bits instead
@@ -357,8 +489,22 @@ deterministic at any thread count.
 
 The default update rule is Discounted CFR (`algorithm: 'dcfr'`, α 1.5, β 0, γ 3, with
 positive regret counted from the second iteration so the uniform first iteration is
-forgotten). CFR+ is still available as `algorithm: 'cfr+'`. The table below predates the
-0.2.0 schedule, which needs 10–15% fewer iterations on flop and turn spots. `npm run bench` times a fixed river, turn, flop
+forgotten). CFR+ is still available as `algorithm: 'cfr+'`.
+
+Under DCFR, each iteration adds its strategy to the average without weighting it by the
+hand's own reach, as postflop-solver does. With own-reach weighting, a hand that equilibrium
+play stops sending to a node averaged out to its near-uniform first iterations there, so
+continuing it off the path (browsing the hand, comparing an engine against the solve) played
+close to random. On a turn spot after 300 iterations, near-uniform play among hands reaching
+a node with under 0.1% of their starting weight fell from 8% to 0.6%. The cost, single-threaded
+on the regression spots: exploitability at a fixed iteration count is up to about 50% higher
+once it is small (turn, 400 iterations: 0.016% → 0.024% of pot), which is 0–14% more
+iterations to 0.3% or 0.1% of pot (turn 79 → 88 and 143 → 163; flop 62 → 69 and 112 → 115)
+and about the same to 1%. CFR+ keeps the own-reach weighting: its iterates oscillate, and
+unweighted they averaged to 2–3× the exploitability.
+
+The table below predates both this change and the 0.2.0 schedule, which needs 10–15% fewer
+iterations on flop and turn spots. `npm run bench` times a fixed river, turn, flop
 and two-tone flop. Measured in a 4-core cloud container, seconds of solving to reach each
 target (exploitability checks excluded):
 

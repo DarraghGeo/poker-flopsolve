@@ -27,16 +27,20 @@ import { SPOTS } from './regression-spots.ts';
  * The 16-bit spots again when storage moved to hand order: their stochastic
  * rounding is seeded by storage address. The turn spots when a raise short
  * of a full one became all-in for less instead of being dropped: their tree
- * gained the 12 shoves it had been missing.
+ * gained the 12 shoves it had been missing. All of them when strategy sums
+ * stopped weighting each iteration by the hand's own reach (issue #8): a
+ * deliberate change of algorithm. Exploitability at these short solves rose
+ * by 3–17% (river 0.0454 → 0.0533, turn 1.407 → 1.535, flop 1.303 → 1.424,
+ * two-tone flop 1.259 → 1.298); EVs moved by at most 0.026 chips.
  */
 const GOLDEN: Record<string, [number, number, number]> = {
-	'river f64': [1.6108255310577881, -1.610825531057795, 0.04537223276200597],
-	'river i16': [1.6106738835010792, -1.6106738835010943, 0.04492205205962071],
-	'turn f64': [2.3371103491632255, -2.3371103491632286, 1.4067251086848285],
-	'turn i16': [2.338716165222372, -2.3387161652223734, 1.404517896951247],
-	'flop f64': [24.35116758043512, -24.351167580435117, 1.30310737854814],
-	'flop i16': [24.351099300264092, -24.351099300264103, 1.3051918847809054],
-	'two-tone flop f64': [-10.602679146562574, 10.602679146562577, 1.2593765618876374],
+	'river f64': [1.6109510197153678, -1.6109510197153827, 0.053295044294287],
+	'river i16': [1.610798446450356, -1.610798446450357, 0.05312512256457661],
+	'turn f64': [2.3116184494512404, -2.311618449451233, 1.5351652227695145],
+	'turn i16': [2.3149551076623056, -2.3149551076623096, 1.5454738879814245],
+	'flop f64': [24.369126123475475, -24.369126123475464, 1.423527766274475],
+	'flop i16': [24.369116773283107, -24.369116773283114, 1.4260328238790356],
+	'two-tone flop f64': [-10.621338703103916, 10.62133870310392, 1.297830708517759],
 };
 
 describe('regression', () => {

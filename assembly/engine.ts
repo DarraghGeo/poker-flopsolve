@@ -4,9 +4,8 @@
  * Purpose: what `traverse` in src/cfr.ts does, over 32-bit vectors and
  * storage, with SIMD wherever a loop runs over a contiguous row. It is the
  * same algorithm, step for step — deals through the `up` maps, folds and
- * showdowns over the hand lists, regret matching, DCFR or CFR+ updates, mirror
- * ties — so the two engines agree to float precision, and the tests hold them
- * to that.
+ * showdowns over the hand lists, regret matching, DCFR or CFR+ updates — so
+ * the two engines agree to float precision, and the tests hold them to that.
  *
  * Everything lives in one memory that src/engine.ts lays out: a header of
  * pointers written by `init`, the spot's structures copied in, the storage
@@ -39,8 +38,11 @@ let listCount: usize = 0;
 let cardA: usize = 0;
 let cardB: usize = 0;
 let strength: usize = 0;
-let tieStart: usize = 0;
-let ties: usize = 0;
+let packed: usize = 0;
+let multiplicity: usize = 0;
+let memberStart: usize = 0;
+let memberA: usize = 0;
+let memberB: usize = 0;
 let upRound: usize = 0;
 let upStart: usize = 0;
 let up: usize = 0;
@@ -95,6 +97,68 @@ export function setPhase(value: i32, apply: i32): void {
 	applyUpdates = apply !== 0;
 }
 
+// Chance sampling with baselines (`Approximations.chanceSampling`); off
+// while `sampleRounds` is 0. See `sampledChance` in src/cfr.ts, which this
+// mirrors step for step, the deal choice included.
+let sampleRounds: i32 = 0;
+let sampleP: f64 = 1;
+let sampleEvery: u32 = 0;
+let sampleWeight: f32 = 1;
+let catchUp: bool = true;
+let baseOffset: usize = 0;
+let boardOffset: usize = 0;
+let walkOffset: usize = 0;
+let baseline: usize = 0;
+let lastWalk: usize = 0;
+let lastUpdate: usize = 0;
+let blockOffset: usize = 0;
+let iteration: i32 = 0;
+let dcfrRule: bool = false;
+
+/** Turn sampling on: tables and state from src/engine.ts, rounds as a bit mask. */
+export function setSampling(
+	rounds: i32, p: f64, every: i32, unbiased: i32, catchUpOn: i32,
+	baseOffsets: usize, boardOffsets: usize, walkOffsets: usize,
+	baselines: usize, lastWalks: usize, lastUpdates: usize, blockOffsets: usize,
+): void {
+	sampleRounds = rounds;
+	sampleP = p;
+	sampleEvery = <u32>every;
+	sampleWeight = unbiased !== 0 ? <f32>(1 / p) : 1;
+	catchUp = catchUpOn !== 0;
+	baseOffset = baseOffsets;
+	boardOffset = boardOffsets;
+	walkOffset = walkOffsets;
+	baseline = baselines;
+	lastWalk = lastWalks;
+	lastUpdate = lastUpdates;
+	blockOffset = blockOffsets;
+}
+
+/** The iteration a training walk is for, counted from 1, and whether it runs DCFR. */
+export function setIteration(t: i32, dcfr: i32): void {
+	iteration = t;
+	dcfrRule = dcfr !== 0;
+}
+
+/** Whether a deal is walked on an iteration, as `sampled` in src/cfr.ts. */
+function sampled(node: i32, board: i32, t: i32): bool {
+	let h: u32 = (<u32>node ^ (<u32>board * 0x9e3779b1)) * 0x85ebca6b;
+	if (sampleEvery > 0) {
+		h ^= h >>> 13;
+		h *= 0xc2b2ae35;
+		h ^= h >>> 16;
+		return (<u64>h + <u64>t) % <u64>sampleEvery === 0;
+	}
+	h ^= <u32>t * 0x27d4eb2f;
+	h ^= h >>> 15;
+	h *= 0xc2b2ae35;
+	h ^= h >>> 13;
+	h *= 0x165667b1;
+	h ^= h >>> 16;
+	return <f64>h / 4294967296.0 < sampleP;
+}
+
 // Per-iteration settings, from `run`.
 let mode: i32 = 0;
 let keepPositive: f32 = 1;
@@ -120,25 +184,28 @@ export function init(header: usize): void {
 	cardA = <usize>load<u32>(header + 48);
 	cardB = <usize>load<u32>(header + 52);
 	strength = <usize>load<u32>(header + 56);
-	tieStart = <usize>load<u32>(header + 60);
-	ties = <usize>load<u32>(header + 64);
-	upRound = <usize>load<u32>(header + 68);
-	upStart = <usize>load<u32>(header + 72);
-	up = <usize>load<u32>(header + 76);
-	sameStart = <usize>load<u32>(header + 80);
-	same = <usize>load<u32>(header + 84);
-	childRound = <usize>load<u32>(header + 88);
-	childStart = <usize>load<u32>(header + 92);
-	orbitRound = <usize>load<u32>(header + 96);
-	orbitStart = <usize>load<u32>(header + 100);
-	runoutWeight = <usize>load<u32>(header + 104);
-	regret = <usize>load<u32>(header + 108);
-	sums = <usize>load<u32>(header + 112);
-	buffers = <usize>load<u32>(header + 116);
-	depthBytes = <usize>load<u32>(header + 120);
-	rowBytes = <usize>load<u32>(header + 124);
-	cardSums = <usize>load<u32>(header + 128);
-	chipScale = <f64>load<u32>(header + 132);
+	packed = <usize>load<u32>(header + 60);
+	multiplicity = <usize>load<u32>(header + 64);
+	memberStart = <usize>load<u32>(header + 68);
+	memberA = <usize>load<u32>(header + 72);
+	memberB = <usize>load<u32>(header + 76);
+	upRound = <usize>load<u32>(header + 80);
+	upStart = <usize>load<u32>(header + 84);
+	up = <usize>load<u32>(header + 88);
+	sameStart = <usize>load<u32>(header + 92);
+	same = <usize>load<u32>(header + 96);
+	childRound = <usize>load<u32>(header + 100);
+	childStart = <usize>load<u32>(header + 104);
+	orbitRound = <usize>load<u32>(header + 108);
+	orbitStart = <usize>load<u32>(header + 112);
+	runoutWeight = <usize>load<u32>(header + 116);
+	regret = <usize>load<u32>(header + 120);
+	sums = <usize>load<u32>(header + 124);
+	buffers = <usize>load<u32>(header + 128);
+	depthBytes = <usize>load<u32>(header + 132);
+	rowBytes = <usize>load<u32>(header + 136);
+	cardSums = <usize>load<u32>(header + 140);
+	chipScale = <f64>load<u32>(header + 144);
 }
 
 // Per-depth buffers, each `rowBytes` apart: value, reach for player 0, reach
@@ -222,12 +289,15 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 		let signed = <f64>i32At(payoff, node);
 		if (traverser === 1) signed = -signed;
 		const scale = signed * load<f64>(runoutWeight + (<usize>r << 3)) / chipScale;
-		fold(reachOpp, oppFrom, oppCount, myFrom, myCount, i32At(sameStart, mySlot), scale, out);
+		const sameFrom = i32At(sameStart, mySlot);
+		if (load<u8>(packed + <usize>oppSlot)) foldPacked(reachOpp, oppFrom, oppCount, myFrom, myCount, sameFrom, scale, out);
+		else fold(reachOpp, oppFrom, oppCount, myFrom, myCount, sameFrom, scale, out);
 		return out;
 	}
 	if (nodeKind > FOLD) {
 		const scale = <f64>i32At(payoff, node) * load<f64>(runoutWeight + (<usize>r << 3)) / chipScale;
-		showdown(reachOpp, oppFrom, oppCount, myFrom, myCount, scale, out);
+		if (load<u8>(packed + <usize>oppSlot)) showdownPacked(reachOpp, oppFrom, oppCount, myFrom, myCount, scale, out);
+		else showdown(reachOpp, oppFrom, oppCount, myFrom, myCount, scale, out);
 		return out;
 	}
 
@@ -260,6 +330,9 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 			if (shardStart > first) first = shardStart;
 			if (shardEnd < last) last = shardEnd;
 		}
+		// Chance sampling decides how each deal's values are had; how they
+		// spread over the deal's mirror images is the same either way.
+		const sampleHere = sampleRounds !== 0 && mode === TRAIN && applyUpdates && ((sampleRounds >> nextRound) & 1) !== 0;
 		for (let childBoard = first; childBoard < last; childBoard++) {
 			const childSlot = (nextBase + childBoard) * 2;
 			const nMe = i32At(listCount, childSlot + traverser);
@@ -269,7 +342,9 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 			let value: usize = 0;
 			for (let m = firstMember; m < membersEnd; m++) {
 				const upMe = up + (<usize>i32At(ups, m * 2 + traverser) << 1);
-				if (m === firstMember) {
+				if (m === firstMember && sampleHere) {
+					value = sampledValue(traverser, node, child, childSlot, childBoard, upMe, up + (<usize>i32At(ups, m * 2 + opponent) << 1), reachMe, reachOpp, childMe, childOpp, depth);
+				} else if (m === firstMember) {
 					const upOpp = up + (<usize>i32At(ups, m * 2 + opponent) << 1);
 					for (let k = 0; k < nMe; k++) store<f32>(childMe + (<usize>k << 2), f32At(reachMe, <i32>load<u16>(upMe + (<usize>k << 1))));
 					for (let k = 0; k < nOpp; k++) store<f32>(childOpp + (<usize>k << 2), f32At(reachOpp, <i32>load<u16>(upOpp + (<usize>k << 1))));
@@ -277,10 +352,27 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 				}
 				// Reach is symmetric under the member's relabelling, so one
 				// walk serves every member; only the values are spread.
-				for (let k = 0; k < nMe; k++) {
-					const at = out + (<usize>load<u16>(upMe + (<usize>k << 1)) << 2);
-					store<f32>(at, load<f32>(at) + f32At(value, k));
+				if (load<u8>(packed + <usize>(childSlot + traverser))) {
+					// An entry stands for its whole orbit: weight it so, and
+					// share the parent's total among its own orbit below.
+					const weights = multiplicity + (<usize>i32At(listStart, childSlot + traverser) << 2);
+					for (let k = 0; k < nMe; k++) {
+						const at = out + (<usize>load<u16>(upMe + (<usize>k << 1)) << 2);
+						store<f32>(at, load<f32>(at) + f32At(value, k) * f32At(weights, k));
+					}
+				} else {
+					for (let k = 0; k < nMe; k++) {
+						const at = out + (<usize>load<u16>(upMe + (<usize>k << 1)) << 2);
+						store<f32>(at, load<f32>(at) + f32At(value, k));
+					}
 				}
+			}
+		}
+		if (load<u8>(packed + <usize>mySlot)) {
+			const weights = multiplicity + (<usize>myFrom << 2);
+			for (let i = 0; i < myCount; i++) {
+				const at = out + (<usize>i << 2);
+				store<f32>(at, load<f32>(at) / f32At(weights, i));
 			}
 		}
 		return out;
@@ -359,16 +451,72 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 		}
 	}
 
-	if (isTraverser && mode === TRAIN && applyUpdates) {
-		update(base, sumBase, actions, n, reachMe, strategy, actionValues, out);
-		const tieFrom = i32At(tieStart, listSlot);
-		const tieTo = i32At(tieStart, listSlot + 1);
-		if (tieFrom < tieTo) {
-			tie(base, actions, n, tieFrom, tieTo);
-			tie(sumBase, actions, n, tieFrom, tieTo);
+	if (isTraverser && mode === TRAIN && applyUpdates && sampleRounds !== 0 && dcfrRule) {
+		// A subtree sampling skipped missed those iterations' discounts;
+		// nothing was added meanwhile, so each sign held.
+		const block = lastUpdate + (<usize>(i32At(blockOffset, node) + board) << 2);
+		const savedPositive = keepPositive;
+		const savedNegative = keepNegative;
+		const savedSum = keepSum;
+		let positive = <f64>keepPositive;
+		let negative = <f64>keepNegative;
+		let sum = <f64>keepSum;
+		if (catchUp) {
+			for (let t = load<i32>(block) + 1; t < iteration; t++) {
+				// `dcfrFactors` in src/cfr.ts at α 1.5, β 0, γ 3, without
+				// pulling a general power function into the module.
+				const age: f64 = t > 2 ? <f64>(t - 2) : 0;
+				const grown = age * Math.sqrt(age);
+				const kept = <f64>(t - 1) / <f64>t;
+				positive *= grown / (grown + 1);
+				negative *= 0.5;
+				sum *= kept * kept * kept;
+			}
 		}
+		store<i32>(block, iteration);
+		keepPositive = <f32>positive;
+		keepNegative = <f32>negative;
+		keepSum = <f32>sum;
+		update(base, sumBase, actions, n, reachMe, strategy, actionValues, out);
+		keepPositive = savedPositive;
+		keepNegative = savedNegative;
+		keepSum = savedSum;
+	} else if (isTraverser && mode === TRAIN && applyUpdates) {
+		update(base, sumBase, actions, n, reachMe, strategy, actionValues, out);
 	}
 	return out;
+}
+
+/**
+ * One deal's values in a sampled chance node's training walk, as
+ * `sampledValue` in src/cfr.ts: a deal not walked gives its baseline, the
+ * values it returned when last walked; a walked deal gives `b + (v - b) / p`
+ * and becomes the new baseline. A deal never walked yet is always walked.
+ */
+function sampledValue(
+	traverser: i32, node: i32, child: i32, childSlot: i32, childBoard: i32, upMe: usize, upOpp: usize,
+	reachMe: usize, reachOpp: usize, childMe: usize, childOpp: usize, depth: i32,
+): usize {
+	const opponent = 1 - traverser;
+	const nMe = i32At(listCount, childSlot + traverser);
+	const at = baseline + (<usize>(i32At(baseOffset, node) + i32At(boardOffset, childSlot + traverser)) << 2);
+	const walkAt = lastWalk + (<usize>(i32At(walkOffset, node) + childBoard * 2 + traverser) << 2);
+	const fresh = load<i32>(walkAt) === 0;
+	if (!fresh && !sampled(node, childBoard, iteration)) return at;
+	const nOpp = i32At(listCount, childSlot + opponent);
+	for (let k = 0; k < nMe; k++) store<f32>(childMe + (<usize>k << 2), f32At(reachMe, <i32>load<u16>(upMe + (<usize>k << 1))));
+	for (let k = 0; k < nOpp; k++) store<f32>(childOpp + (<usize>k << 2), f32At(reachOpp, <i32>load<u16>(upOpp + (<usize>k << 1))));
+	const value = traverse(traverser, child, childBoard, childMe, childOpp, depth + 1);
+	for (let k = 0; k < nMe; k++) {
+		const o = <usize>k << 2;
+		const v = load<f32>(value + o);
+		const b = load<f32>(at + o);
+		store<f32>(at + o, v);
+		// `v + (w - 1)(v - b)` is `b + w(v - b)`, and exactly `v` at w = 1.
+		if (!fresh) store<f32>(value + o, v + (sampleWeight - 1) * (v - b));
+	}
+	store<i32>(walkAt, iteration);
+	return value;
 }
 
 /** Current strategy: each hand's share of positive regret, uniform where none. */
@@ -414,7 +562,7 @@ function matchAverage(sumBase: usize, regretBase: usize, actions: i32, n: i32, s
 			store<f32>(total + o, load<f32>(total + o) + v);
 		}
 	}
-	// Hands that never reached this node fall back to the current strategy.
+	// Hands with no sum here (under CFR+, never reached) fall back to the current strategy.
 	for (let i = 0; i < n; i++) {
 		const o = <usize>i << 2;
 		if (load<f32>(total + o) > 0) continue;
@@ -470,7 +618,11 @@ function update(base: usize, sumBase: usize, actions: i32, n: i32, reachMe: usiz
 			let updated = f32x4.add(f32x4.mul(r, factor), f32x4.sub(v128.load(actionValues + row + o), v128.load(value + o)));
 			if (clamp) updated = f32x4.max(updated, zero);
 			v128.store(base + row + o, updated);
-			const s = f32x4.add(f32x4.mul(v128.load(sumBase + row + o), keep), f32x4.mul(w, f32x4.mul(v128.load(reachMe + o), v128.load(strategy + row + o))));
+			// DCFR adds the strategy unweighted by own reach (issue #8); CFR+ keeps the weight.
+			let played = v128.load(strategy + row + o);
+			if (clamp) played = f32x4.mul(v128.load(reachMe + o), played);
+			const added = f32x4.mul(w, played);
+			const s = f32x4.add(f32x4.mul(v128.load(sumBase + row + o), keep), added);
 			v128.store(sumBase + row + o, s);
 		}
 		for (; i < n; i++) {
@@ -479,23 +631,9 @@ function update(base: usize, sumBase: usize, actions: i32, n: i32, reachMe: usiz
 			let updated = r * (r > 0 ? keepPositive : keepNegative) + load<f32>(actionValues + row + o) - load<f32>(value + o);
 			if (clamp && updated < 0) updated = 0;
 			store<f32>(base + row + o, updated);
-			store<f32>(sumBase + row + o, load<f32>(sumBase + row + o) * keepSum + weight * load<f32>(reachMe + o) * load<f32>(strategy + row + o));
-		}
-	}
-}
-
-/** Average each mirror class's entries, as `tieMirrors` does. */
-function tie(base: usize, actions: i32, n: i32, from: i32, to: i32): void {
-	const rowStride = <usize>n << 2;
-	for (let a = 0; a < actions; a++) {
-		const row = base + <usize>a * rowStride;
-		for (let k = from; k < to; ) {
-			const size = i32At(ties, k);
-			let total: f32 = 0;
-			for (let j = 1; j <= size; j++) total += load<f32>(row + (<usize>i32At(ties, k + j) << 2));
-			const mean = total / <f32>size;
-			for (let j = 1; j <= size; j++) store<f32>(row + (<usize>i32At(ties, k + j) << 2), mean);
-			k += size + 1;
+			let played = load<f32>(strategy + row + o);
+			if (clamp) played = load<f32>(reachMe + o) * played;
+			store<f32>(sumBase + row + o, load<f32>(sumBase + row + o) * keepSum + weight * played);
 		}
 	}
 }
@@ -555,6 +693,68 @@ function showdown(reachOpp: usize, oppFrom: i32, oppCount: i32, myFrom: i32, myC
 			store<f64>(a, load<f64>(a) + v);
 			const b = cardSums + (<usize>load<u8>(cardB + <usize>(oppFrom + j)) << 3);
 			store<f64>(b, load<f64>(b) + v);
+			j--;
+		}
+		const lose = running
+			- (load<f64>(cardSums + (<usize>load<u8>(cardA + <usize>(myFrom + i)) << 3))
+				+ load<f64>(cardSums + (<usize>load<u8>(cardB + <usize>(myFrom + i)) << 3)));
+		store<f32>(out + (<usize>i << 2), <f32>(scale * (load<f64>(wins + (<usize>i << 3)) - lose)));
+	}
+	memory.fill(cardSums, 0, 52 * 8);
+}
+
+/**
+ * Packed lists' card-removal sums: an entry's reach counted once per hand it
+ * stands for, on that hand's own cards. Returns the reach times their number.
+ */
+@inline function addMembers(v: f64, entry: i32): f64 {
+	const from = i32At(memberStart, entry);
+	const to = i32At(memberStart, entry + 1);
+	for (let m = from; m < to; m++) {
+		const a = cardSums + (<usize>load<u8>(memberA + <usize>m) << 3);
+		store<f64>(a, load<f64>(a) + v);
+		const b = cardSums + (<usize>load<u8>(memberB + <usize>m) << 3);
+		store<f64>(b, load<f64>(b) + v);
+	}
+	return v * <f64>(to - from);
+}
+
+/** `fold` over packed lists, as `foldValuesPacked`. */
+function foldPacked(reachOpp: usize, oppFrom: i32, oppCount: i32, myFrom: i32, myCount: i32, sameFrom: i32, scale: f64, out: usize): void {
+	let total: f64 = 0;
+	for (let j = 0; j < oppCount; j++) total += addMembers(<f64>f32At(reachOpp, j), oppFrom + j);
+	for (let i = 0; i < myCount; i++) {
+		const twin = i32At(same, sameFrom + i);
+		const both: f64 = twin >= 0 ? <f64>f32At(reachOpp, twin) : 0;
+		const blocked = load<f64>(cardSums + (<usize>load<u8>(cardA + <usize>(myFrom + i)) << 3))
+			+ load<f64>(cardSums + (<usize>load<u8>(cardB + <usize>(myFrom + i)) << 3)) - both;
+		store<f32>(out + (<usize>i << 2), <f32>(scale * (total - blocked)));
+	}
+	memory.fill(cardSums, 0, 52 * 8);
+}
+
+/** `showdown` over packed lists, as `showdownValuesPacked`. */
+function showdownPacked(reachOpp: usize, oppFrom: i32, oppCount: i32, myFrom: i32, myCount: i32, scale: f64, out: usize): void {
+	let running: f64 = 0;
+	let j = 0;
+	const wins = cardSums + 52 * 8;
+	for (let i = 0; i < myCount; i++) {
+		const level = i32At(strength, myFrom + i);
+		while (j < oppCount && i32At(strength, oppFrom + j) < level) {
+			running += addMembers(<f64>f32At(reachOpp, j), oppFrom + j);
+			j++;
+		}
+		store<f64>(wins + (<usize>i << 3), running
+			- (load<f64>(cardSums + (<usize>load<u8>(cardA + <usize>(myFrom + i)) << 3))
+				+ load<f64>(cardSums + (<usize>load<u8>(cardB + <usize>(myFrom + i)) << 3))));
+	}
+	memory.fill(cardSums, 0, 52 * 8);
+	running = 0;
+	j = oppCount - 1;
+	for (let i = myCount - 1; i >= 0; i--) {
+		const level = i32At(strength, myFrom + i);
+		while (j >= 0 && i32At(strength, oppFrom + j) > level) {
+			running += addMembers(<f64>f32At(reachOpp, j), oppFrom + j);
 			j--;
 		}
 		const lose = running
