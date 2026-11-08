@@ -13,3 +13,4 @@
 {"url":"https://claude.ai/code/session_014RSNFkUKQ89FbGd831AEqp","title":"Per-hand root EV accessor, with an opt-in current-profile estimate","issue":35,"state":"active","updated":"2026-11-08T15:25:48.594Z"}
 {"url":null,"title":"Average strategy is near-uniform for hands that rarely reach a node (own-reach-weighted sums)","issue":8,"state":"active","updated":"2026-11-08T16:22:55.833Z"}
 {"url":null,"title":"Threaded solves hang if a worker thread dies mid-iteration","issue":37,"state":"active","updated":"2026-11-08T16:23:00.187Z"}
+{"url":null,"title":"Speed: WebGPU kernel prototype for the river showdown (route 2 of #29)","issue":39,"state":"active","updated":"2026-11-08T16:23:07.939Z"}
