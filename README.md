@@ -561,6 +561,13 @@ next by 0.5% of pot in the reference, that still prefer it:
 | compact | 0.81%, 0.23%, 100% | 0.83%, 1.09%, 100% |
 | compact, `sums: false, blockScale: true`, CFR+ | 4.76%, 0.17%, 78% | 4.08%, 1.28%, 62% |
 
+It combines with `shareHistories` (one set of storage for betting lines that reach the same
+pot), and the pair is what brings T under 2 GiB: 0.99 GiB with sums, peaking at 1.5 GB on four
+threads, and 0.37 GiB with `sums: false, blockScale: true`. Sharing is lossy on its own; on
+T₀ at 160 iterations it was 9.5% of pot exploitable in 1.06 GiB at 32 bits, with root EVs
+0.66% of pot off and 97% of clear bet-size choices kept; with compact storage added, 10.5%,
+0.86% and 84%, in 0.36 GiB.
+
 It runs on the JavaScript engine, like 16-bit storage, on Node worker threads but on one
 thread in the browser. In headless Chromium on one thread, monotone T₀ took 10.1 s an
 iteration compact, 8.1 s at 16 bits and 2.3 s at 32 bits on WebAssembly; T itself, at
