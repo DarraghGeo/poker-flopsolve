@@ -108,6 +108,9 @@ export interface EngineWorkerSetup {
 /** How a pool starts its workers; the platform layer supplies it. */
 export type SpawnEngineWorker = (setup: EngineWorkerSetup, onError: (error: Error) => void) => { terminate(): void };
 
+/** The most memory the engine lays out: just under wasm32's 4 GB. */
+const MAX_MEMORY = 0xffff0000;
+
 /**
  * Control slots shared with engine workers. `failed` is set, never cleared,
  * once any thread's part of a step threw: the main thread waits in
@@ -129,6 +132,11 @@ export function createEngine(
 	const compiledModule = compiledEngine(shared ? 'shared' : 'plain');
 	if (!compiledModule || !wasm) return null;
 	const { tree, runouts, layout, active, hands } = input;
+	// Its two 32-bit accumulators alone would pass wasm32's 4 GB, so no
+	// engine; checked before anything is built. Such a layout is also the
+	// only kind that holds offsets as Float64, which the engine's 32-bit
+	// offset table could not take.
+	if (layout.totalSlots * 8 > MAX_MEMORY || !(layout.offset instanceof Int32Array)) return null;
 	const threads = pool ? pool.threads : 1;
 
 	const flatten = (parts: readonly Int32Array[]): [Int32Array, Int32Array] => {
@@ -197,7 +205,7 @@ export function createEngine(
 		offsets.push(total);
 		total += piece.bytes;
 	}
-	if (total > 0xffff0000) return null; // past wasm32's 4 GB
+	if (total > MAX_MEMORY) return null;
 	const pages = Math.ceil(total / 65536) + 1;
 	const memory = shared ? new wasm.Memory({ initial: pages, maximum: pages, shared: true }) : new wasm.Memory({ initial: pages });
 	const bytes = new Uint8Array(memory.buffer);
