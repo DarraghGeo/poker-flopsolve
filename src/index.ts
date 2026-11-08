@@ -24,6 +24,7 @@ import { buildHandSpace } from './hands.ts';
 import { createEngine } from './engine.ts';
 import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
+import { aliasHistories } from './history-merge.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
 import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit } from './platform/node.ts';
@@ -157,6 +158,39 @@ export interface SpotConfig {
 	 * strategy in the real game, every card dealt. Default false.
 	 */
 	readonly runoutBuckets?: boolean | number;
+	/**
+	 * Share turn and river storage between betting histories that reach the
+	 * same round start, an approximation (issue #49). Every flop line gets
+	 * its own copy of the turn and river below it, yet with pot-fraction sizes
+	 * many lines meet: check, bet, call and bet, call reach the same pot, and
+	 * so does every raise line taken in either order. Their subtrees are
+	 * identical, so their nodes can keep one set of regrets and strategy sums.
+	 * Each history is still walked with its own reach, so an iteration costs
+	 * the same; only storage shrinks. What is lost is recall: a player plays
+	 * one strategy for every line that met, whatever range each brought.
+	 *
+	 * `true` shares exact meetings, from the turn on. `{ spr: w }` also shares
+	 * subtrees of the same shape whose stack-to-pot ratio falls in one bucket
+	 * of log-width `w`, their amounts and payoffs different. `fromRound` is
+	 * the first round shared, counted from the spot's first: from a flop, 2
+	 * shares only the river. The strategy is one for the full game, so
+	 * exploitability is measured exactly. Default false.
+	 */
+	readonly shareHistories?: boolean | ShareHistories;
+}
+
+/** See `SpotConfig.shareHistories`. */
+export interface ShareHistories {
+	/** Also share subtrees of one shape whose SPR falls in one bucket of this log-width. */
+	readonly spr?: number;
+	/** First round shared, counted from the spot's first. Default 1. */
+	readonly fromRound?: number;
+	/**
+	 * How a shared node weighs the histories meeting in it. 'reach' (the
+	 * default) weights each one's regret by how often the acting hand plays
+	 * into it; 'counterfactual' adds them as plain CFR would.
+	 */
+	readonly weighting?: 'reach' | 'counterfactual';
 }
 
 /** Projected cost of solving a spot. */
@@ -225,6 +259,8 @@ export interface Spot {
 	readonly stackUnits: number;
 	/** The configuration this was built from, so a worker can rebuild it. */
 	readonly source: SpotConfig;
+	/** Each node's storage owner under `shareHistories`; unset without it. */
+	readonly historyAlias?: Int32Array;
 	/**
 	 * Find the stored board standing for a real one, and how hands relabel
 	 * onto it. Board indices everywhere else — `strategyAt`, `reachAt`,
@@ -329,11 +365,14 @@ export function defineSpot(config: SpotConfig): Spot {
 		runouts,
 	);
 
-	const layout = buildLayout(tree, runouts, players, 4);
+	const historyAlias = config.shareHistories ? shareHistories(tree, runouts, config, chipScale) : undefined;
+	const layout = buildLayout(tree, runouts, players, 4, historyAlias, reachWeighted(config));
 	const last = runouts.rounds - 1;
 	const showdownBytes = runouts.counts[last] * (2 * COMBOS + COMBOS + 1) * 2;
 	const bytes = layout.bytes + showdownBytes;
-	const compressedBytes = buildLayout(tree, runouts, players, 2).bytes + showdownBytes;
+	const compressedBytes = buildLayout(tree, runouts, players, 2, historyAlias).bytes + showdownBytes;
+	// Shared storage is walked once per history all the same.
+	const walkedSlots = historyAlias ? buildLayout(tree, runouts, players, 4).totalSlots : layout.totalSlots;
 
 	const suggestions: string[] = [];
 	if (compressedBytes > maxBytes) {
@@ -353,7 +392,7 @@ export function defineSpot(config: SpotConfig): Spot {
 		totalSlots: layout.totalSlots,
 		bytes,
 		compressedBytes,
-		secondsPerThousandIterations: (layout.totalSlots * 4 * 1000) / OPS_PER_SECOND,
+		secondsPerThousandIterations: (walkedSlots * 4 * 1000) / OPS_PER_SECOND,
 		fits: compressedBytes <= maxBytes,
 		suggestions,
 	};
@@ -369,10 +408,34 @@ export function defineSpot(config: SpotConfig): Spot {
 		potUnits: Math.round(config.pot * chipScale),
 		stackUnits: Math.round(config.stack * chipScale),
 		source: config,
+		...(historyAlias ? { historyAlias } : {}),
 		resolveBoard(cards) {
 			return resolveBoard(runouts, typeof cards === 'string' ? parseCards(cards) : cards);
 		},
 	};
+}
+
+/** Whether shared nodes weight regrets by own reach; see `ShareHistories.weighting`. */
+export function reachWeighted(config: SpotConfig): boolean {
+	const asked = config.shareHistories;
+	return !!asked && (asked === true || asked.weighting !== 'counterfactual');
+}
+
+/** `SpotConfig.shareHistories` resolved into each node's storage owner. */
+function shareHistories(
+	tree: Tree,
+	runouts: Runouts,
+	config: SpotConfig,
+	chipScale: number,
+): Int32Array {
+	const asked = config.shareHistories === true ? {} : config.shareHistories || {};
+	const width = asked.spr;
+	if (width !== undefined && !(width > 0)) throw new Error(`shareHistories.spr must be positive, got ${width}`);
+	return aliasHistories(
+		tree, runouts,
+		{ key: width === undefined ? { kind: 'exact' } : { kind: 'spr', width }, fromRound: asked.fromRound ?? 1 },
+		Math.round(config.stack * chipScale),
+	).alias;
 }
 
 /** Solver tuning. */
@@ -936,7 +999,9 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 	const showdown = buildShowdownTable(spot.runouts, relevant);
-	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
+	const layout = buildLayout(
+		spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], spot.historyAlias, reachWeighted(spot.source),
+	);
 	const weights = runoutWeights(spot.runouts);
 
 	// The WebAssembly engine, where it applies: 32-bit storage and a platform
@@ -1014,6 +1079,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		dcfr: (options.algorithm ?? 'dcfr') === 'dcfr',
 	};
 	if (samplingPlan) ctx.sampling = makeSampling(samplingPlan, engine?.sampling ?? undefined);
+	if (layout.shared) ctx.discounted = engine?.discounted ?? new Int32Array(layout.blocks);
 
 	// Seeded before any worker starts, so they all see the inherited values.
 	let warm: WarmStartReport | null = null;

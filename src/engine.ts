@@ -80,6 +80,8 @@ export interface Engine {
 	readonly strategySum: Float32Array;
 	/** Chance sampling's state, as views onto the engine's memory; null without sampling. */
 	readonly sampling: { baseline: Float32Array; lastWalk: Int32Array; lastUpdate: Int32Array } | null;
+	/** With shared storage, `Context.discounted` as a view onto the engine's memory; else null. */
+	readonly discounted: Int32Array | null;
 	/** Install as the solver's root traversal; `dcfr` picks the update rule. */
 	root(dcfr: boolean): RootTraversal;
 	/** Release worker threads, if any. */
@@ -103,6 +105,8 @@ export interface EngineWorkerSetup {
 	readonly stride: number;
 	readonly control: SharedArrayBuffer;
 	readonly settings: SharedArrayBuffer;
+	/** With shared storage: where the discount marks, the block table and the weighted nodes (or 0) sit. */
+	readonly shared?: readonly [number, number, number];
 }
 
 /** How a pool starts its workers; the platform layer supplies it. */
@@ -186,6 +190,14 @@ export function createEngine(
 				lastUpdate: add(null, plan.blocks * 4),
 			}
 		: null;
+	// History sharing's once-an-iteration discount marks, only when storage is shared.
+	const share = layout.shared
+		? {
+				marks: add(null, layout.blocks * 4),
+				blockOffset: sample ? sample.blockOffset : add(layout.blockOffset),
+				weighted: layout.reachWeighted ? add(layout.reachWeighted) : -1,
+			}
+		: null;
 
 	const offsets: number[] = [];
 	let total = 64;
@@ -230,6 +242,10 @@ export function createEngine(
 		};
 	}
 
+	const weightedAt = share && share.weighted >= 0 ? offsets[share.weighted] : 0;
+	if (share) exports.setShared(offsets[share.marks], offsets[share.blockOffset], weightedAt);
+	const discounted = share ? new Int32Array(memory.buffer, offsets[share.marks], layout.blocks) : null;
+
 	const regret = new Float32Array(memory.buffer, offsets[REGRET], layout.totalSlots);
 	const strategySum = new Float32Array(memory.buffer, offsets[SUMS], layout.totalSlots);
 	const me = new Float32Array(memory.buffer, offsets[own[0].rootMe], stride);
@@ -268,6 +284,7 @@ export function createEngine(
 				rootMe: offsets[own[w].rootMe], rootOpp: offsets[own[w].rootOpp],
 				partial: offsets[partials] + (w - 1) * entries * rowBytes,
 				stride, control: controlBuffer, settings: settingsBuffer,
+				...(share ? { shared: [offsets[share.marks], offsets[share.blockOffset], weightedAt] as const } : {}),
 			};
 			workers.push(pool.spawn(setup, (error) => {
 				failure ??= error;
@@ -304,7 +321,8 @@ export function createEngine(
 			for (let i = 0; i < count; i++) into[i] = weights[active.list[from + i]];
 		}
 		const [positive, negative, sum, weight, clamp] = settingsFor(mode, iterWeight, dcfr);
-		if (plan) exports.setIteration(mode === Mode.Train ? iterWeight : 0, dcfr ? 1 : 0);
+		const iteration = mode === Mode.Train ? iterWeight : 0;
+		if (plan || share) exports.setIteration(iteration, dcfr ? 1 : 0);
 		let at: number;
 		if (!pool) {
 			if (apply === 0) exports.setPhase(0, 0);
@@ -320,7 +338,7 @@ export function createEngine(
 			exports.setPhase(1, 0);
 			exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
 			// Every thread walks its slice of the split round.
-			settings!.set([positive, negative, sum, weight, clamp, apply]);
+			settings!.set([positive, negative, sum, weight, clamp, apply, iteration, dcfr ? 1 : 0]);
 			Atomics.store(control!, ENGINE_CONTROL.done, 0);
 			Atomics.store(control!, ENGINE_CONTROL.mode, mode);
 			Atomics.store(control!, ENGINE_CONTROL.traverser, traverser);
@@ -363,6 +381,7 @@ export function createEngine(
 		regret,
 		strategySum,
 		sampling: samplingViews,
+		discounted,
 		threads,
 		root(dcfr) {
 			return (mode, traverser, iterWeight) => run(mode, traverser, iterWeight, dcfr);
@@ -390,6 +409,7 @@ export interface EngineExports {
 		baselines: number, lastWalks: number, lastUpdates: number, blockOffsets: number,
 	): void;
 	setIteration(t: number, dcfr: number): void;
+	setShared(marks: number, blockOffsets: number, weighted: number): void;
 	run(mode: number, traverser: number, me: number, opp: number, positive: number, negative: number, sum: number, weight: number, clamp: number): number;
 	runChance(mode: number, traverser: number, node: number, me: number, opp: number, positive: number, negative: number, sum: number, weight: number, clamp: number): number;
 }

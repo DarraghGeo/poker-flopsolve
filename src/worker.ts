@@ -25,7 +25,7 @@ import {
 	matchupMass,
 	runoutWeights,
 } from './cfr.ts';
-import { defineSpot, makeRegretStore, makeSumStore, PRECISION_BYTES } from './index.ts';
+import { defineSpot, makeRegretStore, makeSumStore, PRECISION_BYTES, reachWeighted } from './index.ts';
 import type { Precision, SpotConfig } from './index.ts';
 import { buildShowdownTable } from './showdown.ts';
 import { buildHandSpace } from './hands.ts';
@@ -46,7 +46,7 @@ for (const combo of spot.players[0].combos) relevant[combo] = 1;
 for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 const weights = runoutWeights(spot.runouts);
-const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
+const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], spot.historyAlias, reachWeighted(config));
 
 const showdown = buildShowdownTable(spot.runouts, relevant);
 const active = buildActiveLists(spot.runouts, spot.players, showdown);
@@ -76,6 +76,8 @@ const ctx: Context = {
 	entryIndexOf: null,
 	expandOrbits: false,
 	simd,
+	// This worker's runouts are its own, so are their blocks and the marks on them.
+	discounted: layout.shared ? new Int32Array(layout.blocks) : null,
 };
 
 const solver = makeSolver(ctx);

@@ -52,6 +52,8 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 		setShard(round: number, start: number, end: number): void;
 		setExchange(entries: number, reach: number, values: number, stride: number): void;
 		setPhase(phase: number, apply: number): void;
+		setShared(marks: number, blockOffsets: number, weighted: number): void;
+		setIteration(t: number, dcfr: number): void;
 		runChance(
 			mode: number, traverser: number, node: number, me: number, opp: number,
 			positive: number, negative: number, sum: number, weight: number, clamp: number,
@@ -62,6 +64,8 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 	engine.setExchange(setup.exchange[0], setup.exchange[1], setup.exchange[2], setup.exchange[3]);
 	engine.setShard(setup.shard[0], setup.shard[1], setup.shard[2]);
 	engine.setPhase(0, 1);
+	const shared = setup.shared;
+	if (shared) engine.setShared(shared[0], shared[1], shared[2]);
 
 	const control = new Int32Array(setup.control);
 	const settings = new Float64Array(setup.settings);
@@ -90,6 +94,8 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 		const clamp = settings[4];
 		// Off for a current-profile read, which updates nothing.
 		engine.setPhase(0, settings[5]);
+		// Shared storage discounts by iteration, so the thread needs to know which.
+		if (shared) engine.setIteration(settings[6], settings[7]);
 		for (let entry = 0; entry < entries; entry++) {
 			const slot = reach + entry * 2 * rowBytes;
 			const out = engine.runChance(
