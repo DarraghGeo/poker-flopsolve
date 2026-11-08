@@ -817,6 +817,24 @@ export interface Approximations {
 	 *   52–68. At most 15% fewer iterations on some spots and more on others,
 	 *   for thousands of precomputed solves per tree and archetype, rebuilt
 	 *   whenever the defaults change.
+	 *
+	 * Out-of-core river storage (#55) — the flop and turn in memory, the
+	 * river's accumulators in an Origin Private File System file paged through
+	 * one buffer, one turn card of one turn chance node at a time and in file
+	 * order — was built, measured and is not offered. It is exact (bit for bit
+	 * at 32 bits) and fits the round's target spot T (AsKh7d, three sizes a
+	 * street, 8.7 GiB at 16 bits) in a tab: 0.33 GiB peak in headless
+	 * Chromium against a 10 GiB OPFS quota, with I/O 5–8% of each iteration
+	 * (sequential reads 3–4.5 GiB/s, read and write back about 1 GiB/s). What
+	 * it cannot change is T's compute: 81 s an iteration on one thread, and
+	 * a few hundred iterations to 0.3% of pot (T₀, smaller, was still at 3.8%
+	 * after 80), so hours per solve where the bar was two minutes. Each
+	 * iteration also rewrites the whole river file, terabytes per solve on a
+	 * laptop SSD, and a private window keeps OPFS in memory and failed before
+	 * 1 GiB. CFR-D, re-solving every river subgame from the trunk's ranges
+	 * each iteration, would cost tens of times more and was not built. The
+	 * implementation is in this repository's history (commit 0f80fcc);
+	 * `bench/ooc/` keeps the OPFS throughput and sizing benchmarks.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
