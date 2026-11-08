@@ -102,7 +102,14 @@ export function restrictTree(tree: Tree, keep: Map<number, number>): { tree: Tre
 	};
 }
 
-/** A spot whose tree is `config`'s with the given prefix forced. */
+/**
+ * A spot whose tree is `config`'s with the given prefix forced.
+ *
+ * Built from the full game's spot, so `config` must fit its own `maxBytes`
+ * (the bench sets it high), and `source` stays the full game's: only the
+ * WebAssembly engine, which takes the tree as given, may run it on several
+ * threads. JavaScript workers rebuild the spot from `source`.
+ */
 export function pieceSpot(config: SpotConfig, keep: Map<number, number>, oop: Float64Array, ip: Float64Array): Spot {
 	const full = defineSpot({ ...config, oop, ip });
 	const { tree } = restrictTree(full.tree, keep);
@@ -112,7 +119,7 @@ export function pieceSpot(config: SpotConfig, keep: Map<number, number>, oop: Fl
 	return {
 		...full,
 		tree,
-		estimate: { ...full.estimate, decisionNodes: tree.decisionNodes.length, bytes, compressedBytes },
+		estimate: { ...full.estimate, decisionNodes: tree.decisionNodes.length, totalSlots: buildLayout(tree, full.runouts, full.players, 4).totalSlots, bytes, compressedBytes },
 	};
 }
 
@@ -175,7 +182,10 @@ export interface GraftOptions {
 	/**
 	 * Which stitch the pieces are solved for each round: the latest RM+
 	 * strategy, as CFR-D does, or the running average so far, which moves
-	 * less from round to round. Default 'current'.
+	 * less from round to round. Regrets are measured against the stitch the
+	 * pieces were solved for, the only one whose values the round has, so
+	 * 'average' is a fictitious-play-like variant rather than RM+ proper;
+	 * measured, it did better than 'current'. Default 'current'.
 	 */
 	readonly play?: 'current' | 'average';
 	/** Called after each piece solves. */
@@ -200,11 +210,9 @@ export interface GraftResult {
 	readonly strategy: [Float64Array[], Float64Array[]];
 	/**
 	 * Per-hand counterfactual values from the last round: OOP's of each root
-	 * action, IP's of each action after a check, and IP's of facing each OOP
-	 * bet (indexed like OOP's actions; the check entry is IP's value after a
-	 * check under its own stitch).
+	 * action, and IP's of each action after a check.
 	 */
-	readonly values: { oop: Float64Array[]; ipAfterCheck: Float64Array[]; ipFacing: Float64Array[] };
+	readonly values: { oop: Float64Array[]; ipAfterCheck: Float64Array[] };
 	/** Largest storage of any one run (blueprint or piece), estimated bytes at 32 bits. */
 	readonly peakBytes: number;
 	readonly pieces: PieceInfo[];
@@ -274,7 +282,6 @@ export function graftSolve(config: SpotConfig, options: GraftOptions): GraftResu
 	const values: GraftResult['values'] = {
 		oop: Array.from({ length: A }, () => new Float64Array(COMBOS)),
 		ipAfterCheck: Array.from({ length: B }, () => new Float64Array(COMBOS)),
-		ipFacing: Array.from({ length: A }, () => new Float64Array(COMBOS)),
 	};
 	const schedule = (round: number): number =>
 		typeof options.pieceIterations === 'number'
@@ -312,6 +319,10 @@ export function graftSolve(config: SpotConfig, options: GraftOptions): GraftResu
 			const spot = pieceSpot(config, keep, oop, ip);
 			peakBytes = Math.max(peakBytes, spot.estimate.bytes);
 			const run = createRun(spot, { workers, precision: 'f32' });
+			if (run.engine !== 'wasm' && run.workers > 1) {
+				run.close();
+				throw new Error('a piece runs on several threads only on the WebAssembly engine');
+			}
 			run.step(iterations);
 			read(run);
 			if (last) options.onLastRound?.(run, name);
@@ -329,7 +340,6 @@ export function graftSolve(config: SpotConfig, options: GraftOptions): GraftResu
 			const ip = reach(1, null, false);
 			solvePiece(`P ${a.label}`, new Map([[root, a.edge]]), oop, ip, (run) => {
 				values.oop[a.edge] = cfv(run, 0, oop, ip);
-				values.ipFacing[a.edge] = cfv(run, 1, ip, reach(0, playing[0][a.edge], false));
 			});
 		}
 		values.oop[checkEdge] = new Float64Array(COMBOS);
@@ -342,9 +352,6 @@ export function graftSolve(config: SpotConfig, options: GraftOptions): GraftResu
 				values.ipAfterCheck[b.edge] = cfv(run, 1, ip, reach(0, playing[0][checkEdge], false));
 			});
 		}
-		// IP facing a check: its value after the check under its own stitch.
-		values.ipFacing[checkEdge] = new Float64Array(COMBOS);
-		for (const b of ipActions) for (let h = 0; h < COMBOS; h++) values.ipFacing[checkEdge][h] += playing[1][b.edge][h] * values.ipAfterCheck[b.edge][h];
 
 		if (last) break;
 		// RM+ at both opening decisions.

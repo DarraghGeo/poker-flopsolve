@@ -11,7 +11,7 @@
  * the preferred size agrees.
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { COMBOS, createRun, defineSpot } from '../../src/index.ts';
 import { assemble, graftSolve, writeOpenings } from './graft.ts';
 import { read, rootError } from './measure.ts';
@@ -26,6 +26,8 @@ const pieceIterations = Number(iterationsArg);
 const play = (playArg ?? 'average') as 'average' | 'current';
 const baseIterations = Number(baseArg ?? 0);
 
+// R's strategy sums, to assemble the pieces into and measure: measurement
+// only, not part of the method, and not in the peak it reports.
 const analysis = createRun(defineSpot(config), { analysisOnly: true });
 let assembleMs = 0;
 const result = graftSolve(config, {
@@ -50,6 +52,7 @@ function sizes(a: Opening, b: Opening): { mae: Record<string, number>; agree: nu
 		let sum = 0;
 		let mass = 0;
 		const j = b.actions.indexOf(label);
+		if (j < 0) throw new Error(`the reference has no ${label} bet`);
 		for (let h = 0; h < COMBOS; h++) {
 			const w = b.reach[h];
 			if (!(w > 0) || Number.isNaN(a.evs[i][h]) || Number.isNaN(b.evs[j][h])) continue;
@@ -72,8 +75,10 @@ function sizes(a: Opening, b: Opening): { mae: Record<string, number>; agree: nu
 			}
 			return top;
 		};
+		const [mine, theirs] = [best(a), best(b)];
+		if (mine === '' || theirs === '') continue;
 		mass += w;
-		if (best(a) === best(b)) agree += w;
+		if (mine === theirs) agree += w;
 	}
 	return { mae, agree: agree / mass };
 }
@@ -104,4 +109,5 @@ for (const game of ['R', 'T']) {
 		);
 	}
 }
+mkdirSync(new URL('../../scratch/graft/', import.meta.url), { recursive: true });
 writeFileSync(new URL(`../../scratch/graft/run-${boardName}-${rounds}-${pieceIterations}-${play}-${baseIterations}.json`, import.meta.url), JSON.stringify(out));

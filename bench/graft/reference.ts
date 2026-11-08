@@ -32,7 +32,7 @@ while (run.completed < 2000) {
 	exploit = run.exploitabilityPercent();
 	console.log(`  ${run.completed} iterations, ${((performance.now() - started) / 1000).toFixed(0)} s, ${exploit.toFixed(3)}% of pot`);
 	if (exploit <= target_) break;
-	next = run.completed + Math.max(5, Math.round(run.completed * 0.25));
+	next = Math.min(2000, run.completed + Math.max(5, Math.round(run.completed * 0.25)));
 }
 const seconds = (performance.now() - started) / 1000;
 const reading = read(run);
