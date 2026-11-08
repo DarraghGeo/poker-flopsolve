@@ -23,5 +23,5 @@
 {"url":null,"title":"Tree size: best-response pruning that frees subtree memory","issue":52,"state":"active","updated":"2026-11-08T16:23:42.982Z"}
 {"url":null,"title":"Tree size: coarser runouts in rare betting lines (history-dependent card abstraction)","issue":53,"state":"active","updated":"2026-11-08T16:23:47.004Z"}
 {"url":null,"title":"Tree size: action translation — shared response subtrees across bet sizes","issue":54,"state":"active","updated":"2026-11-08T16:23:51.128Z"}
-{"url":null,"title":"Tree size: out-of-core river storage in OPFS, or CFR-D decomposition","issue":55,"state":"active","updated":"2026-11-08T16:23:55.542Z"}
+{"url":"https://claude.ai/code/session_014RSNFi33oVGYsFswwGSYnW","title":"Tree size: out-of-core river storage in OPFS, or CFR-D decomposition","issue":55,"state":"active","updated":"2026-11-08T16:31:39.221Z"}
 {"url":"https://claude.ai/code/session_014RSNFhbc7RypgDUXzkqBiV","title":"Tree size: strategy grafting — solve one size at a time and stitch","issue":56,"state":"active","updated":"2026-11-08T16:31:39.221Z"}
