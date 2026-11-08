@@ -13,11 +13,11 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { COMBO_CARDS } from '../../src/cards.ts';
-import type { CompactStorage, SolveOptions, SolveRun } from '../../src/index.ts';
+import type { CompactStorage, SolveOptions, SolveRun, SpotConfig } from '../../src/index.ts';
 import { createRun, defineSpot } from '../../src/index.ts';
 import { STORAGE_SPOTS } from './spots.ts';
 
-export const VARIANTS: Record<string, { storage?: CompactStorage; options?: SolveOptions }> = {
+export const VARIANTS: Record<string, { storage?: CompactStorage; options?: SolveOptions; config?: Partial<SpotConfig> }> = {
 	f32: { options: { engine: 'js' } },
 	wasm: {},
 	i16: { options: { precision: 'i16' } },
@@ -45,6 +45,9 @@ export const VARIANTS: Record<string, { storage?: CompactStorage; options?: Solv
 	'i8-all-block-cfr+': { storage: { from: 0, blockScale: true, sums: false }, options: { algorithm: 'cfr+' } },
 	'i8s-all': { storage: { from: 0, sums: true } },
 	'i8s-all-cfr+': { storage: { from: 0, sums: true }, options: { algorithm: 'cfr+' } },
+	// Paired with shareHistories (#49).
+	'share-f32': { config: { shareHistories: true }, options: { engine: 'js' } },
+	'share-i8s': { config: { shareHistories: true }, storage: { from: 0, sums: true } },
 	'i6-all': { storage: { from: 0, steps: 31, sums: false } },
 	'i4-all': { storage: { from: 0, steps: 7, sums: false } },
 };
@@ -56,7 +59,7 @@ if (!variant) throw new Error(`unknown variant ${variantName}`);
 const workers = Number(workersArg ?? 1);
 const checkpoints = (checkpointsArg ?? '10,20,40,80,160').split(',').map(Number);
 
-const config = { ...STORAGE_SPOTS[spotName], ...(variant.storage ? { compactStorage: variant.storage } : {}) };
+const config = { ...STORAGE_SPOTS[spotName], ...variant.config, ...(variant.storage ? { compactStorage: variant.storage } : {}) };
 const spot = defineSpot(config);
 const pot = config.pot;
 const refPath = `bench/storage/results/${spotName}-ref.json`;
