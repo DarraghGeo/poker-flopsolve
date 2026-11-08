@@ -1,0 +1,7 @@
+f32 wasm on T0mono: wasm, 1.12 GiB storage, setup 0.1 s, 2.34 s/iteration
+i16 on T0mono: js, 0.57 GiB storage, setup 0.1 s, 8.14 s/iteration
+compact on T0mono: js, 0.38 GiB storage, setup 0.3 s, 10.11 s/iteration
+compact, sums: false, blockScale, cfr+ on T0mono: js, 0.14 GiB storage, setup 0.1 s, 8.01 s/iteration
+T compact, sums: false, blockScale, cfr+ on T: js, 2.18 GiB storage, setup 0.2 s, 95.25 s/iteration
+
+[exited with code 0]

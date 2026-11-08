@@ -499,25 +499,32 @@ because `maxBytes` is checked against it when the spot is defined
 profile, the regret-matched strategy the next iteration would play. It is cheaper again but
 much more exploitable on deep trees. `blockScale: true` takes the per-hand byte away too.
 
-| Storage | Bytes per slot | T (AsKh7d, 3 sizes, raises, SPR 18) | Monotone T₀ (Ks9s4s), 320 iterations: exploitability, root-EV error |
-|---|---|---|---|
-| 32-bit | 8.0 | 17.2 GiB | 0.71%, 1.19% of pot |
-| 16-bit | 4.0 | 8.7 GiB | |
-| compact | 2.75 | 5.9 GiB | 0.83%, 1.09% |
-| compact, `sums: false` (CFR+) | 1.38 | 3.0 GiB | 3.97%, 1.22% |
-| compact, `sums: false, blockScale: true` (CFR+) | 1.03 | 2.2 GiB | 4.08%, 1.28% |
+Storage and peak memory on issue #20's target spots (AsKh7d and Ks9s4s, pot 55, stack 975,
+three bet sizes, a 75% raise, three aggressions), measured on four threads in Node:
 
-On the bench flop (AsKh7d, one size) the default reaches 0.18%, 0.058% and 0.029% of pot at
-80, 160 and 320 iterations, where 32-bit storage reaches 0.18%, 0.052% and 0.016%. Rounding
-the sums leaves that small floor. Without sums, per-hand root EVs stay as close as the
-average's (closer under DCFR, as with `currentProfileEv`), but the strategy is 2 to 8 times
-as exploitable at equal iterations, and the bet size each hand prefers at the root agreed
-with the reference for only 62–82% of the hands where the choice is clear. CFR+, whose
-current profile swings less, is the better rule if you want the strategy; DCFR if you want
-the EVs.
+| Storage | Bytes per slot | T | Monotone T |
+|---|---|---|---|
+| 32-bit | 8.0 | 17.2 GiB | 3.75 GiB |
+| 16-bit | 4.0 | 8.7 GiB | 1.90 GiB |
+| compact | 2.75 | 5.9 GiB (peak 6.4 GB), 35 s an iteration | 1.29 GiB (peak 1.7 GB) |
+| compact, `sums: false, blockScale: true` | 1.03 | 2.2 GiB (peak 2.7 GB), 24 s an iteration | 0.48 GiB (peak 0.8 GB) |
+
+Accuracy at 320 iterations, against reference solves to 0.17% of pot (T₀: AsKh7d, three
+sizes, all-in as the only raise) and 0.22% (the same tree on Ks9s4s). Exploitability is
+true, in the full tree; EV error is per combination at the root, range-weighted, in % of pot;
+"same size" is the share of OOP's hands, among those whose best root bet size beats the
+next by 0.5% of pot in the reference, that still prefer it:
+
+| Storage | T₀: exploitability, EV error, same size | Monotone T₀ |
+|---|---|---|
+| 32-bit | 0.69% (the reference run itself) | 0.71%, 1.19%, 100% |
+| compact | 0.81%, 0.23%, 100% | 0.83%, 1.09%, 100% |
+| compact, `sums: false, blockScale: true`, CFR+ | 4.76%, 0.17%, 78% | 4.08%, 1.28%, 62% |
 
 It runs on the JavaScript engine, like 16-bit storage, on Node worker threads but on one
-thread in the browser. Storage is split into buffers under 1 GiB, because Chromium refuses
+thread in the browser. In headless Chromium on one thread, monotone T₀ took 10.1 s an
+iteration compact, 8.1 s at 16 bits and 2.3 s at 32 bits on WebAssembly; T itself, at
+`sums: false, blockScale: true`, allocated its 2.2 GiB and ran at 95 s an iteration. Storage is split into buffers under 1 GiB, because Chromium refuses
 an ArrayBuffer of 2 GiB or more. `bench/storage/` has the measurements and the variants
 that were left out: 4- and 6-bit regrets, a log scale, sparse regrets, and dropping sums on
 the later streets only.

@@ -184,11 +184,16 @@ export interface SpotConfig {
  *   of pot at 80 iterations against 0.18%, 0.058% at 160 against 0.052%; on
  *   the monotone flop with three sizes (Ks9s4s, issue #20's T₀) 1.87% at 160
  *   against 1.85%. Rounding the sums leaves a floor, near 0.03% of pot on the
- *   bench flop and 0.1% on a small, narrow-range spot.
+ *   bench flop and 0.1% on a small, narrow-range spot. On issue #20's T₀
+ *   (AsKh7d, three sizes, all-in raise, SPR 18), at 320 iterations it was
+ *   0.81% of pot exploitable where 32-bit storage was 0.69%, per-hand root
+ *   EVs 0.23% of pot off a 0.17% reference, every hand's preferred bet size
+ *   kept, in 1.75 GiB where 32-bit storage took 5.1 and 16-bit 2.6. T itself
+ *   takes 5.9 GiB, 16-bit storage 8.7.
  * - `sums: false`: no strategy sums, so each node's strategy, wherever one is
  *   read (`strategyAt`, `reachAt`, EVs, exploitability), is the current
  *   profile, the regret-matched strategy the next iteration plays. About 1.4
- *   bytes a slot, 1.03 with `blockScale`. Per-hand root EVs stay as close as
+ *   bytes a slot, 1.03 with `blockScale`: T in 2.2 GiB. Per-hand root EVs stay as close as
  *   the average's, as `currentProfileEv` found, but the strategy is far more
  *   exploitable: 2 times at equal iterations on the bench flop, 5 to 8 times
  *   on deeper or narrower spots (T₀ monotone: 4.0% of pot at 320 iterations
@@ -205,8 +210,8 @@ export interface SpotConfig {
  * Training is otherwise the exact solve's; exploitability is measured
  * exactly, in the full tree. Storage is split in chunks under `chunkBytes`,
  * because browsers refuse a buffer of 2 GiB. Runs on the JavaScript engine
- * and its Node worker threads, not the WebAssembly one, so an iteration
- * costs about as much as at 16 bits; not with `warmStart`, `coarseStart`,
+ * and its Node worker threads, not the WebAssembly one; an iteration costs
+ * about 1.5 times a 32-bit one there; not with `warmStart`, `coarseStart`,
  * `chanceSampling`, `analysisOnly` or a `precision`.
  *
  * What was measured and left out is with the other approximations, in the

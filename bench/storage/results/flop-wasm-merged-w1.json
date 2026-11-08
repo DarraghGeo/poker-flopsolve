@@ -1,0 +1,46 @@
+{
+ "spot": "flop",
+ "variant": "wasm",
+ "workers": 1,
+ "engine": "wasm",
+ "storageMiB": 217.1,
+ "estimateMiB": 235,
+ "peakRssMiB": 361,
+ "setupSeconds": 0.5,
+ "rows": [
+  {
+   "iterations": 40,
+   "trainSeconds": 15.5,
+   "exploitability": 0.9351,
+   "positiveShare": 0.6449,
+   "mae": 1.3952,
+   "max": 3.4927
+  },
+  {
+   "iterations": 80,
+   "trainSeconds": 32.7,
+   "exploitability": 0.2016,
+   "positiveShare": 0.6096,
+   "mae": 0.1563,
+   "max": 0.7068
+  },
+  {
+   "iterations": 160,
+   "trainSeconds": 64.6,
+   "exploitability": 0.0566,
+   "positiveShare": 0.5863,
+   "mae": 0.044,
+   "max": 0.22
+  }
+ ],
+ "sizeChoice": {
+  "actionMae": 0.4095,
+  "actionMax": 8.2346,
+  "playedActionMae": null,
+  "playedActionMax": 0,
+  "sameBestAction": 0.8838,
+  "sameBestSize": 1,
+  "sameBestSizeWhereClear": 1,
+  "clearShare": 0
+ }
+}
