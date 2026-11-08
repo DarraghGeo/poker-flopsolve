@@ -155,6 +155,12 @@ Each takes a value per round too. On a turn spot with four sizes, two raises and
 Raise caps per round (`maxRaises: [1, 2, 1]`) and a checked-down river (an empty
 `betSizes` row) were already available and trim the same way.
 
+`removeActions` cuts single lines: each a bet, raise or shove named by the path of the node
+it leads to, as `Solution.path` writes it (`'check bet 18.15'`, `'bet 41.25 call / allin
+975'`), with everything below it. Only the line named goes; the same size elsewhere stays.
+Use it to keep three sizes where they matter and one elsewhere; `thinSizes` (below) is a
+ready-made shape of that kind.
+
 `minWeight: 0.05` trims the ranges the same way: combinations weighted under 5% are
 dropped from both, which suits imported ranges full of hands at a percent or two.
 
@@ -455,6 +461,51 @@ shape whose stack-to-pot ratios fall in a log-bucket of width `w`. On the three-
 that is 1.5 times less storage at `w = 0.1` and 2 times at `w = 4`, but much lossier: a
 one-size tree was left 20% of pot exploitable at `w = 4`. A shared spot can warm-start
 only from another shared solve.
+
+### Thinning bet sizes (approximate, for memory)
+
+`thinSizes: true` keeps the configured sizes only where they earn their memory. The root
+keeps every size. Every other decision keeps the one bet, raise or shove nearest 0.75 of
+the pot, or a shove where that size would be one. A river opening bet after an earlier
+street saw a bet also keeps sizes above the pot and the shove. A tree's memory is almost
+all on the river, and each flop or turn size multiplies the river subtrees below it. This
+rule cuts most of them. It is the shape that growing sizes one at a time by value per
+byte arrived at (issue #51), applied as a fixed rule. It costs nothing to build, and
+unset, the tree is unchanged.
+
+It changes the game. A thinned tree is a smaller game, solved exactly within itself, and
+its strategy has no answer to the sizes that were cut. Measured on bench ranges, pot 55,
+stack 975, sizes 0.33 / 0.75 / 1.5 with a shove. The reference is the full tree with
+shove-only raises and 2 aggressions (T₀), solved exactly to 0.23% of pot. Root EVs per
+combination, % of pot, OOP / IP:
+
+| Tree | Storage, f32 | Root EV error, mean / max | Root size agrees |
+|---|---|---|---|
+| As Kh 7d, T₀ exact | 5.78 GiB | — | — |
+| `thinSizes` | 1.30 GiB | 1.45 / 1.74, max 5.6 / 6.3 | 83% |
+| The issue's rule: 3 sizes on flop and turn opening bets, 1 elsewhere | 1.97 GiB | 1.59 / 1.34, max 13.5 / 5.1 | 76% |
+| One size everywhere (0.75, shove facing a bet) | 0.39 GiB | 4.41 / 6.58, max 29 / 65 | — |
+| Ks 9s 4s, T₀ exact | 1.26 GiB | — | — |
+| `thinSizes` | 0.29 GiB | 2.10 / 1.90, max 6.2 / 5.9 | 96% |
+| 3 sizes on flop opening bets, 1 elsewhere | 0.19 GiB | 1.47 / 1.64, max 4.2 / 5.8 | 70% |
+| The issue's rule | 0.43 GiB | 1.33 / 1.15, max 3.3 / 6.7 | 89% |
+
+"Root size agrees" is the share of OOP's range whose best root bet size by EV is the same
+as in the exact solve. The max is over combinations weighing at least 1%. On As Kh 7d the
+rule is the most accurate per byte measured: two thirds of the issue's rule's memory, and
+less than half its worst error. On Ks 9s 4s, where the flop's in-position sizes matter
+more, three flop sizes alone did better for less. Peak memory in Node is the tree's: 1.41
+GiB for the first.
+
+The growth itself is not offered. It found the shape, and grown trees were more accurate
+again (1.0 / 1.2% mean, 3.9% max, 90% agreement in 1.7 GiB on As Kh 7d). But each round
+probes candidate sizes in a second tree beside the current one, which took 4.8 to 8.7 GiB
+and 30 to 40 minutes. On Ks 9s 4s, starting from one size, it never added the flop sizes
+it needed and ended worse than the fixed rule.
+
+It combines with `shareHistories`, which shares the river storage of lines that meet:
+the target tree of issue #51, As Kh 7d with a 0.75 raise and 3 aggressions (T), is 17.2 GiB
+at 32 bits, 2.9 GiB thinned, and 0.85 GiB thinned and shared (Ks 9s 4s: 3.75, 0.64, 0.19).
 
 ### Chance sampling (opt-in)
 
