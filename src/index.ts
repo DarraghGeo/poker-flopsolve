@@ -754,6 +754,77 @@ export interface Approximations {
 	 *   52–68. At most 15% fewer iterations on some spots and more on others,
 	 *   for thousands of precomputed solves per tree and archetype, rebuilt
 	 *   whenever the defaults change.
+	 *
+	 * Out-of-core river storage (#55) — the flop and turn in memory, the
+	 * river's accumulators in an Origin Private File System file paged through
+	 * one buffer, one turn card of one turn chance node at a time and in file
+	 * order — was built, measured and is not offered. It is exact (bit for bit
+	 * at 32 bits) and fits the round's target spot T (AsKh7d, three sizes a
+	 * street, 8.7 GiB at 16 bits) in a tab: 0.33 GiB peak in headless
+	 * Chromium against a 10 GiB OPFS quota, with I/O 5–8% of each iteration
+	 * (sequential reads 3–4.5 GiB/s, read and write back about 1 GiB/s). What
+	 * it cannot change is T's compute: 81 s an iteration on one thread, and
+	 * a few hundred iterations to 0.3% of pot (T₀, smaller, was still at 3.8%
+	 * after 80), so hours per solve where the bar was two minutes. Each
+	 * iteration also rewrites the whole river file, terabytes per solve on a
+	 * laptop SSD, and a private window keeps OPFS in memory and failed before
+	 * 1 GiB. CFR-D, re-solving every river subgame from the trunk's ranges
+	 * each iteration, would cost tens of times more and was not built. The
+	 * implementation is in this repository's history (commit 0f80fcc);
+	 * `bench/ooc/` keeps the OPFS throughput and sizing benchmarks.
+	 *
+	 * Pruning for space (#52) — freeing the storage under lines no hand plays,
+	 * as best-response pruning does (Brown & Sandholm, 2017), and rebuilding
+	 * it if the line comes back — was measured before building and is not
+	 * offered. `bench/prune-space-census.ts` walks both players' reach under
+	 * the current profile after every iteration and counts the regret and
+	 * strategy-sum storage of blocks (a node on one board) that one player or
+	 * the other reaches with no hand. That is everything freeing could release.
+	 * On T₀ (AsKh7d, pot 55, stack 975, bets 33/75/150%, all-in raise, two
+	 * aggressions, 5.1 GiB at f32) it was 2.8%, 3.4%, 7.6% and 15.8% of
+	 * storage at iterations 20, 50, 100 and 200 (1.1% of pot). Only 6.0% had
+	 * stayed unreached for the last 50 iterations, and no decision node was
+	 * unreached on every board it is dealt on, which is the unit a whole-node
+	 * allocator would free. The target tree itself on Ks9s4s (3.75 GiB) was
+	 * alike: 15.0% per block at iteration 150 (2.5% of pot), 3.3% for 50
+	 * iterations running, 0% per node. Turn-rooted copies of the target's
+	 * betting, solved to 0.3–0.6% of pot, reached 15–20% per block and 3–4%
+	 * per node. Some hand on some board keeps every line alive: per node,
+	 * almost nothing can be freed, and per block, freeing all of it would
+	 * still leave the target at about 14 GiB at f32, where 2 GiB needs a
+	 * cut of about 9×.
+	 *
+	 * The bound that makes freeing safe does not hold here either. With
+	 * DCFR's β = 0 a negative regret halves every iteration, so it never
+	 * falls below about twice the largest one-iteration regret, and the
+	 * number of iterations it proves an action stays unprofitable is zero
+	 * (as for pruning work, above). And WebAssembly memory grows but never
+	 * shrinks, so freed blocks only cut peak memory if storage starts small
+	 * and is allocated when the traversal first reaches it. That means a
+	 * per-block indirection through every kernel, the AssemblyScript engine,
+	 * the threads' shared memory, the 16-bit scales and warm starts, for an
+	 * 8–20% saving at best.
+	 *
+	 * Runout clusters — potential-aware card abstraction (Ganzfried &
+	 * Sandholm, 2014): turn and river cards grouped by k-medoids under the
+	 * earth mover's distance between each range's river-equity distribution,
+	 * plus flush, straight and pair texture, one walk per cluster with reach
+	 * gathered from every member — were built and measured as well, and left
+	 * out (prototype and data in bench/clusters, commit ef1fa9c). Rank swaps
+	 * alone cannot get there: suited connectors leave only ranks 2-5 swappable on
+	 * AsKh7d, so about 37 of 49 turns stay apart whatever k asks for, and the
+	 * rest need hands mapped by strength order, and that is where the error
+	 * comes from. At 15 s in the browser, single-threaded (measured before
+	 * #8 changed how strategy sums are weighted), true exploitability:
+	 * bench flop 2.3% at k = 16 (rivers 20) against 1.8% exact and 0.7% for
+	 * `runoutBuckets`, which also beat it on per-combination EV; both monotone
+	 * flops lost to exact on every measure. It won only where exact gets
+	 * almost nowhere in 15 s — a two-size wide flop, under 10 iterations —
+	 * and on the pairs-and-broadway flop's EVs (mean error 0.3% of pot against
+	 * 1.0%, at 0.8% exploitability against 0.6%). Its error has a floor that
+	 * more iterations do not lower: on the bench flop 1.1-3.2% of pot mean
+	 * per-combination EV error and 2.2-4.7% exploitability from k = 16 down
+	 * to 4, on the wide flop 1.3-2.3% and 4-10%.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
