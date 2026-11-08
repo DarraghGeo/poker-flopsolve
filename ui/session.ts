@@ -134,7 +134,7 @@ async function main(): Promise<void> {
 	links = new Map();
 	const walk = (node: number, parent: number, via: string, action: number, dealt: boolean): void => {
 		const kind = tree.kind[node];
-		if (kind === NodeKind.TerminalFold || kind === NodeKind.TerminalShowdown || kind === NodeKind.Continuation) return;
+		if (kind === NodeKind.TerminalFold || kind === NodeKind.TerminalShowdown) return;
 		if (kind === NodeKind.Chance) {
 			walk(tree.edgeChild[tree.firstEdge[node]], parent, via, action, true);
 			return;

@@ -29,8 +29,6 @@ import { pairValues } from './pairs.ts';
 import type { Kernels } from './kernels.ts';
 import { loadKernels } from './kernels.ts';
 import { NodeKind } from './tree.ts';
-import type { LeafModel } from './depth.ts';
-import { continuationValues } from './depth.ts';
 
 /** Which combinations a player holds, and where each sits in storage. */
 export interface PlayerIndex {
@@ -77,8 +75,6 @@ export interface Layout {
 	 */
 	readonly blockOffset: Int32Array;
 	readonly blocks: number;
-	/** Live hands summed over each round's boards, at `round * 2 + player`. */
-	readonly totals: Int32Array;
 	readonly totalSlots: number;
 	readonly maxActions: number;
 	readonly bytes: number;
@@ -134,23 +130,9 @@ export function buildLayout(
 		total += actions * totals[tree.round[node] * 2 + tree.player[node]];
 		blocks += runouts.counts[tree.round[node]];
 	}
-	// Depth-limited leaves, after every decision so those keep their place:
-	// both players' continuation choices, player 0's rows first. See
-	// `leafBase` in src/depth.ts.
-	const leaves = tree.leafNodes ?? new Int32Array(0);
-	const choices = tree.leafChoices ?? 0;
-	for (let i = 0; i < leaves.length; i++) {
-		const node = leaves[i];
-		const round = tree.round[node];
-		if (choices > maxActions) maxActions = choices;
-		offset[node] = total;
-		blockOffset[node] = blocks;
-		total += choices * (totals[round * 2] + totals[round * 2 + 1]);
-		blocks += runouts.counts[round] * 2;
-	}
 	const scales = bytesPerElement === 2 ? blocks * 8 * 2 : 0;
 	return {
-		offset, blockOffset, blocks, totals, totalSlots: total, maxActions, rowStart, roundBase,
+		offset, blockOffset, blocks, totalSlots: total, maxActions, rowStart, roundBase,
 		bytes: total * bytesPerElement * 2 + scales,
 	};
 }
@@ -234,8 +216,6 @@ export interface Context {
 	expandOrbits: boolean;
 	/** Use the WebAssembly SIMD kernels where the platform has them. */
 	readonly simd: boolean;
-	/** A depth-limited tree's leaf model; absent on a full tree. */
-	readonly leaf?: LeafModel;
 }
 
 /**
@@ -735,10 +715,6 @@ function traverse(
 			tree.payoff[node] * weight, buffers.cardSums, out,
 		);
 		return out;
-	}
-
-	if (kind === NodeKind.Continuation) {
-		return continuationValues(ctx, mode, traverser, iterWeight, node, board, reachMe, reachOpp, out);
 	}
 
 	if (kind === NodeKind.Chance) {

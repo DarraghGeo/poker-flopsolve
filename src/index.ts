@@ -21,8 +21,6 @@ import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
 import { buildHandSpace } from './hands.ts';
 import { createEngine } from './engine.ts';
-import type { ContinuationName, ContinuationRule } from './depth.ts';
-import { buildLeafModel, resolveRules } from './depth.ts';
 import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
 import type { Pool } from './parallel.ts';
@@ -46,8 +44,6 @@ export type { ResolvedBoard } from './runouts.ts';
 export type { WarmStartReport } from './warm.ts';
 export { simdAvailable } from './kernels.ts';
 export type { BetSize } from './tree.ts';
-export type { ContinuationName, ContinuationRule } from './depth.ts';
-export { CONTINUATIONS } from './depth.ts';
 export type { Solver } from './cfr.ts';
 export { ACTION_LABELS, ActionKind, NodeKind } from './tree.ts';
 export type { PerPlayer, RaiseSizes } from './tree.ts';
@@ -156,34 +152,7 @@ export interface SpotConfig {
 	 * strategy in the real game, every card dealt. Default false.
 	 */
 	readonly runoutBuckets?: boolean | number;
-	/**
-	 * Solve a depth-limited game instead — an approximation, off by default.
-	 * Betting stops at the deal of a later street, and at each such leaf both
-	 * players choose, per hand, one of a few fixed continuation strategies for
-	 * the rest of the hand (Brown, Sandholm & Amos, 2018). The tree loses
-	 * every river node, which is nearly all of a flop tree's memory.
-	 * Exploitability is measured in the depth-limited game; the solution has
-	 * no strategy past the cut. Single-threaded, JavaScript engine. See
-	 * `DepthLimit` and src/depth.ts.
-	 */
-	readonly depthLimit?: DepthLimit;
 }
-
-/** See `SpotConfig.depthLimit`. */
-export interface DepthLimit {
-	/** The street whose deal ends the tree. Default 'river'. */
-	readonly at?: 'turn' | 'river';
-	/**
-	 * Continuation strategies each player picks among at a leaf, by name or
-	 * as rules. Default `['checkdown', 'polar', 'polar-bias', 'station']`.
-	 */
-	readonly continuations?: readonly (ContinuationName | ContinuationRule)[];
-	/** The continuations' one bet size, as a fraction of the pot. Default 1. */
-	readonly betSize?: number;
-}
-
-/** Default continuations at a depth-limited leaf. */
-const DEFAULT_CONTINUATIONS: readonly ContinuationName[] = ['checkdown', 'polar', 'polar-bias', 'station'];
 
 /** Projected cost of solving a spot. */
 export interface Estimate {
@@ -351,13 +320,6 @@ export function defineSpot(config: SpotConfig): Spot {
 			mergeSizes: config.mergeSizes,
 			chipScale,
 			minRaiseUnits: chipScale,
-			depthLimit: config.depthLimit
-				? {
-						round: config.depthLimit.at === 'turn' ? rounds - 2 : rounds - 1,
-						choices: resolveRules(config.depthLimit.continuations ?? DEFAULT_CONTINUATIONS).length,
-						betFraction: config.depthLimit.betSize ?? 1,
-					}
-				: undefined,
 		},
 		runouts,
 	);
@@ -557,6 +519,28 @@ export interface Approximations {
 	 * cost more iterations than it saved: a flop spot on 4 threads reached
 	 * 0.3% of pot in 14.1 s exact, 23.1 s at p = 0.5, and not within 400
 	 * iterations at p = 0.25; at best it broke even to 1%.
+	 *
+	 * Depth-limited solving (Brown, Sandholm & Amos, 2018) was built and
+	 * measured too: the tree stopped at the deal of the river (or the turn),
+	 * and at each leaf both players chose per hand, unseen by the other, one
+	 * of k fixed continuations: check down; value-bet the top 30% with
+	 * balanced bluffs and call by MDF; that betting ×1.5; that calling ×1.5;
+	 * top-half bet and call. CFR trained the choice. It cut flop memory about
+	 * tenfold (246 MB to 22 MB) but lost on accuracy and did not win on speed.
+	 * Against an exact solve to 0.1% of pot, the depth-limited game's own
+	 * equilibrium kept per-combination root EVs 2–5% of pot off on average
+	 * (8–20% for single combos), with draws and made hands worst and air
+	 * nearly right. That is the implied-odds and value-extraction play a fixed
+	 * continuation keyed on starting-range percentile cannot follow once the
+	 * flop and turn have narrowed the ranges. The exact solver stopped at 15 s,
+	 * single-threaded in Chromium, was closer on every spot measured: 0.02% on
+	 * the monotone flop, 0.3–0.6% on the wide one, 2.0–2.4% on AsKh7d at pot
+	 * 100, where the best depth-limited run was 4.2%. It was not faster either.
+	 * These trees' river betting is one size with no raise, already as cheap
+	 * as a leaf's five terminal passes, so with k ≥ 2 an iteration cost as
+	 * much as the full tree. Cutting at the turn was cheaper still, and worse:
+	 * 3–14% mean error. The implementation is in this repository's history
+	 * (commit 32e8424, issue #21).
 	 */
 }
 
@@ -710,10 +694,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
 	const weights = runoutWeights(spot.runouts);
 
-	// A depth-limited leaf runs in the JavaScript traversal, on one thread.
-	const limited = spot.tree.leafNodes !== undefined;
-	if (limited && precision === 'i16') throw new Error('A depth-limited spot needs 32- or 64-bit storage');
-	const requested = limited ? 1 : resolveWorkers(options);
+	const requested = resolveWorkers(options);
 	const plan = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
 
 	// Workers need the accumulators in shared memory. Allocating shared for a
@@ -729,7 +710,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// a platform with WebAssembly SIMD. It owns the storage; the context sees
 	// it through views.
 	const engine =
-		!limited && options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false
+		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false
 			? createEngine(
 					{
 						tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
@@ -738,7 +719,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 					plan ? { plan, threads: requested, spawn: spawnEngineWorker } : undefined,
 				)
 			: null;
-	const base: Context = {
+	const ctx: Context = {
 		tree: spot.tree,
 		runouts: spot.runouts,
 		players: spot.players,
@@ -773,9 +754,6 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		totalMass: matchupMass(spot.players[0].weights, spot.players[1].weights) * weights[0],
 		dcfr: (options.algorithm ?? 'dcfr') === 'dcfr',
 	};
-	const ctx: Context = limited
-		? { ...base, leaf: buildLeafModel(base, resolveRules(spot.source.depthLimit?.continuations ?? DEFAULT_CONTINUATIONS)) }
-		: base;
 
 	// Seeded before any worker starts, so they all see the inherited values.
 	let warm: WarmStartReport | null = null;
@@ -823,7 +801,6 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			return (100 * solver.exploitability()) / (spot.potUnits / spot.chipScale);
 		},
 		trueExploitabilityPercent() {
-			if (limited) throw new Error('A depth-limited solve has no strategy past the cut to measure in the real game');
 			if (!spot.runouts.approximate) return this.exploitabilityPercent();
 			const real = createRun(defineSpot({ ...spot.source, runoutBuckets: false }), {
 				workers: threadCount,

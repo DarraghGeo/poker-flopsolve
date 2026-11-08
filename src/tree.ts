@@ -73,13 +73,6 @@ export const NodeKind = {
 	Chance: 1,
 	TerminalFold: 2,
 	TerminalShowdown: 3,
-	/**
-	 * A depth-limited leaf: betting stops at the deal of a later street, and
-	 * each player picks one of a fixed set of continuation strategies for the
-	 * rest of the hand. Only built with `TreeConfig.depthLimit`; see
-	 * src/depth.ts. It has no edges: the choice is stored beside it.
-	 */
-	Continuation: 4,
 } as const;
 
 export const ActionKind = {
@@ -134,21 +127,6 @@ export interface TreeConfig {
 	 * mean. Unset or 0, none.
 	 */
 	readonly mergeSizes?: number;
-	/**
-	 * Stop the tree at the deal of `round`: where betting would carry on into
-	 * it, a `Continuation` leaf stands instead. Unset, the full tree.
-	 */
-	readonly depthLimit?: TreeDepthLimit;
-}
-
-/** See `TreeConfig.depthLimit`. */
-export interface TreeDepthLimit {
-	/** The betting round whose deal ends the tree; at least 1. */
-	readonly round: number;
-	/** Continuation strategies each player chooses among at a leaf. */
-	readonly choices: number;
-	/** The continuations' one bet size, as a fraction of the pot. */
-	readonly betFraction: number;
 }
 
 /**
@@ -196,14 +174,6 @@ export interface Tree {
 	readonly edgeTarget: Int32Array;
 	readonly edgeChild: Int32Array;
 	readonly decisionNodes: Int32Array;
-	/**
-	 * Depth-limited trees only: the `Continuation` leaves, how many
-	 * continuations each player picks among at one, and the continuations'
-	 * bet at each leaf in units (indexed by node). Absent on a full tree.
-	 */
-	readonly leafNodes?: Int32Array;
-	readonly leafChoices?: number;
-	readonly leafBet?: Int32Array;
 }
 
 interface BetState {
@@ -265,11 +235,6 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 	});
 	const noDonk = perRound(config.noDonk ?? false, Array.isArray(config.noDonk), rounds, 'noDonk');
 	const half = Math.round(potUnits / 2);
-	const cut = config.depthLimit;
-	if (cut && !(cut.round >= 1 && cut.round < rounds)) {
-		throw new Error(`A depth limit must cut at a later street; this board has ${rounds} betting round(s)`);
-	}
-	const leafBet = new Map<number, number>();
 
 	const addNode = (
 		nodeKind: number,
@@ -297,14 +262,6 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 			// Both invested the same, so the winner gains half the dead pot plus
 			// the opponent's investment.
 			return addNode(NodeKind.TerminalShowdown, -1, state.round, total, half + state.invested[0]);
-		}
-
-		// Depth-limited: the deal of the cut street ends the tree. With someone
-		// all in nothing is left to decide, so that line still runs out exactly.
-		if (cut && !allIn && state.round + 1 === cut.round) {
-			const leaf = addNode(NodeKind.Continuation, -1, state.round, total, half + state.invested[0]);
-			leafBet.set(leaf, Math.min(Math.round(cut.betFraction * total), stackUnits - state.invested[0]));
-			return leaf;
 		}
 
 		const node = addNode(NodeKind.Chance, -1, state.round, total, 0);
@@ -466,16 +423,7 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 	const decisionNodes: number[] = [];
 	for (let i = 0; i < kind.length; i++) if (kind[i] === NodeKind.Decision) decisionNodes.push(i);
 
-	const limited = cut
-		? {
-				leafNodes: Int32Array.from([...leafBet.keys()].sort((a, b) => a - b)),
-				leafChoices: cut.choices,
-				leafBet: Int32Array.from({ length: kind.length }, (_, node) => leafBet.get(node) ?? 0),
-			}
-		: {};
-
 	return {
-		...limited,
 		nodeCount: kind.length,
 		edgeCount: edgeChild.length,
 		kind: Uint8Array.from(kind),
