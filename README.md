@@ -349,6 +349,7 @@ Headless Chromium, one thread, 16-bit storage (`bench/ooc/`):
 |---|---|---|---|
 | T on Ks9s4s | 1.90 GiB | 2.02 GiB, 21.4 | 0.18 GiB, 23.6 (1.2) |
 | T₀ on AsKh7d | 2.92 GiB | 3.10 GiB, 24.9 | 0.24 GiB, 26.2 (1.5) |
+| T on AsKh7d | 8.67 GiB | does not fit a tab | 0.33 GiB, 81.0 (5.1) |
 
 (T is issue #20's target: three bet sizes on every street, one raise size, all-in, three
 aggressions, pot 55, stack 975. T₀ allows only all-in raises and two aggressions.)
