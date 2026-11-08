@@ -127,14 +127,6 @@ export interface TreeConfig {
 	 * mean. Unset or 0, none.
 	 */
 	readonly mergeSizes?: number;
-	/**
-	 * Offer a raise other than the shove only facing an opening bet of one of
-	 * these sizes, as `betSizes` gives them (after `mergeSizes`); facing any
-	 * other bet only fold, call and, where `allowAllIn` allows, the shove.
-	 * Re-raises follow the line their round opened with. Unset, raises are
-	 * offered over every bet. See `Approximations` on action translation.
-	 */
-	readonly raiseOver?: readonly BetSize[];
 }
 
 /**
@@ -197,8 +189,6 @@ interface BetState {
 	readonly aggressor: number;
 	/** Who last bet or raised the round before, or -1. */
 	readonly previousAggressor: number;
-	/** The size the round's opening bet was made with, or null before one. */
-	readonly opening: BetSize | null;
 }
 
 /**
@@ -243,7 +233,6 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 		const value = forPlayer(config.allInThreshold, p) ?? 0;
 		return perRound(value, Array.isArray(value), rounds, 'allInThreshold');
 	});
-	const raiseOver = config.raiseOver ? new Set<BetSize>(config.raiseOver) : null;
 	const noDonk = perRound(config.noDonk ?? false, Array.isArray(config.noDonk), rounds, 'noDonk');
 	const half = Math.round(potUnits / 2);
 
@@ -286,7 +275,6 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 			base: state.invested[0],
 			aggressor: -1,
 			previousAggressor: state.aggressor,
-			opening: null,
 		};
 		// With someone already all in there is nothing left to decide, so the
 		// remaining streets run out straight to showdown.
@@ -339,12 +327,11 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 		const total = potUnits + state.invested[0] + state.invested[1];
 		const node = addNode(NodeKind.Decision, me, state.round, total, 0);
 
-		const actions: { action: number; target: number; size: BetSize | null }[] = [];
-		if (owed > 0) actions.push({ action: ActionKind.Fold, target: mine, size: null });
+		const actions: { action: number; target: number }[] = [];
+		if (owed > 0) actions.push({ action: ActionKind.Fold, target: mine });
 		actions.push({
 			action: owed > 0 ? ActionKind.Call : ActionKind.Check,
 			target: mine + Math.min(owed, myRemaining),
-			size: null,
 		});
 
 		// Nobody can put in more than the opponent is able to match.
@@ -356,12 +343,10 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 		if (state.aggressions < maxRaises[me][state.round] && myRemaining > owed && !donk) {
 			const seen = new Set<number>();
 			const myRaises = raiseSizes[me];
-			let sizes: BetSize[] =
+			const sizes: BetSize[] =
 				owed > 0 && myRaises
 					? [...myRaises[state.round]]
 					: [...(betSizes[me][state.round] ?? [])].filter((size) => !(typeof size === 'object' && 'times' in size));
-			// Facing a bet the tree does not raise over, only the shove is left.
-			if (owed > 0 && raiseOver && !(state.opening !== null && raiseOver.has(state.opening))) sizes = [];
 			if (allowAllIn[me][state.round]) sizes.push('allin');
 
 			for (const size of sizes) {
@@ -376,7 +361,6 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 				actions.push({
 					action: isShove ? ActionKind.AllIn : owed > 0 ? ActionKind.Raise : ActionKind.Bet,
 					target,
-					size,
 				});
 			}
 		}
@@ -416,7 +400,6 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 					base: state.base,
 					aggressor: me,
 					previousAggressor: state.previousAggressor,
-					opening: state.aggressions === 0 ? entry.size : state.opening,
 				});
 			}
 			edgeChild[base + i] = child;
@@ -435,7 +418,6 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 		base: 0,
 		aggressor: -1,
 		previousAggressor: -1,
-		opening: null,
 	});
 
 	const decisionNodes: number[] = [];

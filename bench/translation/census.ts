@@ -1,8 +1,9 @@
 /**
  * Experiment 1 of issue #54: where T's storage sits, by the bet a raise
  * follows. Each decision node's bytes (32-bit, as `estimate.bytes` counts
- * them) are charged to the innermost raise above it on its own street — or
- * to "no raise" — keyed by the size of the bet that raise answered.
+ * them) are charged to the first sized raise in its history, on any street,
+ * keyed by that street and the size of the bet the raise answered; nodes
+ * with none (shoves aside) are "no raise".
  *
  *   node --import tsx bench/translation/census.ts [board]
  */
@@ -18,8 +19,7 @@ const { tree, runouts, players } = spot;
 const bytes = new Map<string, number>();
 const add = (key: string, b: number): void => void bytes.set(key, (bytes.get(key) ?? 0) + b);
 // Live rows per (round, player), summed over stored boards: what a node of
-// that round and owner stores per action. Recounted here because the layout's
-// Int32 offsets overflow on a tree this size.
+// that round and owner stores per action.
 const live = liveRows(runouts, players);
 const slotsOf = (node: number): number => tree.numEdges[node] * live[tree.round[node] * 2 + tree.player[node]];
 
@@ -31,7 +31,7 @@ const fraction = (node: number, edge: number): string => {
 	return `${((target - (pot - spot.potUnits) / 2) / pot).toFixed(2)}`;
 };
 
-// tag: label of the innermost raise context on this street.
+// tag: the first sized raise of the history; betLabel: the round's opening bet.
 const walk = (node: number, tag: string, betLabel: string): void => {
 	const k = tree.kind[node];
 	if (k === NodeKind.Chance) {
