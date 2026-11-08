@@ -485,6 +485,43 @@ nearest, small sums lose most of each iteration's contribution and exploitabilit
 near 0.04% of pot. The randomness is a hash of the slot and iteration, so solves stay
 deterministic at any thread count.
 
+### Compact storage (opt-in)
+
+`compactStorage: {}` in the spot's config stores regrets and strategy sums as 8-bit
+integers, each hand on each board scaled by its own power of two. Regret matching and the
+average strategy divide each hand's values by their own total, so the scale cancels
+wherever a strategy is read, and costs a byte per hand. Values round up or down at random,
+weighted by the remainder, as 16-bit sums do. It is set on the spot rather than the solve,
+because `maxBytes` is checked against it when the spot is defined
+(`estimate.compactBytes`).
+
+`compactStorage: { sums: false }` keeps no strategy sums. Each node then plays the current
+profile, the regret-matched strategy the next iteration would play. It is cheaper again but
+much more exploitable on deep trees. `blockScale: true` takes the per-hand byte away too.
+
+| Storage | Bytes per slot | T (AsKh7d, 3 sizes, raises, SPR 18) | Monotone T₀ (Ks9s4s), 320 iterations: exploitability, root-EV error |
+|---|---|---|---|
+| 32-bit | 8.0 | 17.2 GiB | 0.71%, 1.19% of pot |
+| 16-bit | 4.0 | 8.7 GiB | |
+| compact | 2.75 | 5.9 GiB | 0.83%, 1.09% |
+| compact, `sums: false` (CFR+) | 1.38 | 3.0 GiB | 3.97%, 1.22% |
+| compact, `sums: false, blockScale: true` (CFR+) | 1.03 | 2.2 GiB | 4.08%, 1.28% |
+
+On the bench flop (AsKh7d, one size) the default reaches 0.18%, 0.058% and 0.029% of pot at
+80, 160 and 320 iterations, where 32-bit storage reaches 0.18%, 0.052% and 0.016%. Rounding
+the sums leaves that small floor. Without sums, per-hand root EVs stay as close as the
+average's (closer under DCFR, as with `currentProfileEv`), but the strategy is 2 to 8 times
+as exploitable at equal iterations, and the bet size each hand prefers at the root agreed
+with the reference for only 62–82% of the hands where the choice is clear. CFR+, whose
+current profile swings less, is the better rule if you want the strategy; DCFR if you want
+the EVs.
+
+It runs on the JavaScript engine, like 16-bit storage, on Node worker threads but on one
+thread in the browser. Storage is split into buffers under 1 GiB, because Chromium refuses
+an ArrayBuffer of 2 GiB or more. `bench/storage/` has the measurements and the variants
+that were left out: 4- and 6-bit regrets, a log scale, sparse regrets, and dropping sums on
+the later streets only.
+
 ### Algorithm and benchmark
 
 The default update rule is Discounted CFR (`algorithm: 'dcfr'`, α 1.5, β 0, γ 3, with

@@ -193,9 +193,11 @@ export interface SpotConfig {
  *   exploitable: 2 times at equal iterations on the bench flop, 5 to 8 times
  *   on deeper or narrower spots (T₀ monotone: 4.0% of pot at 320 iterations
  *   against 0.71%), and the bet size each hand prefers at the root agreed with
- *   the reference for 62-70% of the hands where it was clear, against all of
+ *   the reference for 62-82% of the hands where it was clear, against all of
  *   them for the average. `algorithm: 'cfr+'`, whose current profile swings
- *   less, is the better rule here.
+ *   less, is the better rule for the strategy; DCFR's current profile gives
+ *   the closer EVs (on T₀ monotone 0.55% of pot against the average's 1.19%,
+ *   but 4.9% exploitable).
  *
  * Rounding regrets to 8 bits costs training almost nothing: with 32-bit
  * regrets and no sums (`float`) the same runs were no better.
