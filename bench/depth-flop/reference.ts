@@ -19,8 +19,8 @@ for (const name of process.argv.slice(2)) {
 	const config = { ...SPOTS[name], maxBytes: 14 * 2 ** 30 };
 	const spot = defineSpot(config);
 	const started = performance.now();
-	const run = createRun(spot, { workers: 4, precision: 'i16' });
-	console.log(`${name}: ${(spot.estimate.compressedBytes / 2 ** 30).toFixed(2)} GiB at i16, ${run.workers} threads, ${run.engine}`);
+	const run = createRun(spot, { workers: 4, precision: (process.env.PRECISION ?? 'i16') as 'i16' | 'f32' });
+	console.log(`${name}: ${(spot.estimate.compressedBytes / 2 ** 30).toFixed(2)} GiB at i16 (${process.env.PRECISION ?? 'i16'} used), ${run.workers} threads, ${run.engine}`);
 	let done = 0;
 	let next = 20;
 	let exploitability = Infinity;

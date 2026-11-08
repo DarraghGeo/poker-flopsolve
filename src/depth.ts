@@ -65,6 +65,15 @@ export interface DepthLimitedOptions {
 	readonly continuations?: readonly ContinuationBias[];
 	/** How strongly a biased continuation leans. Default 5. */
 	readonly bias?: number;
+	/**
+	 * How a leaf's table stands for its continuations. 'additive' (default):
+	 * each player's EV per hand, a pair of hands worth the difference — `k²`
+	 * numbers a hand. 'pairs': the value of every pair of hands, exact for
+	 * the continuations but `n` times the memory and about `n` times the
+	 * walks to build, `n` the opponent's hands; for measuring what the
+	 * additive model loses.
+	 */
+	readonly leafModel?: 'additive' | 'pairs';
 	/** Threads for the blueprint and the leaf tables; the flop solve is one thread. */
 	readonly workers?: SolveOptions['workers'];
 	/** Passed to the blueprint's and the leaf tables' runs. */
@@ -306,6 +315,7 @@ export function createDepthLimitedRun(config: SpotConfig, options: DepthLimitedO
 	if (k === 0) throw new Error('A depth-limited solve needs at least one continuation');
 	const strength = options.bias ?? 5;
 	const betting = options.blueprint ?? DEFAULT_BLUEPRINT;
+	const model = options.leafModel ?? 'additive';
 
 	// The real spot's tree, cut at the turn deal. Its full storage is never
 	// allocated, so its size does not matter.
@@ -457,7 +467,8 @@ export function createDepthLimitedRun(config: SpotConfig, options: DepthLimitedO
 			}
 
 			// Every pair of continuations: player 0's `a` against player 1's `b`.
-			const table = new Float64Array(k * k * (counts[0] + counts[1] + 1));
+			const pairs0 = counts[0] * counts[1];
+			const table = new Float64Array(model === 'pairs' ? 2 * k * k * pairs0 : k * k * (counts[0] + counts[1] + 1));
 			const sums = ctx.strategySum as Float32Array;
 			const lean = (owner: 0 | 1, bias: ContinuationBias): void => {
 				if (bias === 'blueprint') return;
@@ -481,6 +492,12 @@ export function createDepthLimitedRun(config: SpotConfig, options: DepthLimitedO
 					sums.set(base);
 					lean(0, continuations[a]);
 					lean(1, continuations[b]);
+					if (model === 'pairs') {
+						const [t0, t1] = pairTables(run, firstChance(tree), lists);
+						table.set(t0, (a * k + b) * pairs0);
+						table.set(t1, k * k * pairs0 + (b * k + a) * pairs0);
+						continue;
+					}
 					const { values, totals } = run.solver.rootValues(Mode.Average);
 					table[k * k * (counts[0] + counts[1]) + a * k + b] = totals[0];
 					for (const p of [0, 1] as const) {
@@ -512,7 +529,7 @@ export function createDepthLimitedRun(config: SpotConfig, options: DepthLimitedO
 	// 4. The flop.
 	const run = createRun(flopSpot, { workers: 1, engine: 'js', precision: 'f32' });
 	const showdown = showdownTable(config, lists);
-	const leaf = makeLeafValues(run.solver.ctx, cut.leaves, tables, k, cut.allIns, showdown.tables, showdown.payoff);
+	const leaf = makeLeafValues(run.solver.ctx, cut.leaves, tables, k, cut.allIns, showdown.tables, showdown.payoff, model);
 	run.solver.ctx.leaf = leaf.values;
 	const report: DepthLimitedReport = {
 		leaves: cut.leaves.length,
@@ -544,6 +561,46 @@ export function createDepthLimitedRun(config: SpotConfig, options: DepthLimitedO
 }
 
 /**
+ * Each player's counterfactual value from `node` (on the flop board) for each
+ * of their hand-list entries against each opposing entry at reach 1, an
+ * entry's mirrored hands summed in: rows by the player's entries.
+ */
+function pairTables(run: SolveRun, node: number, lists: Context['active']): [Float64Array, Float64Array] {
+	const members = (p: number): Uint16Array =>
+		lists.memberCombo.slice(lists.memberStart[lists.start[p]], lists.memberStart[lists.start[p] + lists.count[p]]);
+	const mine = members(0);
+	const theirs = members(1);
+	const rows = run.solver.pairValuesAt(node, 0, 0, theirs, new Float64Array(theirs.length).fill(1), mine, mine.length);
+	const column = new Int32Array(COMBOS).fill(-1);
+	theirs.forEach((combo, at) => (column[combo] = at));
+	const n0 = lists.count[0];
+	const n1 = lists.count[1];
+	const table0 = new Float64Array(n0 * n1);
+	const table1 = new Float64Array(n1 * n0);
+	for (let i = 0; i < n0; i++) {
+		const lead = lists.memberCombo[lists.memberStart[lists.start[0] + i]];
+		for (let j = 0; j < n1; j++) {
+			let sum = 0;
+			for (let m = lists.memberStart[lists.start[1] + j]; m < lists.memberStart[lists.start[1] + j + 1]; m++) {
+				sum += rows[column[lists.memberCombo[m]] * COMBOS + lead];
+			}
+			table0[i * n1 + j] = sum;
+		}
+	}
+	for (let j = 0; j < n1; j++) {
+		const lead = lists.memberCombo[lists.memberStart[lists.start[1] + j]];
+		for (let i = 0; i < n0; i++) {
+			let sum = 0;
+			for (let m = lists.memberStart[lists.start[0] + i]; m < lists.memberStart[lists.start[0] + i + 1]; m++) {
+				sum -= rows[column[lead] * COMBOS + lists.memberCombo[m]];
+			}
+			table1[j * n0 + i] = sum;
+		}
+	}
+	return [table0, table1];
+}
+
+/**
  * Who beats whom over every runout from the flop, as counterfactual values
  * for each player's hands against each opposing hand at reach 1, at the
  * payoff of a pot checked down: one table a player, rows by their hand-list
@@ -566,37 +623,7 @@ export function showdownTable(
 		while (spot.tree.kind[end] === NodeKind.Chance) end = spot.tree.edgeChild[spot.tree.firstEdge[end]];
 		while (spot.tree.kind[end] === NodeKind.Decision) end = spot.tree.edgeChild[spot.tree.firstEdge[end]];
 		if (spot.tree.kind[end] !== NodeKind.TerminalShowdown) throw new Error('A checked-down flop should end in a showdown');
-		const members = (p: number): Uint16Array =>
-			lists.memberCombo.slice(lists.memberStart[lists.start[p]], lists.memberStart[lists.start[p] + lists.count[p]]);
-		const mine = members(0);
-		const theirs = members(1);
-		const rows = run.solver.pairValuesAt(node, 0, 0, theirs, new Float64Array(theirs.length).fill(1), mine, mine.length);
-		const column = new Int32Array(COMBOS).fill(-1);
-		theirs.forEach((combo, at) => (column[combo] = at));
-		const n0 = lists.count[0];
-		const n1 = lists.count[1];
-		const table0 = new Float64Array(n0 * n1);
-		const table1 = new Float64Array(n1 * n0);
-		for (let i = 0; i < n0; i++) {
-			const lead = lists.memberCombo[lists.memberStart[lists.start[0] + i]];
-			for (let j = 0; j < n1; j++) {
-				let sum = 0;
-				for (let m = lists.memberStart[lists.start[1] + j]; m < lists.memberStart[lists.start[1] + j + 1]; m++) {
-					sum += rows[column[lists.memberCombo[m]] * COMBOS + lead];
-				}
-				table0[i * n1 + j] = sum;
-			}
-		}
-		for (let j = 0; j < n1; j++) {
-			const lead = lists.memberCombo[lists.memberStart[lists.start[1] + j]];
-			for (let i = 0; i < n0; i++) {
-				let sum = 0;
-				for (let m = lists.memberStart[lists.start[0] + i]; m < lists.memberStart[lists.start[0] + i + 1]; m++) {
-					sum -= rows[column[lead] * COMBOS + lists.memberCombo[m]];
-				}
-				table1[j * n0 + i] = sum;
-			}
-		}
+		const [table0, table1] = pairTables(run, node, lists);
 		return { tables: [table0, table1], payoff: spot.tree.payoff[end] };
 	} finally {
 		run.close();
@@ -616,6 +643,7 @@ function makeLeafValues(
 	allIns: readonly { node: number; payoff: number }[],
 	showdown: readonly [Float64Array, Float64Array],
 	showdownPayoff: number,
+	model: 'additive' | 'pairs',
 ): { values: LeafValues; bytes: number } {
 	const lists = ctx.active;
 	const counts = [lists.count[0], lists.count[1]];
@@ -680,6 +708,24 @@ function makeLeafValues(
 		const current = mode === Mode.Train || mode === Mode.Current;
 		choose(current ? regret : strategySum, choiceBase(l, q), m, theirs, current ? null : regret);
 
+		if (model === 'pairs') {
+			const table = tables[l];
+			const size = n * m;
+			const ownAt = p === 0 ? 0 : k * k * size;
+			for (let a = 0; a < k * COMBOS; a++) values[a] = 0;
+			for (let b = 0; b < k; b++) {
+				for (let j = 0; j < m; j++) weighted[j] = reachOpp[j] * theirs[b * COMBOS + j];
+				for (let a = 0; a < k; a++) {
+					const at = ownAt + (a * k + b) * size;
+					for (let i = 0; i < n; i++) {
+						let sum = 0;
+						const row = at + i * m;
+						for (let j = 0; j < m; j++) sum += table[row + j] * weighted[j];
+						values[a * COMBOS + i] += sum;
+					}
+				}
+			}
+		} else {
 		// The leaf pays a pair of hands `E₀(i) − E₁(j) − C` to player 0: each
 		// side's own EV for its hand, less the other's for theirs, centred so
 		// that against the ranges the table was built for both players' EVs
@@ -712,6 +758,7 @@ function makeLeafValues(
 					values[a * COMBOS + i] += (table[mineAt + i] - c) * mass[i] - against;
 				}
 			}
+		}
 		}
 
 		if (mode === Mode.BestResponse) {

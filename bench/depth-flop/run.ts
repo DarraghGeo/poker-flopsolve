@@ -28,6 +28,7 @@ const refreshes = Number(option('refresh', '0'));
 const iterations = Number(option('iterations', '300'));
 const workers = Number(option('workers', '1'));
 const blueprintTarget = Number(option('blueprint-target', '0.3'));
+const leafModel = option('model', 'additive') as 'additive' | 'pairs';
 
 const SETS: Record<number, ContinuationBias[]> = {
 	1: ['blueprint'],
@@ -59,6 +60,7 @@ for (const k of ks) {
 		workers,
 		blueprintTarget,
 		blueprintIterations: 400,
+		leafModel,
 		onPhase: sample,
 		onLeafSpot(_, solution) {
 			sample();

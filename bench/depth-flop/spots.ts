@@ -21,3 +21,8 @@ for (const [boardName, board] of Object.entries(BOARDS)) {
 	SPOTS[`T-${boardName}`] = { board, ...ranges, ...T } as SpotConfig;
 	SPOTS[`T0-${boardName}`] = { board, ...ranges, ...T0 } as SpotConfig;
 }
+
+/** T's betting at SPR 3, small enough to solve exactly in minutes: for iterating. */
+for (const [boardName, board] of Object.entries(BOARDS)) {
+	SPOTS[`mini-${boardName}`] = { board, ...ranges, pot: 100, stack: 300, ...T } as SpotConfig;
+}
