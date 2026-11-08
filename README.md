@@ -591,6 +591,12 @@ Measured on a 133 vs 145 combo spot, 8 cores:
 a 2-core machine still splits; `workers: 1` stays on one thread. A river spot has a single runout and silently stays single-threaded whatever is
 asked for.
 
+A thread that fails mid-iteration fails the solve instead of hanging it: the step throws, as
+does every step after, and the run must be closed and solved again. A thread killed without
+any chance to report it (a Node worker out of heap, a worker the browser kills) is caught by
+a backstop instead: the main thread waits for the others at most 20× its own share of the
+step, and never less than a minute, before it gives up on them.
+
 Results are bitwise deterministic at a fixed worker count, but agree with a different count
 only to floating point: a worker sums its own slice before the totals are summed across
 workers, which associates the same addition differently, and the non-linear CFR+ clamp
