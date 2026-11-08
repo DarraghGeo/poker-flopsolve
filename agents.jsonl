@@ -15,3 +15,4 @@
 {"url":null,"title":"Threaded solves hang if a worker thread dies mid-iteration","issue":37,"state":"active","updated":"2026-11-08T16:23:00.187Z"}
 {"url":null,"title":"Speed: WebGPU kernel prototype for the river showdown (route 2 of #29)","issue":39,"state":"active","updated":"2026-11-08T16:23:08.581Z"}
 {"url":null,"title":"Approx EV: lossy hand classes on every street, measured against packed lists","issue":40,"state":"active","updated":"2026-11-08T16:23:12.501Z"}
+{"url":null,"title":"Tree size: safe nested subgame solving — full flop sizes, re-solve turns on demand","issue":47,"state":"active","updated":"2026-11-08T16:23:16.317Z"}
