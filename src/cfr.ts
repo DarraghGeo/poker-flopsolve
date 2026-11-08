@@ -753,6 +753,35 @@ function traverse(
 		const from = sharded && ctx.shardStart > first ? ctx.shardStart : first;
 		const to = sharded && ctx.shardEnd < last ? ctx.shardEnd : last;
 
+		// Runout clusters: every deal a stored board stands for is gathered
+		// into one walk — own reach summed, the opponent's averaged over the
+		// deals — and its values go back to every deal's hands.
+		const gathered = ctx.hands.gather !== null ? ctx.hands.gather[nextRound] : null;
+		if (gathered !== null) {
+			const gStart = gathered.start;
+			const gFrom = gathered.from;
+			const gTo = gathered.to;
+			for (let childBoard = from; childBoard < to; childBoard++) {
+				const nMe = lists.count[(lists.roundBase[nextRound] + childBoard) * 2 + traverser];
+				const nOpp = lists.count[(lists.roundBase[nextRound] + childBoard) * 2 + opponent];
+				const firstMember = orbitStart[childBoard];
+				const membersEnd = orbitStart[childBoard + 1];
+				for (let k = 0; k < nMe; k++) childMe[k] = 0;
+				for (let k = 0; k < nOpp; k++) childOpp[k] = 0;
+				for (let m = firstMember; m < membersEnd; m++) {
+					for (let e = gStart[m * 2 + traverser]; e < gStart[m * 2 + traverser + 1]; e++) childMe[gTo[e]] += reachMe[gFrom[e]];
+					for (let e = gStart[m * 2 + opponent]; e < gStart[m * 2 + opponent + 1]; e++) childOpp[gTo[e]] += reachOpp[gFrom[e]];
+				}
+				const share = 1 / (membersEnd - firstMember);
+				for (let k = 0; k < nOpp; k++) childOpp[k] *= share;
+				const value = traverse(ctx, buffers, mode, traverser, iterWeight, child, childBoard, childMe, childOpp, depth + 1);
+				for (let m = firstMember; m < membersEnd; m++) {
+					for (let e = gStart[m * 2 + traverser]; e < gStart[m * 2 + traverser + 1]; e++) out[gFrom[e]] += value[gTo[e]];
+				}
+			}
+			return out;
+		}
+
 		for (let childBoard = from; childBoard < to; childBoard++) {
 			const childMySlot = (lists.roundBase[nextRound] + childBoard) * 2 + traverser;
 			const childOppSlot = (lists.roundBase[nextRound] + childBoard) * 2 + opponent;

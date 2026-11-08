@@ -17,6 +17,8 @@ import type { ResolvedBoard } from './runouts.ts';
 import type { RunoutMerge } from './runouts.ts';
 import { boardAtRound, enumerateRunouts, rankSwap, resolveBoard } from './runouts.ts';
 import { suitSymmetries } from './abstraction.ts';
+import type { ClusterCounts } from './clusters.ts';
+import { resolveClustered, RunoutClusterer } from './clusters.ts';
 import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
 import { buildHandSpace } from './hands.ts';
@@ -152,6 +154,16 @@ export interface SpotConfig {
 	 * strategy in the real game, every card dealt. Default false.
 	 */
 	readonly runoutBuckets?: boolean | number;
+	/**
+	 * Experimental: solve a few representative turn (and river) cards for all
+	 * of them, chosen by what each card does to both ranges — potential-aware
+	 * card abstraction, k-medoids under the earth mover's distance. Hands on a
+	 * merged card play as the representative's hands of the same strength
+	 * rank where no rank swap fits. An approximation, measured by
+	 * `trueExploitabilityPercent()`; it runs the JavaScript traversal on one
+	 * thread. Unset, off.
+	 */
+	readonly runoutClusters?: ClusterCounts;
 }
 
 /** Projected cost of solving a spot. */
@@ -305,6 +317,7 @@ export function defineSpot(config: SpotConfig): Spot {
 		config.runoutBuckets && board.length < 5
 			? rangeRankMerge(players, config.runoutBuckets === true ? DEFAULT_BUCKET_GAP : config.runoutBuckets)
 			: undefined,
+		config.runoutClusters && board.length < 5 ? new RunoutClusterer(players, config.runoutClusters) : undefined,
 	);
 
 	const tree = buildTree(
@@ -365,7 +378,12 @@ export function defineSpot(config: SpotConfig): Spot {
 		stackUnits: Math.round(config.stack * chipScale),
 		source: config,
 		resolveBoard(cards) {
-			return resolveBoard(runouts, typeof cards === 'string' ? parseCards(cards) : cards);
+			const list = typeof cards === 'string' ? parseCards(cards) : cards;
+			if (runouts.orbitCombos) {
+				const clustered = resolveClustered(runouts, players, list);
+				return { round: clustered.round, board: clustered.board, combos: clustered.combos[0], playerCombos: clustered.combos };
+			}
+			return resolveBoard(runouts, list);
 		},
 	};
 }
@@ -672,7 +690,9 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
 	const weights = runoutWeights(spot.runouts);
 
-	const requested = resolveWorkers(options);
+	// Runout clusters run the JavaScript traversal on one thread.
+	const clustered = spot.runouts.orbitCombos !== undefined;
+	const requested = clustered ? 1 : resolveWorkers(options);
 	const plan = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
 
 	// Workers need the accumulators in shared memory. Allocating shared for a
@@ -688,7 +708,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// a platform with WebAssembly SIMD. It owns the storage; the context sees
 	// it through views.
 	const engine =
-		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false
+		options.engine !== 'js' && !clustered && precision === 'f32' && !options.analysisOnly && options.simd !== false
 			? createEngine(
 					{
 						tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
@@ -780,7 +800,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		},
 		trueExploitabilityPercent() {
 			if (!spot.runouts.approximate) return this.exploitabilityPercent();
-			const real = createRun(defineSpot({ ...spot.source, runoutBuckets: false }), {
+			const real = createRun(defineSpot({ ...spot.source, runoutBuckets: false, runoutClusters: undefined }), {
 				workers: threadCount,
 				precision,
 			});
