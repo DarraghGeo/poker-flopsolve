@@ -44,7 +44,9 @@ for (;;) {
 	if (Atomics.load(control, ENGINE_CONTROL.command) === 1) break;
 	const mode = Atomics.load(control, ENGINE_CONTROL.mode);
 	const traverser = Atomics.load(control, ENGINE_CONTROL.traverser);
-	const [positive, negative, sum, weight, clamp] = settings;
+	const [positive, negative, sum, weight, clamp, apply] = settings;
+	// Off for a current-profile read, which updates nothing.
+	engine.setPhase(0, apply);
 	for (let entry = 0; entry < entries; entry++) {
 		const slot = reach + entry * 2 * rowBytes;
 		const out = engine.runChance(

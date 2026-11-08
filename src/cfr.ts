@@ -570,7 +570,13 @@ export function dcfrFactors(t: number): { keepPositive: number; keepNegative: nu
 	};
 }
 
-export const Mode = { Train: 0, BestResponse: 1, Average: 2 } as const;
+/**
+ * What a traversal plays and does. Train plays the current (regret-matched)
+ * profile and updates the traverser's regrets and sums; Current plays that
+ * same profile and updates nothing, for reading its values; Average plays the
+ * average profile; BestResponse has the traverser best-respond to it.
+ */
+export const Mode = { Train: 0, BestResponse: 1, Average: 2, Current: 3 } as const;
 export type Mode = (typeof Mode)[keyof typeof Mode];
 
 /**
@@ -797,11 +803,12 @@ function traverse(
 	// Laid out as storage is: `strategy[a * stride + i]`.
 	const strategy = buffers.strategy[depth];
 	const length = actions * stride;
-	if (mode === Mode.Train && buffers.kernels !== null) {
+	const current = mode === Mode.Train || mode === Mode.Current;
+	if (current && buffers.kernels !== null) {
 		const kernels = buffers.kernels;
 		kernels.input.set(ctx.regret.subarray(slotBase, slotBase + length));
 		kernels.regretMatch(strategy, actions, stride);
-	} else if (mode === Mode.Train) {
+	} else if (current) {
 		regretMatch(ctx.regret, slotBase, actions, stride, strategy);
 	} else if (buffers.kernels !== null) {
 		const kernels = buffers.kernels;
@@ -1009,6 +1016,12 @@ function dither(slot: number, iteration: number): number {
 	return (h >>> 0) / 4294967296;
 }
 
+/** See `Solver.rootValues`. */
+export interface RootValues {
+	readonly totals: readonly [number, number];
+	readonly values: readonly [Float64Array, Float64Array];
+}
+
 /** A whole-tree traversal, returning the root value vector. */
 export type RootTraversal = (mode: Mode, traverser: 0 | 1, iterWeight: number) => Float64Array;
 
@@ -1040,6 +1053,20 @@ export interface Solver {
 	readonly rootCount: number;
 	iterate(count: number, from: number): void;
 	expectedValue(): [number, number];
+	/**
+	 * One root pass per player under the average profile (`Mode.Average`) or
+	 * the current one (`Mode.Current`): each player's chips per hand, as
+	 * `expectedValue` gives them for the average, and a copy of their root
+	 * counterfactual values, one per hand of their root active list.
+	 */
+	rootValues(mode: typeof Mode.Average | typeof Mode.Current): RootValues;
+	/**
+	 * Root EV in chips for each combination, indexed like `COMBO_CARDS`, from
+	 * root counterfactual values `rootValues` returned for `player`: each
+	 * hand's value over the opponent mass it can be dealt against. Zero for a
+	 * combination off the root list or with no opponent hand to face.
+	 */
+	handEvs(player: 0 | 1, values: Float64Array): Float64Array;
 	exploitability(): number;
 	averageStrategyAt(node: number, board: number): { actions: number; probs: Float64Array };
 	/**
@@ -1149,6 +1176,44 @@ export function makeSolver(ctx: Context): Solver {
 		},
 		expectedValue() {
 			return [total(root(Mode.Average, 0, 0), 0), total(root(Mode.Average, 1, 0), 1)];
+		},
+		rootValues(mode) {
+			if (mode === Mode.Current && ctx.regret.length === 0) {
+				throw new Error('The current profile needs regrets, and an analysis-only run has none');
+			}
+			// Each root vector is a buffer the next traversal reuses, so it is
+			// read and copied before the other player's pass.
+			const one = (player: 0 | 1): [number, Float64Array] => {
+				const values = root(mode, player, 0);
+				return [total(values, player), values.slice(0, listOf(0, 0, player)[1])];
+			};
+			const [total0, values0] = one(0);
+			const [total1, values1] = one(1);
+			return { totals: [total0, total1], values: [values0, values1] };
+		},
+		handEvs(player, values) {
+			const opponent = ctx.players[1 - player];
+			const evs = new Float64Array(COMBOS);
+			const [from, count] = listOf(0, 0, player);
+			const scale = ctx.runoutWeight[0];
+			for (let i = 0; i < count; i++) {
+				const combo = lists.list[from + i];
+				const a = COMBO_CARDS[combo * 2];
+				const b = COMBO_CARDS[combo * 2 + 1];
+				// Summed directly rather than by inclusion-exclusion over cards,
+				// so a hand with nothing to face gets exactly zero mass, not a
+				// rounding residue to divide by. Board-blocked opponent hands
+				// already weigh zero.
+				let mass = 0;
+				for (let j = 0; j < opponent.count; j++) {
+					const other = opponent.combos[j];
+					const c = COMBO_CARDS[other * 2];
+					const d = COMBO_CARDS[other * 2 + 1];
+					if (c !== a && c !== b && d !== a && d !== b) mass += opponent.weights[other];
+				}
+				evs[combo] = mass > 0 ? values[i] / (mass * scale) : 0;
+			}
+			return evs;
 		},
 		exploitability() {
 			const br0 = total(root(Mode.BestResponse, 0, 0), 0);

@@ -26,7 +26,7 @@ import { warmStart } from './warm.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
 import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, THREADS_AVAILABLE } from './platform/node.ts';
-import type { Context, PlayerIndex, RegretStore, Solver, SumStore } from './cfr.ts';
+import type { Context, PlayerIndex, RegretStore, RootValues, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
@@ -34,6 +34,7 @@ import {
 	makeSolver,
 	makeTerminalScratch,
 	matchupMass,
+	Mode,
 	runoutWeights,
 } from './cfr.ts';
 
@@ -495,6 +496,28 @@ export interface SolveOptions {
 
 /** See `SolveOptions.approximations`. */
 export interface Approximations {
+	/**
+	 * Report `Solution.ev` and `Solution.handEvs` under the current profile —
+	 * the regret-matched strategy the next iteration would play — instead of
+	 * the average strategy. Default off. Measured under DCFR, the default
+	 * update rule; it applies to CFR+ alike.
+	 *
+	 * Measured against a solve to 0.045% of pot, after a 15 s single-threaded
+	 * browser budget, the current profile's per-hand root EVs had a mean error
+	 * of 1.23% of pot where the average's had 2.18% (flop As Kh 7d), 0.11%
+	 * against 0.37% (monotone Ks 9s 4s) and 1.40% against 2.02% (wide Qs Jh
+	 * 2c). Across those three spots it was the closer one at 62 of 65
+	 * checkpoints from 15 s down to 0.1% exploitability, often by 2–4 times.
+	 * It costs the same one pass per player as reading the average's EVs.
+	 *
+	 * Those EVs then belong to a different profile from the strategy
+	 * `strategyAt` and `reachAt` show, which stays the average: the average is
+	 * what converges to equilibrium and what exploitability measures, while
+	 * the current profile's values happen to settle sooner. Read them as the
+	 * better estimate of the equilibrium's EVs, not as the EVs of the strategy
+	 * on screen. A run with `analysisOnly` has no regrets and cannot use this.
+	 */
+	readonly currentProfileEv?: boolean;
 	/*
 	 * Threshold pruning — skipping opponent actions taken with negligible
 	 * reach — was built and measured, and is deliberately not offered: a
@@ -602,8 +625,21 @@ export interface Solution {
 	readonly workers: number;
 	/** The solver behind this solution, for analysis and warm starts. */
 	readonly solver: Solver;
-	/** Chips per hand for a player, under the average strategy. */
+	/**
+	 * Chips per hand for a player, under the average strategy — or under the
+	 * current profile with `approximations.currentProfileEv`.
+	 */
 	ev(player: 0 | 1): number;
+	/**
+	 * Root EV in chips for each combination a player can hold, indexed like
+	 * `COMBO_CARDS` (as `reachAt` is): what that hand wins on average, over
+	 * the opponent hands it can be dealt against. Zero for combinations outside
+	 * the range or blocked by the board. Weighted by range weight times
+	 * compatible opponent mass, the mean is `ev(player)`, and the same pass
+	 * serves both. Under the average strategy, or the current profile with
+	 * `approximations.currentProfileEv`. Returns a fresh copy.
+	 */
+	handEvs(player: 0 | 1): Float64Array;
 	/** Distance from equilibrium, in chips per hand. */
 	exploitability(): number;
 	/**
@@ -842,7 +878,10 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			}
 		},
 		snapshot(history = [], stoppedAt = 'iterations') {
-			return makeSolution(spot, ctx, solver, completed, offset + completed, [...history], stoppedAt, threadCount);
+			return makeSolution(
+				spot, ctx, solver, completed, offset + completed, [...history], stoppedAt, threadCount,
+				options.approximations?.currentProfileEv === true,
+			);
 		},
 	};
 }
@@ -1032,6 +1071,7 @@ function makeSolution(
 	history: Progress[],
 	stoppedAt: 'target' | 'iterations',
 	workers: number,
+	currentProfileEv: boolean,
 ): Solution {
 	const { tree } = spot;
 	const parent = new Int32Array(tree.nodeCount).fill(-1);
@@ -1067,7 +1107,11 @@ function makeSolution(
 		return reach;
 	};
 
-	let cachedEv: [number, number] | null = null;
+	// One pass per player serves `ev` and `handEvs` alike.
+	let cachedEv: RootValues | null = null;
+	const rootValues = (): RootValues =>
+		(cachedEv ??= solver.rootValues(currentProfileEv ? Mode.Current : Mode.Average));
+	const cachedHands: [Float64Array | null, Float64Array | null] = [null, null];
 	let cachedExploit: number | null = null;
 
 	return {
@@ -1079,8 +1123,11 @@ function makeSolution(
 		solver,
 		history,
 		ev(player) {
-			cachedEv ??= solver.expectedValue();
-			return cachedEv[player];
+			return rootValues().totals[player];
+		},
+		handEvs(player) {
+			cachedHands[player] ??= solver.handEvs(player, rootValues().values[player]);
+			return cachedHands[player].slice();
 		},
 		exploitability() {
 			cachedExploit ??= solver.exploitability();
