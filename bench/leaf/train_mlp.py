@@ -3,7 +3,7 @@
     python3 bench/leaf/train_mlp.py <train.f32,...> [test.f32,...]
 
 Rows come from featurize.ts: 36 features, then EV / pot, weight w * m, spot
-id. Without test files every fifth spot is held out. Reports the same errors
+id. Every fifth spot is held out, and any test files are scored too. Reports the same errors
 as fit.ts, in % of pot, with DeepStack's zero-sum correction applied.
 """
 import sys, time
@@ -14,11 +14,11 @@ def load(arg):
     return np.concatenate([np.fromfile(f, dtype=np.float32).reshape(-1, F + 3) for f in arg.split(',') if f])
 
 data = load(sys.argv[1])
+# Every fifth spot is held out; test files, if given, are scored as well.
+hold = (data[:, F + 2].astype(np.int64) % 5) == 0
+train, tests = data[~hold], {'held-out': data[hold]}
 if len(sys.argv) > 2:
-    train, tests = data, {f: load(f) for f in sys.argv[2].split(',')}
-else:
-    hold = (data[:, F + 2].astype(np.int64) % 5) == 0
-    train, tests = data[~hold], {'held-out': data[hold]}
+    tests.update({f: load(f) for f in sys.argv[2].split(',')})
 
 def spot_weights(d):
     # Each spot (and each player in it) counts equally.
@@ -101,4 +101,7 @@ def report(name, d):
 report('train', train[train[:, F + 2] < 200000])
 for name, d in tests.items():
     report(name.split('/')[-1], d)
+    if name.endswith('.f32'):
+        # Predictions in row order, for aggregate.py to join with the rows.
+        np.save(name[:-4] + f'.pred{H}.npy', forward(((d[:, :F] - mu) / sd).astype(np.float32), P))
 np.savez('/tmp/claude-0/-home-user-poker-flopsolve/ad79a97b-598e-57c2-8394-3dedc3f57b58/scratchpad/mlp.npz', *P, mu=mu, sd=sd)
