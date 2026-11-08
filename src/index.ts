@@ -772,6 +772,38 @@ export interface Approximations {
 	 * each iteration, would cost tens of times more and was not built. The
 	 * implementation is in this repository's history (commit 0f80fcc);
 	 * `bench/ooc/` keeps the OPFS throughput and sizing benchmarks.
+	 *
+	 * Pruning for space (#52) — freeing the storage under lines no hand plays,
+	 * as best-response pruning does (Brown & Sandholm, 2017), and rebuilding
+	 * it if the line comes back — was measured before building and is not
+	 * offered. `bench/prune-space-census.ts` walks both players' reach under
+	 * the current profile after every iteration and counts the regret and
+	 * strategy-sum storage of blocks (a node on one board) that one player or
+	 * the other reaches with no hand. That is everything freeing could release.
+	 * On T₀ (AsKh7d, pot 55, stack 975, bets 33/75/150%, all-in raise, two
+	 * aggressions, 5.1 GiB at f32) it was 2.8%, 3.4%, 7.6% and 15.8% of
+	 * storage at iterations 20, 50, 100 and 200 (1.1% of pot). Only 6.0% had
+	 * stayed unreached for the last 50 iterations, and no decision node was
+	 * unreached on every board it is dealt on, which is the unit a whole-node
+	 * allocator would free. The target tree itself on Ks9s4s (3.75 GiB) was
+	 * alike: 15.0% per block at iteration 150 (2.5% of pot), 3.3% for 50
+	 * iterations running, 0% per node. Turn-rooted copies of the target's
+	 * betting, solved to 0.3–0.6% of pot, reached 15–20% per block and 3–4%
+	 * per node. Some hand on some board keeps every line alive: per node,
+	 * almost nothing can be freed, and per block, freeing all of it would
+	 * still leave the target at about 14 GiB at f32, where 2 GiB needs a
+	 * cut of about 9×.
+	 *
+	 * The bound that makes freeing safe does not hold here either. With
+	 * DCFR's β = 0 a negative regret halves every iteration, so it never
+	 * falls below about twice the largest one-iteration regret, and the
+	 * number of iterations it proves an action stays unprofitable is zero
+	 * (as for pruning work, above). And WebAssembly memory grows but never
+	 * shrinks, so freed blocks only cut peak memory if storage starts small
+	 * and is allocated when the traversal first reaches it. That means a
+	 * per-block indirection through every kernel, the AssemblyScript engine,
+	 * the threads' shared memory, the 16-bit scales and warm starts, for an
+	 * 8–20% saving at best.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
