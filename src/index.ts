@@ -593,6 +593,24 @@ export interface Approximations {
 	 * current profile rather than the average: at equal iterations its error
 	 * was lower at 62 of 65 checkpoints, often by 2 to 4 times. Issue #35 takes
 	 * that up as its own opt-in.
+	 *
+	 * Learned turn-leaf values — solving only the flop betting and asking a
+	 * model for each hand's value where the turn is dealt, as DeepStack does —
+	 * were measured too (`bench/leaf/`), and are not offered: no model came
+	 * near the accuracy the exact solve already reaches in the time budget.
+	 * Fitted on turn spots solved to 0.3% of pot and scored on the real turn
+	 * leaves of 0.1% flop solves, per-hand EV was off by 9–17% of the leaf pot
+	 * for equity times a realisation factor per hand class (a hand's value at
+	 * a stack-to-pot ratio of 2 is not bounded by its share of the pot: strong
+	 * hands win stacks, weak ones fold), 3–5% for a cubic in equity per class,
+	 * and 1.7–2.7% for an MLP on equity-distribution features trained on
+	 * 10,000 spots. Errors move together across turn cards, so averaging them
+	 * into the flop barely cancels them: 1.1–4.2% of the flop pot with the
+	 * flop strategy held at the reference, where the exact solve stopped at
+	 * 15 s, single-threaded in Chromium, is within 0.1–1.7% at the root. Nor
+	 * would it be faster: the network over one leaf's turn cards took about
+	 * 140 ms, three leaves more than an exact flop iteration (about 350 ms),
+	 * before the range-dependent features it needs.
 	 */
 }
 
