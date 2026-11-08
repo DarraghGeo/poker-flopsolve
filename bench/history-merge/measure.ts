@@ -35,14 +35,16 @@ export const SPOTS: Record<string, SpotConfig> = {
 /** A variant: what `shareHistories` it sets. */
 const VARIANTS: Record<string, SpotConfig['shareHistories']> = {
 	off: false,
-	exact: true,
-	'exact-cf': { weighting: 'counterfactual' },
-	river: { fromRound: 2 },
-	'river-cf': { fromRound: 2, weighting: 'counterfactual' },
+	// Turn and river, exact meetings: the turn's roots as well as the river's.
+	exact: { fromRound: 1 },
+	'exact-cf': { fromRound: 1, weighting: 'counterfactual' },
+	// The default: the river alone.
+	river: true,
+	'river-cf': { weighting: 'counterfactual' },
 };
 for (const w of [0.1, 0.25, 0.5, 1, 4]) {
-	VARIANTS[`spr${w}`] = { spr: w };
-	VARIANTS[`river-spr${w}`] = { spr: w, fromRound: 2 };
+	VARIANTS[`spr${w}`] = { spr: w, fromRound: 1 };
+	VARIANTS[`river-spr${w}`] = { spr: w };
 }
 
 const args: Record<string, string> = {};
@@ -109,12 +111,17 @@ function evError(ref: Reference, evs: Float64Array[]): { mean: number; max: numb
 	return { mean: sum / mass, max };
 }
 
+/** Peak resident memory of this process so far: storage, JS heap and all. */
+function peakRss(): number {
+	return process.resourceUsage().maxRSS * 1024;
+}
+
 const ref = reference();
 console.log(
 	`\n## ${name}: reference ${ref.exploitability.toFixed(3)}% of pot after ${ref.iterations} iterations (${ref.seconds.toFixed(0)} s, ${workers} threads)`,
 );
-console.log('| variant | storage f32 | iterations | exploitability % | EV MAE % pot | EV max % pot | s/iter |');
-console.log('|---|---|---|---|---|---|---|');
+console.log('| variant | storage f32 | storage i16 | iterations | exploitability % | EV MAE % pot | EV max % pot | s/iter | engine | peak RSS |');
+console.log('|---|---|---|---|---|---|---|---|---|---|');
 const checkpoints = (args.checkpoints ?? `${iterations}`).split(',').map(Number);
 for (const variant of (args.variants ?? 'exact').split(',')) {
 	const spot = defineSpot({ ...config, shareHistories: VARIANTS[variant] });
@@ -126,9 +133,10 @@ for (const variant of (args.variants ?? 'exact').split(',')) {
 		elapsed += performance.now() - started;
 		const solution = run.snapshot();
 		const error = evError(ref, [solution.handEvs(0), solution.handEvs(1)]);
+		const gib = (bytes: number): string => `${(bytes / 2 ** 30).toFixed(2)} GiB`;
 		console.log(
-			`| ${variant} | ${(spot.estimate.bytes / 2 ** 30).toFixed(2)} GiB | ${at} | ${run.exploitabilityPercent().toFixed(3)} | ` +
-				`${error.mean.toFixed(3)} | ${error.max.toFixed(2)} | ${(elapsed / 1000 / at).toFixed(2)} |`,
+			`| ${variant} | ${gib(spot.estimate.bytes)} | ${gib(spot.estimate.compressedBytes)} | ${at} | ${run.exploitabilityPercent().toFixed(3)} | ` +
+				`${error.mean.toFixed(3)} | ${error.max.toFixed(2)} | ${(elapsed / 1000 / at).toFixed(2)} | ${run.engine} | ${gib(peakRss())} |`,
 		);
 	}
 	run.close();

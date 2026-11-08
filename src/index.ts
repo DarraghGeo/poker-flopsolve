@@ -159,31 +159,54 @@ export interface SpotConfig {
 	 */
 	readonly runoutBuckets?: boolean | number;
 	/**
-	 * Share turn and river storage between betting histories that reach the
-	 * same round start, an approximation (issue #49). Every flop line gets
-	 * its own copy of the turn and river below it, yet with pot-fraction sizes
-	 * many lines meet: check, bet, call and bet, call reach the same pot, and
-	 * so does every raise line taken in either order. Their subtrees are
-	 * identical, so their nodes can keep one set of regrets and strategy sums.
-	 * Each history is still walked with its own reach, so an iteration costs
-	 * the same; only storage shrinks. What is lost is recall: a player plays
-	 * one strategy for every line that met, whatever range each brought.
+	 * Share river storage between betting histories that reach the same pot,
+	 * a lossy approximation for fitting a spot in memory (issue #49). Off by
+	 * default.
 	 *
-	 * `true` shares exact meetings, from the turn on. `{ spr: w }` also shares
-	 * subtrees of the same shape whose stack-to-pot ratio falls in one bucket
-	 * of log-width `w`, their amounts and payoffs different. `fromRound` is
-	 * the first round shared, counted from the spot's first: from a flop, 2
-	 * shares only the river. The strategy is one for the full game, so
-	 * exploitability is measured exactly. Default false.
+	 * Every earlier line gets its own copy of the streets below it, yet with
+	 * pot-fraction sizes many lines meet: check, bet, call and bet, call
+	 * reach the same pot, and so does every raise line taken in either order.
+	 * Their subtrees are identical, so their nodes keep one set of regrets and
+	 * strategy sums. Each history is still walked with its own reach, so an
+	 * iteration costs exactly what it did; only storage shrinks. On the
+	 * three-size target spot (AsKh7d, pot 55, stack 975, sizes 33/75/150%, a
+	 * 75% raise and all-in, three aggressions) 173 river starts collapse to 23
+	 * and storage falls 5.9 times: 17.2 GiB to 2.9 at 32 bits, 8.7 to 1.5 at 16.
+	 *
+	 * What is lost is recall: a player plays one strategy for every line that
+	 * met, though the ranges each line brings differ. Each history's regret is
+	 * weighted by how often the acting hand plays into it, which cut the cost
+	 * fourfold against plain CFR's sum. Measured against the exact solve
+	 * (0.25% of pot) on AsKh7d, pot 55, stack 975, one 50% size and an all-in
+	 * raise, after 300 iterations: river sharing 4.0% of pot exploitability
+	 * (in the full game: the strategy is one for every node, so this is
+	 * exact), per-combination root EV off by 0.67% of pot on average and
+	 * 6.8% at worst. Do not expect it to approach equilibrium; expect a
+	 * strategy a few percent of the pot from it, in a spot that otherwise
+	 * does not fit.
+	 *
+	 * `true` shares the river. See `ShareHistories` for the turn and for
+	 * lossier buckets.
 	 */
 	readonly shareHistories?: boolean | ShareHistories;
 }
 
 /** See `SpotConfig.shareHistories`. */
 export interface ShareHistories {
-	/** Also share subtrees of one shape whose SPR falls in one bucket of this log-width. */
+	/**
+	 * Also share subtrees of the same actions whose stack-to-pot ratio falls
+	 * in one bucket of this log-width, their amounts and payoffs different.
+	 * Measured, it saves nothing over exact meetings up to a width of 1 on
+	 * one-size trees, 1.5 times more on the three-size target at 0.1, and at
+	 * 4 left 20% of pot exploitability; unset, exact meetings only.
+	 */
 	readonly spr?: number;
-	/** First round shared, counted from the spot's first. Default 1. */
+	/**
+	 * First round shared, counted from the spot's first: from a flop, 1
+	 * shares the turn too. Default the river alone. The turn is about 2% of a
+	 * flop spot's storage, and sharing it measured less accurate (5.7% of pot
+	 * exploitability against 4.0%), so it is rarely worth it.
+	 */
 	readonly fromRound?: number;
 	/**
 	 * How a shared node weighs the histories meeting in it. 'reach' (the
@@ -433,7 +456,7 @@ function shareHistories(
 	if (width !== undefined && !(width > 0)) throw new Error(`shareHistories.spr must be positive, got ${width}`);
 	return aliasHistories(
 		tree, runouts,
-		{ key: width === undefined ? { kind: 'exact' } : { kind: 'spr', width }, fromRound: asked.fromRound ?? 1 },
+		{ key: width === undefined ? { kind: 'exact' } : { kind: 'spr', width }, fromRound: asked.fromRound ?? runouts.rounds - 1 },
 		Math.round(config.stack * chipScale),
 	).alias;
 }

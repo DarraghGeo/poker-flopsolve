@@ -71,13 +71,15 @@ describe('history merging', () => {
 
 	it('cuts storage by the shared nodes', () => {
 		const plain = defineSpot(flop);
-		const shared = defineSpot({ ...flop, shareHistories: true });
+		const shared = defineSpot({ ...flop, shareHistories: { fromRound: 1 } });
 		expect(shared.estimate.bytes).toBeLessThan(plain.estimate.bytes);
 		expect(shared.estimate.compressedBytes).toBeLessThan(plain.estimate.compressedBytes);
-		const river = defineSpot({ ...flop, shareHistories: { fromRound: 2 } });
+		// The river alone by default, which keeps the turn.
+		const river = defineSpot({ ...flop, shareHistories: true });
+		expect(river.estimate).toEqual(defineSpot({ ...flop, shareHistories: { fromRound: 2 } }).estimate);
 		expect(river.estimate.bytes).toBeLessThan(plain.estimate.bytes);
-		expect(river.estimate.bytes).toBeGreaterThanOrEqual(shared.estimate.bytes);
-		const spr = defineSpot({ ...flop, shareHistories: { spr: 1 } });
+		expect(river.estimate.bytes).toBeGreaterThan(shared.estimate.bytes);
+		const spr = defineSpot({ ...flop, shareHistories: { spr: 1, fromRound: 1 } });
 		expect(spr.estimate.bytes).toBeLessThanOrEqual(shared.estimate.bytes);
 	});
 
