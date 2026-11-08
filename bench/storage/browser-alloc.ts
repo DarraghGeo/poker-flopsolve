@@ -29,4 +29,4 @@ const result = await runInBrowser<string[]>(
 	`,
 	600_000,
 );
-console.log(result.join('\\n'));
+console.log(result.join('\n'));
