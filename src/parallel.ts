@@ -40,6 +40,9 @@ import { NodeKind } from './tree.ts';
 import type { WorkerHandle } from './platform/node.ts';
 import { spawnWorker } from './platform/node.ts';
 
+/** How a pool starts its workers; the platform's `spawnWorker` unless a test swaps it. */
+export type SpawnWorker = (setup: WorkerSetup, onError: (error: Error) => void) => WorkerHandle;
+
 export { defaultWorkerCount } from './platform/node.ts';
 
 export const CONTROL = {
@@ -50,8 +53,14 @@ export const CONTROL = {
 	iterWeight: 4,
 	ready: 5,
 	mode: 6,
+	/** Set, never cleared, once any thread's part of a step threw; see src/worker.ts. */
+	failed: 7,
 	size: 8,
 } as const;
+
+/** What a threaded step throws once a thread has failed mid-iteration, here or in src/engine.ts. */
+export const THREAD_FAILED_ERROR =
+	'A solver thread failed mid-iteration; this run cannot continue. Close it and solve again, or use workers: 1.';
 
 export const COMMAND = { work: 0, exit: 1 } as const;
 
@@ -149,6 +158,7 @@ export interface Pool {
  * @param plan how the runouts are split
  * @param payload everything the worker needs to rebuild the context
  * @param workers threads doing the work, the main thread included
+ * @param spawn how each worker is started
  */
 export function startPool(
 	ctx: Context,
@@ -156,6 +166,7 @@ export function startPool(
 	plan: ShardPlan,
 	payload: unknown,
 	workers: number,
+	spawn: SpawnWorker = spawnWorker,
 ): Pool {
 	const entryCount = plan.entryNodes.length;
 	// The main thread is one of the `workers`; only the rest are spawned.
@@ -192,7 +203,7 @@ export function startPool(
 		};
 		// A worker that dies would otherwise leave the main thread waiting on a
 		// counter that can never reach its target.
-		const thread = spawnWorker(setup, (error: Error) => {
+		const thread = spawn(setup, (error: Error) => {
 			failure ??= error;
 			Atomics.store(control, CONTROL.ready, spawned);
 			Atomics.add(control, CONTROL.done, spawned);
@@ -223,6 +234,9 @@ export function startPool(
 
 	const mainReachMe = new Float64Array(COMBOS);
 	const mainReachOpp = new Float64Array(COMBOS);
+
+	const failed = (): Error | null =>
+		failure ?? (Atomics.load(control, CONTROL.failed) ? new Error(THREAD_FAILED_ERROR) : null);
 
 	const dispatch = (mode: Mode, traverser: 0 | 1, iterWeight: number): void => {
 		Atomics.store(control, CONTROL.done, 0);
@@ -258,51 +272,68 @@ export function startPool(
 			ctx.shardEnd = fullEnd;
 		}
 
+		// A worker whose walk throws says so in `failed` and counts itself
+		// done, as its error event cannot reach this thread while it waits.
 		for (;;) {
 			const done = Atomics.load(control, CONTROL.done);
-			if (done >= spawned) break;
-			if (failure) throw failure;
+			if (done >= spawned || failure) break;
 			Atomics.wait(control, CONTROL.done, done, 50);
 		}
-		if (failure) throw failure;
+		const dead = failed();
+		if (dead) throw dead;
+	};
+
+	const traverseAll: RootTraversal = (mode, traverser, iterWeight) => {
+		// Pass A: walk the round above the split to capture what each worker
+		// needs, applying nothing.
+		ctx.applyUpdates = false;
+		ctx.chanceOverride = null;
+		ctx.chanceCollect = (node, reachMe, reachOpp) => {
+			const entry = plan.entryIndexOf[node];
+			exchange.set(reachMe.subarray(0, COMBOS), entry * 2 * COMBOS);
+			exchange.set(reachOpp.subarray(0, COMBOS), entry * 2 * COMBOS + COMBOS);
+		};
+		try {
+			solver.traverseRoot(mode, traverser, iterWeight);
+		} finally {
+			ctx.chanceCollect = null;
+		}
+
+		// Leaves this thread's own partial in `chanceValues`.
+		dispatch(mode, traverser, iterWeight);
+
+		for (let w = 0; w < spawned; w++) {
+			const base = reachFloats + w * entryCount * COMBOS;
+			for (let i = 0; i < entryCount * COMBOS; i++) chanceValues[i] += exchange[base + i];
+		}
+
+		// Pass B: finish that round from the totals, now applying updates.
+		ctx.chanceOverride = chanceValues;
+		ctx.applyUpdates = true;
+		try {
+			const value = solver.traverseRoot(mode, traverser, iterWeight);
+			total.set(value.subarray(0, COMBOS));
+		} finally {
+			ctx.chanceOverride = null;
+		}
+		return total;
 	};
 
 	return {
 		workers,
 		traverse(mode, traverser, iterWeight) {
-			// Pass A: walk the round above the split to capture what each worker
-			// needs, applying nothing.
-			ctx.applyUpdates = false;
-			ctx.chanceOverride = null;
-			ctx.chanceCollect = (node, reachMe, reachOpp) => {
-				const entry = plan.entryIndexOf[node];
-				exchange.set(reachMe.subarray(0, COMBOS), entry * 2 * COMBOS);
-				exchange.set(reachOpp.subarray(0, COMBOS), entry * 2 * COMBOS + COMBOS);
-			};
+			// Once any thread has failed, so does every step after, before it
+			// touches anything.
+			const dead = failed();
+			if (dead) throw dead;
 			try {
-				solver.traverseRoot(mode, traverser, iterWeight);
-			} finally {
-				ctx.chanceCollect = null;
+				return traverseAll(mode, traverser, iterWeight);
+			} catch (error) {
+				// This thread's own part may have thrown with the workers still
+				// walking; no later step may run over them.
+				Atomics.store(control, CONTROL.failed, 1);
+				throw error;
 			}
-
-			// Leaves this thread's own partial in `chanceValues`.
-			dispatch(mode, traverser, iterWeight);
-
-			for (let w = 0; w < spawned; w++) {
-				const base = reachFloats + w * entryCount * COMBOS;
-				for (let i = 0; i < entryCount * COMBOS; i++) chanceValues[i] += exchange[base + i];
-			}
-
-			// Pass B: finish that round from the totals, now applying updates.
-			ctx.chanceOverride = chanceValues;
-			ctx.applyUpdates = true;
-			try {
-				const value = solver.traverseRoot(mode, traverser, iterWeight);
-				total.set(value.subarray(0, COMBOS));
-			} finally {
-				ctx.chanceOverride = null;
-			}
-			return total;
 		},
 		close() {
 			Atomics.store(control, CONTROL.command, COMMAND.exit);

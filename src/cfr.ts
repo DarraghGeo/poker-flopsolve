@@ -68,17 +68,21 @@ export function orbitLeader(runouts: Runouts, round: number, board: number, comb
 	return true;
 }
 
+const INT32_MAX = 2 ** 31 - 1;
+
 /** Slot offsets for every decision node. */
 export interface Layout {
 	/**
 	 * Where each decision node's storage starts. Its block on a board is
 	 * `actions` rows of the owner's hands live there, in hand-list order —
 	 * entry `i` of their active list — so a row is as long as that list and
-	 * blocked hands take no room. See `blockBase`. Float64, not Int32: the
-	 * largest trees pass 2^31 slots. With compact storage, a node of a
-	 * compact round's offset is into the compact regrets instead.
+	 * blocked hands take no room. See `blockBase`. Int32 while every slot
+	 * fits one, which keeps the traversal's indexing on integers; Float64,
+	 * exact to 2^53, for a tree past 2^31 slots, where Int32 would wrap.
+	 * With compact storage, a node of a compact round's offset is into its
+	 * chunk of the compact arrays instead.
 	 */
-	readonly offset: Float64Array;
+	readonly offset: Int32Array | Float64Array;
 	/** For each list slot `(roundBase[r] + board) * 2 + p`: rows before this board's. */
 	readonly rowStart: Int32Array;
 	/** First list index of each round, as `ActiveLists.roundBase`. */
@@ -235,7 +239,8 @@ export function buildLayout(
 			? compactSlots * 4
 			: (compactSlots + (compact.perHand ? compactHands : blocks * 8)) * (compact.sums ? 2 : 1);
 	return {
-		offset, blockOffset, blocks, totalSlots: total, maxActions, rowStart, roundBase,
+		offset: Math.max(total, ...chunkSlots) <= INT32_MAX ? Int32Array.from(offset) : offset,
+		blockOffset, blocks, totalSlots: total, maxActions, rowStart, roundBase,
 		bytes: total * bytesPerElement * 2 + scales + compactBytes,
 		compactFrom, compactSlots, handOffset, compactHands, compactChunk, chunkSlots, chunkHands, chunkStart,
 	};
@@ -784,6 +789,15 @@ export function treeDepth(tree: Tree): number {
  * `t^γ`. Every slot is visited exactly once per iteration, by its owner's
  * traversal, so discounting at that visit is the same as discounting
  * everything between iterations — without a separate pass over memory.
+ *
+ * Each iteration adds its strategy to the sum as it is, not weighted by the
+ * hand's own reach (as postflop-solver does). A hand that equilibrium play
+ * stops sending to a node then still averages to what its regrets settled on
+ * there; with own-reach weighting the near-uniform early iterations swamped
+ * it, so play continued off the path was close to random (issue #8). This
+ * holds at every precision, here and in assembly/engine.ts. CFR+ keeps the
+ * own-reach weighting: its iterates oscillate, and unweighted they averaged
+ * to 2–3× the exploitability at the same iteration count.
  */
 // assembly/engine.ts repeats these in its sampling catch-up; keep in step.
 const DCFR_ALPHA = 1.5;
@@ -864,8 +878,10 @@ function regretMatch(regret: AnyRegrets, base: number, actions: number, count: n
 /**
  * Average strategy from accumulated sums, which are never negative.
  *
- * A hand whose sum is zero here never reached this node on its own, so the
- * average says nothing about it. Its regrets are still updated — weighted by
+ * A hand whose sum is zero here has no average to give: under CFR+, whose
+ * sums follow the hand's own reach, it never reached this node on its own;
+ * under DCFR, whose sums do not (issue #8), only a loaded strategy with gaps,
+ * a warm start or 16-bit rounding leaves one. Its regrets are still updated — weighted by
  * the opponent's reach — so it plays the current strategy: whatever goes on to
  * continue it from here (a best response, another player's rules, a user
  * browsing the line) then sees sensible play rather than every action at an
@@ -1190,7 +1206,7 @@ function traverse(
 				const at = slotRow + i;
 				const accumulated = regret[at];
 				regret[at] = accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[offset + i] - out[i];
-				strategySum[at] = strategySum[at] * keepSum + reachMe[i] * strategy[row + i];
+				strategySum[at] = strategySum[at] * keepSum + strategy[row + i];
 			}
 		}
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates) {
@@ -1333,7 +1349,9 @@ function updateQuantised(
 			if (magnitude > largestRegret) largestRegret = magnitude;
 			actionValues[offset + i] = updated;
 
-			const sum = strategySum[at] * oldSum * keepSum + weight * reachMe[i] * strategy[a * count + i];
+			// DCFR adds the strategy unweighted by own reach (issue #8); CFR+ keeps the weight.
+			const added = clamp ? weight * reachMe[i] * strategy[a * count + i] : weight * strategy[a * count + i];
+			const sum = strategySum[at] * oldSum * keepSum + added;
 			if (sum > largestSum) largestSum = sum;
 			strategy[a * count + i] = sum;
 		}
@@ -1495,7 +1513,9 @@ function updateCompact(
 		let largestSum = 0;
 		for (let a = 0; a < actions; a++) {
 			const k = a * count + i;
-			const sum = sums[slotBase + k] * sumScale * keepSum + weight * reachMe[i] * strategy[k];
+			// DCFR adds the strategy unweighted by own reach (issue #8); CFR+ keeps the weight.
+			const added = clamp ? weight * reachMe[i] * strategy[k] : weight * strategy[k];
+			const sum = sums[slotBase + k] * sumScale * keepSum + added;
 			strategy[k] = sum;
 			if (sum > largestSum) largestSum = sum;
 		}

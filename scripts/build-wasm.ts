@@ -14,6 +14,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ASC_FLAGS } from './wasm-flags.ts';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), 'kernels-'));
@@ -34,7 +35,7 @@ try {
 		const wasm = join(scratch, `${name}.wasm`);
 		execFileSync(
 			join(root, 'node_modules', '.bin', 'asc'),
-			[source, '--enable', 'simd', '--enable', 'bulk-memory', '-O3', '--runtime', 'stub', '--importMemory', '--noAssert', ...flags, '-o', wasm],
+			[source, ...ASC_FLAGS, ...flags, '-o', wasm],
 			{ cwd: root, stdio: 'inherit' },
 		);
 		const bytes = readFileSync(wasm);
