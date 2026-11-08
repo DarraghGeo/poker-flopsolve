@@ -96,7 +96,7 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 				const slot = reach + entry * 2 * rowBytes;
 				const out = engine.runChance(
 					mode, traverser, setup.entryNodes[entry], slot, slot + rowBytes, positive, negative, sum, weight, clamp,
-				);
+				) >>> 0; // a usize, signed on its way out; see `EngineExports`
 				partials.set(new Float32Array(memory.buffer, out, setup.stride), entry * setup.stride);
 			}
 		} catch (error) {

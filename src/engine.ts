@@ -71,6 +71,8 @@ export interface EngineInput {
 	readonly chipScale: number;
 	/** Chance sampling's layout, for `Approximations.chanceSampling`; unset for none. */
 	readonly sampling?: SamplingPlan;
+	/** Bytes left unused below the layout; tests set it to place every pointer past 2 GiB. */
+	readonly lowBytes?: number;
 }
 
 /** A running engine. */
@@ -200,7 +202,7 @@ export function createEngine(
 		: null;
 
 	const offsets: number[] = [];
-	let total = 64;
+	let total = 64 + (input.lowBytes ?? 0);
 	for (const piece of pieces) {
 		offsets.push(total);
 		total += piece.bytes;
@@ -328,7 +330,7 @@ export function createEngine(
 		if (!pool) {
 			if (apply === 0) exports.setPhase(0, 0);
 			try {
-				at = exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
+				at = exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp) >>> 0;
 			} finally {
 				if (apply === 0) exports.setPhase(0, 1);
 			}
@@ -371,7 +373,7 @@ export function createEngine(
 		const valueView = new Float32Array(memory.buffer, offsets[values], entries * stride);
 		for (let entry = 0; entry < entries; entry++) {
 			const slot = offsets[reach] + entry * 2 * rowBytes;
-			const out = exports.runChance(mode, traverser, plan.entryNodes[entry], slot, slot + rowBytes, positive, negative, sum, weight, clamp);
+			const out = exports.runChance(mode, traverser, plan.entryNodes[entry], slot, slot + rowBytes, positive, negative, sum, weight, clamp) >>> 0;
 			valueView.set(new Float32Array(memory.buffer, out, stride), entry * stride);
 		}
 		// A thread whose walk throws says so in `failed` and counts itself
@@ -391,7 +393,7 @@ export function createEngine(
 		// unless this is a current-profile read.
 		exports.setShard(plan.round, 0, 0);
 		exports.setPhase(2, apply);
-		const at = exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
+		const at = exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp) >>> 0;
 		exports.setPhase(0, 1);
 		exports.setShard(-1, 0, 0);
 		return at;
@@ -415,7 +417,11 @@ export function createEngine(
 	};
 }
 
-/** The engine's exports. */
+/**
+ * The engine's exports. A pointer one returns is a wasm32 `usize`, which
+ * JavaScript receives as a signed 32-bit integer: read it with `>>> 0`, or
+ * any address past 2 GiB comes back negative (#62).
+ */
 export interface EngineExports {
 	init(header: number): void;
 	setMaxActions(count: number): void;
