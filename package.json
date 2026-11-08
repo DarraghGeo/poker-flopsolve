@@ -25,11 +25,6 @@
       "types": "./dist/threads.d.ts",
       "browser": "./dist/browser-threads.js",
       "import": "./dist/threads.js"
-    },
-    "./out-of-core": {
-      "types": "./dist/out-of-core.d.ts",
-      "browser": "./dist/browser-out-of-core.js",
-      "import": "./dist/out-of-core.js"
     }
   },
   "files": [
@@ -72,7 +67,6 @@
   },
   "browser": {
     "./dist/index.js": "./dist/browser.js",
-    "./dist/threads.js": "./dist/browser-threads.js",
-    "./dist/out-of-core.js": "./dist/browser-out-of-core.js"
+    "./dist/threads.js": "./dist/browser-threads.js"
   }
 }

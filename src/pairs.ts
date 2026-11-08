@@ -23,7 +23,7 @@
 
 import { COMBO_CARDS, COMBOS } from './cards.ts';
 import type { Context } from './cfr.ts';
-import { averageStrategy, Mode } from './cfr.ts';
+import { averageStrategy } from './cfr.ts';
 import { markMembers } from './hands.ts';
 import { NodeKind } from './tree.ts';
 
@@ -204,16 +204,6 @@ function walk(
 
 	if (kind === NodeKind.Chance) {
 		const nextRound = tree.round[node] + 1;
-		// Out of core: walk the river below with the accumulators on its page.
-		const pager = ctx.pager;
-		if (pager !== undefined && pager !== null && !pager.active && nextRound === pager.plan.round) {
-			pager.enter(ctx, node, board, Mode.Average, traverser);
-			try {
-				return walk(ctx, buffers, traverser, hands, node, board, colReach, cols, colCount, live, liveCount, depth);
-			} finally {
-				pager.exit(ctx);
-			}
-		}
 		const child = tree.edgeChild[tree.firstEdge[node]];
 		const width = runouts.width[nextRound];
 		const dealtCards = runouts.cards[nextRound];

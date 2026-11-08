@@ -93,8 +93,3 @@ export function spawnEngineWorker(setup: EngineWorkerSetup, onError: (error: Err
 	if (!threads) throw new Error('No engine threads; call enableThreads() from poker-flopsolve/threads first');
 	return threads.spawn(setup, onError);
 }
-
-/** Node only: in a browser the page file is an OPFS `FileSystemSyncAccessHandle`. */
-export function openPageFile(_path: string): never {
-	throw new Error('openPageFile is for Node; in a browser, pass an OPFS FileSystemSyncAccessHandle to outOfCore()');
-}

@@ -29,7 +29,6 @@ import { pairValues } from './pairs.ts';
 import type { Kernels } from './kernels.ts';
 import { loadKernels } from './kernels.ts';
 import { NodeKind } from './tree.ts';
-import type { Pager } from './paging.ts';
 
 /** Which combinations a player holds, and where each sits in storage. */
 export interface PlayerIndex {
@@ -242,11 +241,6 @@ export interface Context {
 	 * unset or null for the exact traversal.
 	 */
 	sampling?: Sampling | null;
-	/**
-	 * Out-of-core river storage, for `SolveOptions.outOfCore`; unset or null
-	 * when every accumulator is in memory.
-	 */
-	pager?: Pager | null;
 }
 
 /** How chance sampling picks deals; see `Approximations.chanceSampling`. */
@@ -879,18 +873,8 @@ function traverse(
 	}
 
 	if (kind === NodeKind.Chance) {
-		const nextRound = round + 1;
-		// Out of core: walk the river below with the accumulators on its page.
-		const pager = ctx.pager;
-		if (pager !== undefined && pager !== null && !pager.active && nextRound === pager.plan.round) {
-			pager.enter(ctx, node, board, mode, traverser);
-			try {
-				return traverse(ctx, buffers, mode, traverser, iterWeight, node, board, reachMe, reachOpp, depth);
-			} finally {
-				pager.exit(ctx);
-			}
-		}
 		for (let i = 0; i < myCount; i++) out[i] = 0;
+		const nextRound = round + 1;
 
 		// At the shard boundary the subtree below belongs to the workers: the
 		// collect pass records what they need, and the apply pass reads back
@@ -1399,7 +1383,7 @@ export function makeSolver(ctx: Context): Solver {
 		return sum / ctx.totalMass;
 	};
 
-	const solver: Solver = {
+	return {
 		ctx,
 		rootLive,
 		get rootCount() {
@@ -1474,11 +1458,6 @@ export function makeSolver(ctx: Context): Solver {
 			return (br0 + br1) / 2;
 		},
 		valuesAt(node, board, traverser, reachMe, reachOpp, live, liveCount) {
-			// Out of core, a read that starts inside the river finds its page first.
-			if (ctx.pager?.wants(ctx, node)) {
-				const again = () => solver.valuesAt(node, board, traverser, reachMe, reachOpp, live, liveCount);
-				return ctx.pager.at(ctx, ctx.runouts, node, board, Mode.Average, traverser, again);
-			}
 			void live;
 			void liveCount;
 			const round = ctx.tree.round[node];
@@ -1536,16 +1515,9 @@ export function makeSolver(ctx: Context): Solver {
 			}
 		},
 		pairValuesAt(node, board, traverser, hands, handReach, live, liveCount) {
-			if (ctx.pager?.wants(ctx, node)) {
-				const again = () => solver.pairValuesAt(node, board, traverser, hands, handReach, live, liveCount);
-				return ctx.pager.at(ctx, ctx.runouts, node, board, Mode.Average, traverser, again);
-			}
 			return pairValues(ctx, node, board, traverser, hands, handReach, live, liveCount);
 		},
 		averageStrategyAt(node, board) {
-			if (ctx.pager?.wants(ctx, node)) {
-				return ctx.pager.at(ctx, ctx.runouts, node, board, Mode.Average, 0, () => solver.averageStrategyAt(node, board));
-			}
 			// In range order, as callers read it: hands the board blocks play
 			// uniformly, as they always have.
 			const owner = ctx.tree.player[node] as 0 | 1;
@@ -1568,7 +1540,6 @@ export function makeSolver(ctx: Context): Solver {
 			return { actions, probs };
 		},
 	};
-	return solver;
 }
 
 export { buildActiveLists, makeTerminalScratch };

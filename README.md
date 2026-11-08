@@ -322,44 +322,6 @@ thread and 8.7 s on four (`npm run bench:browser:threads`).
 threaded (skipped where Playwright is not installed). `npm run bench:browser` times it
 beside Node, and `npm run bench:browser:threads` times flop solves at each thread count.
 
-### Out-of-core river storage (opt-in)
-
-A flop spot's storage is nearly all river. `poker-flopsolve/out-of-core` keeps the flop and
-turn in memory and pages the river through a file: an Origin Private File System file in a
-browser, opened with a sync access handle in the worker that solves.
-
-```ts
-import { createRun, defineSpot } from 'poker-flopsolve';
-import { outOfCore } from 'poker-flopsolve/out-of-core';
-
-const root = await navigator.storage.getDirectory();
-const handle = await (await root.getFileHandle('river.bin', { create: true })).createSyncAccessHandle();
-// defineSpot still checks the whole storage against maxBytes: raise it to the file's size.
-const run = createRun(defineSpot({ ...config, maxBytes: 16 * 2 ** 30 }), { outOfCore: outOfCore(handle) });
-```
-
-The game and the arithmetic are unchanged. At 32 bits it is the in-memory solve, bit for bit.
-At 16 bits (the default here) only the rounding dither differs. Each training iteration
-reads the river 1.5 times and writes it once, in file order. In Node, pass
-`openPageFile(path)` from the same entry.
-
-Headless Chromium, one thread, 16-bit storage (`bench/ooc/`):
-
-| Spot | Storage | In memory: peak, s/iter | Out of core: peak, s/iter (I/O) |
-|---|---|---|---|
-| T on Ks9s4s | 1.90 GiB | 2.02 GiB, 21.4 | 0.18 GiB, 23.6 (1.2) |
-| T₀ on AsKh7d | 2.92 GiB | 3.10 GiB, 24.9 | 0.24 GiB, 26.2 (1.5) |
-| T on AsKh7d | 8.67 GiB | does not fit a tab | 0.33 GiB, 81.0 (5.1) |
-
-(T is issue #20's target: three bet sizes on every street, one raise size, all-in, three
-aggressions, pot 55, stack 975. T₀ allows only all-in raises and two aggressions.)
-
-Limits: flop spots only; one thread and the JavaScript engine; not with `analysisOnly`,
-`warmStart`, `coarseStart`, `chanceSampling` or approximate `runoutBuckets`. The file
-counts against the origin's storage quota, which was 10 GiB in headless Chromium. A
-private window keeps OPFS in memory and failed before 1 GiB. Every iteration writes the
-whole river file once, which over a long solve adds up to a lot of SSD writes.
-
 ## Performance
 
 Measured on an Apple M2, single threaded:
