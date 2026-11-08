@@ -241,27 +241,7 @@ export interface Context {
 	 * unset or null for the exact traversal.
 	 */
 	sampling?: Sampling | null;
-	/**
-	 * Values at `Continuation` leaves, for a depth-limited tree (src/depth.ts);
-	 * unset for every other tree, which has none.
-	 */
-	leaf?: LeafValues;
 }
-
-/**
- * A depth-limited leaf's counterfactual values for the traverser, written to
- * `out` and returned, as `traverse` returns a subtree's; in training it also
- * updates whatever the leaf itself learns.
- */
-export type LeafValues = (
-	mode: Mode,
-	traverser: 0 | 1,
-	iterWeight: number,
-	node: number,
-	reachMe: Float64Array,
-	reachOpp: Float64Array,
-	out: Float64Array,
-) => Float64Array;
 
 /** How chance sampling picks deals; see `Approximations.chanceSampling`. */
 export interface SamplingOptions {
@@ -891,8 +871,6 @@ function traverse(
 		);
 		return out;
 	}
-
-	if (kind === NodeKind.Continuation) return ctx.leaf!(mode, traverser, iterWeight, node, reachMe, reachOpp, out);
 
 	if (kind === NodeKind.Chance) {
 		for (let i = 0; i < myCount; i++) out[i] = 0;

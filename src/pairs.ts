@@ -149,7 +149,6 @@ function walk(
 		for (let i = 0; i < liveCount; i++) out[row + live[i]] = 0;
 	}
 	if (colCount === 0) return out;
-	if (kind === NodeKind.Continuation) throw new Error('Values against single hands do not reach past a depth limit');
 
 	if (kind === NodeKind.TerminalFold) {
 		const signed = traverser === 0 ? tree.payoff[node] : -tree.payoff[node];

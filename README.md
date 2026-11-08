@@ -259,46 +259,6 @@ This is *unsafe* re-solving. The subgame is solved for the ranges that arrive, s
 strategy can be exploitable in ways the original allowed for. It also does not make the
 earlier streets any more accurate than their coarse model of the future.
 
-## Depth-limited flop (opt-in, approximate)
-
-A flop spot with several sizes on every street can need gigabytes, almost all of it
-turn and river. `poker-flopsolve/depth` holds only the flop betting and stands a small
-table of values in for the rest of the hand (Brown, Sandholm & Amos, 2018):
-
-```ts
-import { solveDepthLimited } from 'poker-flopsolve/depth';
-
-const flop = solveDepthLimited(
-	{ board: 'As Kh 7d', pot: 55, stack: 975, oop, ip,
-	  betSizes: [[0.33, 0.75, 1.5]], raiseSizes: [[0.75]], allowAllIn: true, maxRaises: 3 },
-	{ workers: 4 },
-);
-flop.strategyAt(0, 0); // the flop strategy, every size and raise
-```
-
-1. A **blueprint** is solved first: the same spot with one bet size a street (by default
-   0.75 pot, no raise), which fits easily.
-2. Each flop line that reaches the turn becomes a **leaf**. Its table comes from the
-   blueprint line most like it (same last aggressor, nearest pot): the blueprint's turn
-   and river strategy is played out from the leaf's real pot and stacks.
-3. Each player picks, per hand, one of `k` **continuations**: the blueprint, or copies
-   leaning toward folding, calling or raising (`continuations`, default all four). The
-   table keeps each player's EV per hand for every pair of picks, `k²` numbers a hand.
-   A pair of hands is worth the difference of their EVs, which is zero-sum and follows
-   how strong the range sent there is.
-4. The flop is solved with every size and raise. All-in lines read an exact showdown table.
-
-On the round's target spot (above, 17 GiB exact at 32 bits) it peaks at about 0.5 GiB
-and takes about 50 s on one thread in Node or Chromium, most of it the blueprint. There is
-no turn or river strategy, and `exploitabilityPercent()` is measured in the depth-limited
-game, not the real one.
-
-**Accuracy is limited.** Root EV per combination was off by 2.3–4.9% of pot on average
-(up to 35% for single hands) against exact solves, about as far as the one-size
-blueprint alone, and the best root bet size per hand matched the exact solve only 35–76%
-of the time. More continuations did not help. The measurements are in `bench/depth-flop/`
-and issue #48.
-
 ## In a browser
 
 The package also runs in a browser, for the small solves a page wants: river spots and
