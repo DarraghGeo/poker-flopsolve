@@ -62,6 +62,7 @@ export function matchNodes(to: Tree, from: Tree, fromRoot = 0): Int32Array {
 	const match = new Int32Array(to.nodeCount).fill(-1);
 	// A subgame's rounds count from its own first one.
 	const shift = from.round[fromRoot];
+	const base = investedBefore(from, fromRoot);
 	const walk = (a: number, b: number): void => {
 		if (to.kind[a] !== from.kind[b] || to.round[a] + shift !== from.round[b]) return;
 		if (to.kind[a] === NodeKind.Chance) {
@@ -72,7 +73,7 @@ export function matchNodes(to: Tree, from: Tree, fromRoot = 0): Int32Array {
 		match[a] = b;
 		for (let e = 0; e < to.numEdges[a]; e++) {
 			const edge = to.firstEdge[a] + e;
-			const other = matchEdge(to, edge, a, from, b);
+			const other = matchEdge(to, edge, a, from, b, base);
 			if (other >= 0) walk(to.edgeChild[edge], from.edgeChild[other]);
 		}
 	};
@@ -80,7 +81,16 @@ export function matchNodes(to: Tree, from: Tree, fromRoot = 0): Int32Array {
 	return match;
 }
 
-function matchEdge(to: Tree, edge: number, node: number, from: Tree, other: number): number {
+/**
+ * What each player put in before `node`, which opens a round level.
+ * Investments count from the start of the hand, so a subtree's bets carry it
+ * and a subgame's do not.
+ */
+function investedBefore(tree: Tree, node: number): number {
+	return (tree.pot[node] - tree.pot[0]) / 2;
+}
+
+function matchEdge(to: Tree, edge: number, node: number, from: Tree, other: number, base = 0): number {
 	const kind = to.edgeAction[edge];
 	const sized = kind === ActionKind.Bet || kind === ActionKind.Raise;
 	const size = to.edgeTarget[edge] / to.pot[node];
@@ -90,7 +100,7 @@ function matchEdge(to: Tree, edge: number, node: number, from: Tree, other: numb
 		const candidate = from.firstEdge[other] + e;
 		if (from.edgeAction[candidate] !== kind) continue;
 		if (!sized) return candidate;
-		const gap = Math.abs(Math.log(from.edgeTarget[candidate] / from.pot[other] / size));
+		const gap = Math.abs(Math.log((from.edgeTarget[candidate] - base) / from.pot[other] / size));
 		if (gap < bestGap) {
 			bestGap = gap;
 			best = candidate;
@@ -183,6 +193,7 @@ export function warmStart(
 		comboOf[combo] = cards ? comboIndex(cards[COMBO_CARDS[combo * 2]], cards[COMBO_CARDS[combo * 2 + 1]]) : combo;
 	}
 	const match = matchNodes(to.tree, from.tree, fromNode);
+	const base = investedBefore(from.tree, fromNode);
 	const { tree } = to;
 	const width = to.layout.maxActions * COMBOS;
 	const oldRegret = new Float64Array(width);
@@ -206,7 +217,7 @@ export function warmStart(
 		// Which old action each new one continues.
 		const actionOf = new Int32Array(actions).fill(-1);
 		for (let e = 0; e < actions; e++) {
-			const other = matchEdge(tree, tree.firstEdge[node] + e, node, from.tree, old);
+			const other = matchEdge(tree, tree.firstEdge[node] + e, node, from.tree, old, base);
 			if (other >= 0) actionOf[e] = other - from.tree.firstEdge[old];
 		}
 

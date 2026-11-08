@@ -71,6 +71,32 @@ describe('resolveSubgame', () => {
 		}
 	});
 
+	it('matches bet sizes after earlier betting by what is put in this round', () => {
+		// Deep enough that a river bet after a turn bet and call is not all-in.
+		const deep = createRun(defineSpot({ ...config, stack: 400 }), { workers: 1 });
+		deep.step(20);
+		const sol = deep.snapshot();
+		const start = riverAfter(sol, 'bet 30 call /');
+		const sub = createRun(defineSpot(sol.subgameAt(start, 5)), { analysisOnly: true });
+		const report = warmStart(sub.solver.ctx, deep.solver.ctx, true, undefined, start);
+		expect(report.matchedNodes).toBe(report.decisionNodes);
+		const copy = sub.snapshot();
+		const match = matchNodes(copy.spot.tree, sol.spot.tree, start);
+		for (const node of copy.spot.tree.decisionNodes) {
+			const a = copy.strategyAt(node, 0);
+			const b = sol.strategyAt(match[node], 5);
+			// Labels differ (the parent's count the turn bet too); the play does not.
+			expect(a.actions.length).toBe(b.actions.length);
+			const at = new Map(Array.from(b.combos, (combo, i) => [combo, i]));
+			for (let i = 0; i < a.combos.length; i++) {
+				const j = at.get(a.combos[i])!;
+				for (let k = 0; k < a.actions.length; k++) {
+					expect(a.probs[i * a.actions.length + k]).toBeCloseTo(b.probs[j * b.actions.length + k], 6);
+				}
+			}
+		}
+	});
+
 	it('gives best-response values at a node that bound the average ones', () => {
 		const w = blueprint.spot.players;
 		const live = Uint16Array.from({ length: COMBOS }, (_, i) => i).filter((c) => w[0].weights[c] > 0 || w[1].weights[c] > 0);
