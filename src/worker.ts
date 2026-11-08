@@ -16,7 +16,7 @@
 
 import { parentPort, workerData } from 'node:worker_threads';
 import { COMBOS } from './cards.ts';
-import type { Context, Mode } from './cfr.ts';
+import type { CompactPlan, Context, Mode } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
@@ -33,11 +33,12 @@ import type { WorkerSetup } from './parallel.ts';
 import { COMMAND, CONTROL } from './parallel.ts';
 
 const setup = workerData as WorkerSetup;
-const { config, dcfr, precision, simd } = setup.payload as {
+const { config, dcfr, precision, simd, compact } = setup.payload as {
 	config: SpotConfig;
 	dcfr: boolean;
 	precision: Precision;
 	simd: boolean;
+	compact: CompactPlan | null;
 };
 
 const spot = defineSpot(config);
@@ -46,7 +47,7 @@ for (const combo of spot.players[0].combos) relevant[combo] = 1;
 for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 const weights = runoutWeights(spot.runouts);
-const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
+const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], compact ?? undefined);
 
 const showdown = buildShowdownTable(spot.runouts, relevant);
 const active = buildActiveLists(spot.runouts, spot.players, showdown);
@@ -60,6 +61,11 @@ const ctx: Context = {
 	strategySum: makeSumStore(precision, setup.strategySum),
 	regretScale: setup.regretScale ? new Float64Array(setup.regretScale) : null,
 	sumScale: setup.sumScale ? new Float64Array(setup.sumScale) : null,
+	compact,
+	compactRegret:
+		setup.compactRegret?.map((chunk) => (compact?.float ? new Float32Array(chunk) : new Int8Array(chunk))) ?? null,
+	handShift: setup.handShift?.map((chunk) => new Uint8Array(chunk)) ?? null,
+	compactScale: setup.compactScale ? new Float64Array(setup.compactScale) : null,
 	scratch: makeTerminalScratch(),
 	chipScale: spot.chipScale,
 	active,

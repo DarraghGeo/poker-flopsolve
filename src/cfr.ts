@@ -74,9 +74,11 @@ export interface Layout {
 	 * Where each decision node's storage starts. Its block on a board is
 	 * `actions` rows of the owner's hands live there, in hand-list order —
 	 * entry `i` of their active list — so a row is as long as that list and
-	 * blocked hands take no room. See `blockBase`.
+	 * blocked hands take no room. See `blockBase`. Float64, not Int32: the
+	 * largest trees pass 2^31 slots. With compact storage, a node of a
+	 * compact round's offset is into the compact regrets instead.
 	 */
-	readonly offset: Int32Array;
+	readonly offset: Float64Array;
 	/** For each list slot `(roundBase[r] + board) * 2 + p`: rows before this board's. */
 	readonly rowStart: Int32Array;
 	/** First list index of each round, as `ActiveLists.roundBase`. */
@@ -92,6 +94,47 @@ export interface Layout {
 	readonly totalSlots: number;
 	readonly maxActions: number;
 	readonly bytes: number;
+	/**
+	 * The first round stored compactly (see `CompactStorage`); the round
+	 * count when none is, so `round >= compactFrom` says whether a node is.
+	 */
+	readonly compactFrom: number;
+	/** Slots of compactly stored regrets; 0 without compact storage. */
+	readonly compactSlots: number;
+	/** Per node of a compact round: where its hands' scales start in its chunk, else -1. */
+	readonly handOffset: Float64Array | null;
+	readonly compactHands: number;
+	/**
+	 * Compact storage comes in chunks, each its own buffer, because browsers
+	 * refuse an ArrayBuffer of 2 GiB or more. A node's storage is all in one
+	 * chunk: per node of a compact round, which (else -1); its `offset` and
+	 * `handOffset` count from that chunk's start.
+	 */
+	readonly compactChunk: Int32Array | null;
+	/** Per chunk: its slots, its hands, and the slots of every chunk before it. */
+	readonly chunkSlots: readonly number[];
+	readonly chunkHands: readonly number[];
+	readonly chunkStart: readonly number[];
+}
+
+/**
+ * Compact storage for the later rounds, for `Approximations.compactStorage`:
+ * regrets only, as 8-bit integers, with each hand's strategy there read as
+ * the current profile. The fields past `from` are for measurement.
+ */
+export interface CompactPlan {
+	/** First round stored compactly, counted from the spot's first. */
+	readonly from: number;
+	/** Largest magnitude stored: 127 for 8 bits. */
+	readonly steps: number;
+	/** One power-of-two scale per hand per block, else one float64 per block. */
+	readonly perHand: boolean;
+	/** Round at random, unbiased, rather than to nearest. */
+	readonly stochastic: boolean;
+	/** Keep the regrets as float32: only the sums are dropped. */
+	readonly float: boolean;
+	/** Largest buffer to allocate; compact storage is split in chunks no bigger. */
+	readonly chunkBytes: number;
 }
 
 /**
@@ -104,6 +147,7 @@ export function buildLayout(
 	runouts: Runouts,
 	players: readonly [PlayerIndex, PlayerIndex],
 	bytesPerElement: number,
+	compact?: CompactPlan,
 ): Layout {
 	// How many of each player's hands each board leaves live: a block's rows.
 	const roundBase = new Int32Array(runouts.rounds + 1);
@@ -132,24 +176,58 @@ export function buildLayout(
 		}
 	}
 
-	const offset = new Int32Array(tree.nodeCount).fill(-1);
+	const offset = new Float64Array(tree.nodeCount).fill(-1);
 	const blockOffset = new Int32Array(tree.nodeCount).fill(-1);
+	const compactFrom = compact ? compact.from : runouts.rounds;
+	const handOffset = compact ? new Float64Array(tree.nodeCount).fill(-1) : null;
+	const compactChunk = compact ? new Int32Array(tree.nodeCount).fill(-1) : null;
+	const chunkSlots: number[] = [];
+	const chunkHands: number[] = [];
+	const chunkStart: number[] = [];
+	const width = compact?.float ? 4 : 1;
 	let total = 0;
+	let compactSlots = 0;
+	let compactHands = 0;
 	let blocks = 0;
 	let maxActions = 0;
 	for (let i = 0; i < tree.decisionNodes.length; i++) {
 		const node = tree.decisionNodes[i];
 		const actions = tree.numEdges[node];
 		if (actions > maxActions) maxActions = actions;
-		offset[node] = total;
 		blockOffset[node] = blocks;
-		total += actions * totals[tree.round[node] * 2 + tree.player[node]];
+		const hands = totals[tree.round[node] * 2 + tree.player[node]];
+		if (tree.round[node] >= compactFrom) {
+			const slots = actions * hands;
+			let chunk = chunkSlots.length - 1;
+			if (chunk < 0 || (chunkSlots[chunk] + slots) * width > compact!.chunkBytes || chunkHands[chunk] + hands > compact!.chunkBytes) {
+				chunk++;
+				chunkSlots.push(0);
+				chunkHands.push(0);
+				chunkStart.push(compactSlots);
+			}
+			compactChunk![node] = chunk;
+			offset[node] = chunkSlots[chunk];
+			handOffset![node] = chunkHands[chunk];
+			chunkSlots[chunk] += slots;
+			chunkHands[chunk] += hands;
+			compactSlots += slots;
+			compactHands += hands;
+		} else {
+			offset[node] = total;
+			total += actions * hands;
+		}
 		blocks += runouts.counts[tree.round[node]];
 	}
 	const scales = bytesPerElement === 2 ? blocks * 8 * 2 : 0;
+	const compactBytes = !compact
+		? 0
+		: compact.float
+			? compactSlots * 4
+			: compactSlots + (compact.perHand ? compactHands : blocks * 8);
 	return {
 		offset, blockOffset, blocks, totalSlots: total, maxActions, rowStart, roundBase,
-		bytes: total * bytesPerElement * 2 + scales,
+		bytes: total * bytesPerElement * 2 + scales + compactBytes,
+		compactFrom, compactSlots, handOffset, compactHands, compactChunk, chunkSlots, chunkHands, chunkStart,
 	};
 }
 
@@ -158,12 +236,15 @@ export function buildLayout(
  * live on that board, in their hand-list order.
  */
 export function blockBase(layout: Layout, tree: Tree, node: number, board: number): number {
+	// Into the compact regrets for a node of a compact round.
 	const slot = (layout.roundBase[tree.round[node]] + board) * 2 + tree.player[node];
 	return layout.offset[node] + tree.numEdges[node] * layout.rowStart[slot];
 }
 
 /** Accumulated regrets: float, or 16-bit integers scaled per block. */
 export type RegretStore = Float64Array | Float32Array | Int16Array;
+/** Regrets as one of the stores, or compact storage's 8-bit ones. */
+type AnyRegrets = RegretStore | Int8Array;
 /** Accumulated strategy sums: float, or 16-bit integers scaled per block. */
 export type SumStore = Float64Array | Float32Array | Uint16Array;
 
@@ -189,6 +270,21 @@ export interface Context {
 	 */
 	readonly regretScale: Float64Array | null;
 	readonly sumScale: Float64Array | null;
+	/**
+	 * Compact storage (`Approximations.compactStorage`), else unset: nodes of
+	 * rounds from `compact.from` on keep only `compactRegret`, one array per
+	 * chunk (`layout.compactChunk`) laid out by `layout.offset` as other
+	 * nodes' regrets are, and each hand's scale in
+	 * `handShift` — a stored integer `q` means `q * 2^(shift - SHIFT_BIAS)`,
+	 * and a shift of 0 means the hand's regrets are all zero. With a block
+	 * scale instead, `compactScale` holds it as `regretScale` does for 16-bit
+	 * storage.
+	 */
+	readonly compact?: CompactPlan | null;
+	readonly compactRegret?: readonly (Int8Array | Float32Array)[] | null;
+	readonly handShift?: readonly Uint8Array[] | null;
+	/** Compact storage's per-block scales, when it keeps one per block rather than per hand. */
+	readonly compactScale?: Float64Array | null;
 	readonly scratch: TerminalScratch;
 	readonly chipScale: number;
 	/** Which combinations each player can hold on each board. */
@@ -720,7 +816,7 @@ export type Mode = (typeof Mode)[keyof typeof Mode];
  * @param source regrets, for the current strategy
  */
 function normalise(
-	source: RegretStore | SumStore,
+	source: AnyRegrets | SumStore,
 	base: number,
 	actions: number,
 	count: number,
@@ -745,7 +841,7 @@ function normalise(
 }
 
 /** Current strategy from positive regrets; uniform where there is none. */
-function regretMatch(regret: RegretStore, base: number, actions: number, count: number, strategy: Float64Array): void {
+function regretMatch(regret: AnyRegrets, base: number, actions: number, count: number, strategy: Float64Array): void {
 	normalise(regret, base, actions, count, strategy);
 }
 
@@ -969,13 +1065,16 @@ function traverse(
 	// Laid out as storage is: `strategy[a * stride + i]`.
 	const strategy = buffers.strategy[depth];
 	const length = actions * stride;
-	const current = mode === Mode.Train || mode === Mode.Current;
+	// A compactly stored node has no average: it always plays the current profile.
+	const compactNode = round >= ctx.layout.compactFrom;
+	const regrets: AnyRegrets = compactNode ? ctx.compactRegret![ctx.layout.compactChunk![node]] : ctx.regret;
+	const current = mode === Mode.Train || mode === Mode.Current || compactNode;
 	if (current && buffers.kernels !== null) {
 		const kernels = buffers.kernels;
-		kernels.input.set(ctx.regret.subarray(slotBase, slotBase + length));
+		kernels.input.set(regrets.subarray(slotBase, slotBase + length));
 		kernels.regretMatch(strategy, actions, stride);
 	} else if (current) {
-		regretMatch(ctx.regret, slotBase, actions, stride, strategy);
+		regretMatch(regrets, slotBase, actions, stride, strategy);
 	} else if (buffers.kernels !== null) {
 		const kernels = buffers.kernels;
 		kernels.input.set(ctx.strategySum.subarray(slotBase, slotBase + length));
@@ -1031,7 +1130,12 @@ function traverse(
 		}
 	}
 
-	if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.regretScale !== null) {
+	if (isTraverser && mode === Mode.Train && ctx.applyUpdates && compactNode) {
+		updateCompact(
+			ctx, ctx.layout.compactChunk![node], ctx.layout.blockOffset[node] + board, slotBase,
+			ctx.layout.handOffset![node] + ctx.layout.rowStart[listSlot], actions, stride, iterWeight, actionValues, out,
+		);
+	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.regretScale !== null) {
 		updateQuantised(
 			ctx, ctx.layout.blockOffset[node] + board, slotBase, actions, stride,
 			iterWeight, reachMe, strategy, actionValues, out,
@@ -1232,6 +1336,162 @@ function updateQuantised(
 	}
 	regretScale[block] = largestRegret / REGRET_STEPS;
 	sumScale[block] = largestSum / SUM_STEPS;
+}
+
+/** Bias of a compact hand's scale exponent; see `Context.handShift`. */
+const SHIFT_BIAS = 160;
+/** `2^(shift - SHIFT_BIAS)` for every shift, 0 for a shift of 0. */
+const SHIFT_SCALE = Float64Array.from({ length: 256 }, (_, e) => (e === 0 ? 0 : 2 ** (e - SHIFT_BIAS)));
+
+/**
+ * The regret update for a compactly stored node: decode, update in float as
+ * the rule says, re-encode, with no strategy sum. Each hand is scaled by its
+ * own power of two, chosen so its largest regret uses the top of the range;
+ * regret matching only compares a hand's own regrets, so a hand whose
+ * regrets are small beside the block's keeps all its precision. Rounding is
+ * at random with odds set by the remainder (unless `stochastic` is off), so
+ * each stored regret is right on average, from a hash as `dither`'s.
+ */
+function updateCompact(
+	ctx: Context,
+	chunk: number,
+	block: number,
+	slotBase: number,
+	handBase: number,
+	actions: number,
+	count: number,
+	iterWeight: number,
+	actionValues: Float64Array,
+	out: Float64Array,
+): void {
+	const plan = ctx.compact!;
+	const q = ctx.compactRegret![chunk];
+	// Rounding hashes the slot's place in all of compact storage, so how it
+	// is chunked changes nothing.
+	const hashBase = ctx.layout.chunkStart[chunk] + slotBase;
+	const steps = plan.steps;
+	let keepPositive = 1;
+	let keepNegative = 0;
+	const clamp = !ctx.dcfr;
+	if (ctx.dcfr) ({ keepPositive, keepNegative } = dcfrFactors(iterWeight));
+
+	if (plan.float) {
+		for (let k = 0; k < actions * count; k++) {
+			const accumulated = q[slotBase + k];
+			const updated = accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[k] - out[k % count];
+			q[slotBase + k] = clamp && updated < 0 ? 0 : updated;
+		}
+		return;
+	}
+
+	if (!plan.perHand) {
+		// One scale for the block, as 16-bit storage keeps.
+		const scales = ctx.compactScale!;
+		const old = scales[block];
+		let largest = 0;
+		for (let a = 0; a < actions; a++) {
+			const row = a * count;
+			for (let i = 0; i < count; i++) {
+				const accumulated = q[slotBase + row + i] * old;
+				let updated = accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[row + i] - out[i];
+				if (clamp && updated < 0) updated = 0;
+				actionValues[row + i] = updated;
+				const magnitude = updated < 0 ? -updated : updated;
+				if (magnitude > largest) largest = magnitude;
+			}
+		}
+		const step = largest > 0 ? steps / largest : 0;
+		const stochastic = plan.stochastic;
+		// One hash per row, stepped on for each hand.
+		for (let a = 0; a < actions; a++) {
+			const row = a * count;
+			let h = stochastic ? Math.imul((hashBase + row) ^ Math.imul(iterWeight, 0x9e3779b1) ^ 0x5bd1e995, 0x85ebca6b) : 0;
+			for (let i = 0; i < count; i++) {
+				const value = actionValues[row + i] * step;
+				let rounded: number;
+				if (stochastic) {
+					h ^= h >>> 15;
+					h = Math.imul(h, 0x2c1b3c6d);
+					h ^= h >>> 12;
+					rounded = Math.floor(value + (h >>> 0) / 4294967296);
+				} else {
+					rounded = Math.round(value);
+				}
+				q[slotBase + row + i] = rounded > steps ? steps : rounded < -steps ? -steps : rounded;
+			}
+		}
+		scales[block] = largest / steps;
+		return;
+	}
+
+	const shifts = ctx.handShift![chunk];
+	const stochastic = plan.stochastic;
+	for (let i = 0; i < count; i++) {
+		const scale = SHIFT_SCALE[shifts[handBase + i]];
+		let largest = 0;
+		for (let a = 0; a < actions; a++) {
+			const k = a * count + i;
+			const accumulated = q[slotBase + k] * scale;
+			let updated = accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[k] - out[i];
+			if (clamp && updated < 0) updated = 0;
+			actionValues[k] = updated;
+			const magnitude = updated < 0 ? -updated : updated;
+			if (magnitude > largest) largest = magnitude;
+		}
+		// The smallest power of two that brings the largest within range,
+		// read off the float's exponent bits; below the smallest scale there
+		// is, the hand's regrets are zero.
+		let exponent = 0;
+		if (largest > 0) {
+			EXPONENT_FLOAT[0] = largest / steps;
+			const high = EXPONENT_BITS[1];
+			exponent = ((high >>> 20) & 0x7ff) - 1023 + SHIFT_BIAS;
+			if ((high & 0xfffff) !== 0 || EXPONENT_BITS[0] !== 0) exponent++;
+			if (exponent < 1) exponent = 0;
+			else if (exponent > 255) exponent = 255;
+		}
+		shifts[handBase + i] = exponent;
+		const inverse = exponent === 0 ? 0 : 1 / SHIFT_SCALE[exponent];
+		// One hash per hand, stepped on for each action.
+		let h = stochastic ? Math.imul((hashBase + i) ^ Math.imul(iterWeight, 0x9e3779b1) ^ 0x5bd1e995, 0x85ebca6b) : 0;
+		for (let a = 0; a < actions; a++) {
+			const k = a * count + i;
+			const value = actionValues[k] * inverse;
+			let rounded: number;
+			if (stochastic) {
+				h ^= h >>> 15;
+				h = Math.imul(h, 0x2c1b3c6d);
+				h ^= h >>> 12;
+				rounded = Math.floor(value + (h >>> 0) / 4294967296);
+			} else {
+				rounded = Math.round(value);
+			}
+			q[slotBase + k] = rounded > steps ? steps : rounded < -steps ? -steps : rounded;
+		}
+	}
+}
+
+/** Scratch for reading a float's exponent bits (little-endian: the high word second). */
+const EXPONENT_FLOAT = new Float64Array(1);
+const EXPONENT_BITS = new Uint32Array(EXPONENT_FLOAT.buffer);
+
+/**
+ * The strategy a block's storage stands for, outside training: the average,
+ * or the current profile where compact storage keeps no average.
+ */
+export function storedStrategy(
+	ctx: Context,
+	node: number,
+	base: number,
+	actions: number,
+	count: number,
+	strategy: Float64Array,
+): void {
+	if (ctx.tree.round[node] >= ctx.layout.compactFrom) {
+		regretMatch(ctx.compactRegret![ctx.layout.compactChunk![node]], base, actions, count, strategy);
+	} else {
+		averageStrategy(ctx.strategySum, base, actions, count, strategy, ctx.regret);
+	}
 }
 
 /** A deterministic uniform value in [0, 1) for a slot on an iteration. */
@@ -1524,7 +1784,7 @@ export function makeSolver(ctx: Context): Solver {
 			const count = lists.count[slot];
 			const base = ctx.layout.offset[node] + actions * ctx.layout.rowStart[slot];
 			const strategy = new Float64Array(actions * count);
-			averageStrategy(ctx.strategySum, base, actions, count, strategy, ctx.regret);
+			storedStrategy(ctx, node, base, actions, count, strategy);
 			const probs = new Float64Array(index.count * actions).fill(1 / actions);
 			for (let i = 0; i < count; i++) {
 				// A packed entry's strategy is its whole orbit's.

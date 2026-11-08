@@ -152,7 +152,7 @@ export function createEngine(
 	// Shared by every thread, in header order.
 	const common = [
 		add(tree.kind), add(tree.round), add(Uint8Array.from(tree.player, (p) => (p < 0 ? 255 : p))), add(tree.firstEdge),
-		add(tree.numEdges), add(tree.edgeChild), add(tree.payoff), add(layout.offset), add(layout.rowStart),
+		add(tree.numEdges), add(tree.edgeChild), add(tree.payoff), add(Int32Array.from(layout.offset)), add(layout.rowStart),
 		add(active.roundBase), add(active.start), add(Int32Array.from(active.count)), add(active.cardA), add(active.cardB),
 		add(active.strength), add(active.packed), add(Float32Array.from(active.multiplicity)), add(active.memberStart),
 		add(active.memberA), add(active.memberB), add(upRound), add(upStart), add(hands.up),

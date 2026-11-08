@@ -1,0 +1,68 @@
+{
+ "spot": "flop",
+ "variant": "i4-turn",
+ "workers": 1,
+ "engine": "js",
+ "storageMiB": 40.7,
+ "estimateMiB": 58.6,
+ "peakRssMiB": 168,
+ "setupSeconds": 0.4,
+ "rows": [
+  {
+   "iterations": 10,
+   "trainSeconds": 16.2,
+   "exploitability": 31.1148,
+   "positiveShare": 0.5884,
+   "mae": 12.3522,
+   "max": 30.7214
+  },
+  {
+   "iterations": 20,
+   "trainSeconds": 32.7,
+   "exploitability": 7.6067,
+   "positiveShare": 0.6371,
+   "mae": 2.2525,
+   "max": 7.5738
+  },
+  {
+   "iterations": 40,
+   "trainSeconds": 66.1,
+   "exploitability": 2.6721,
+   "positiveShare": 0.6159,
+   "mae": 1.1097,
+   "max": 3.6305
+  },
+  {
+   "iterations": 80,
+   "trainSeconds": 132.3,
+   "exploitability": 0.7671,
+   "positiveShare": 0.5907,
+   "mae": 0.1849,
+   "max": 0.6918
+  },
+  {
+   "iterations": 160,
+   "trainSeconds": 295.9,
+   "exploitability": 0.5178,
+   "positiveShare": 0.5789,
+   "mae": 0.0821,
+   "max": 1.0262
+  },
+  {
+   "iterations": 320,
+   "trainSeconds": 704.3,
+   "exploitability": 0.4262,
+   "positiveShare": 0.5752,
+   "mae": 0.0706,
+   "max": 0.5624
+  }
+ ],
+ "sizeChoice": {
+  "actionMae": 0.448,
+  "actionMax": 8.2806,
+  "sameBestAction": 0.7525,
+  "sameBestSize": 1,
+  "sameBestSizeWhereClear": 1,
+  "clearShare": 0
+ }
+}

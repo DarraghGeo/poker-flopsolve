@@ -27,7 +27,7 @@ import { warmStart } from './warm.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
 import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit } from './platform/node.ts';
-import type { Context, PlayerIndex, RegretStore, RootValues, SamplingOptions, Solver, SumStore } from './cfr.ts';
+import type { CompactPlan, Context, PlayerIndex, RegretStore, RootValues, SamplingOptions, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
@@ -157,6 +157,54 @@ export interface SpotConfig {
 	 * strategy in the real game, every card dealt. Default false.
 	 */
 	readonly runoutBuckets?: boolean | number;
+	/**
+	 * Store the later rounds compactly — an approximation, off by default.
+	 * See `CompactStorage`. Set here rather than on the solve because it
+	 * decides how much memory the spot needs, which `maxBytes` is checked
+	 * against when the spot is defined.
+	 */
+	readonly compactStorage?: CompactStorage;
+}
+
+/**
+ * Compact storage (issue #50). From round `from` on — by default the turn of
+ * a flop spot — a decision keeps only its regrets, as 8-bit integers with one
+ * power-of-two scale per hand, and no strategy sums. Its strategy, wherever
+ * one is read (`strategyAt`, `reachAt`, EVs, exploitability), is then the
+ * current profile, the regret-matched strategy the next iteration plays; the
+ * rounds before `from` keep 32-bit regrets and the average strategy. Training
+ * reads only regrets, so the iterates differ from an exact solve's only by
+ * the rounding of the stored regrets, which is at random and right on
+ * average.
+ *
+ * Exploitability is measured exactly, in the full tree, of that mixed
+ * profile: the average before `from`, the current profile after.
+ *
+ * Runs on the JavaScript engine (and its Node worker threads), not the
+ * WebAssembly one; not with `warmStart`, `coarseStart`, `chanceSampling`,
+ * `analysisOnly` or a `precision`.
+ */
+export interface CompactStorage {
+	/**
+	 * First round stored compactly, from the spot's first (0). Default 0:
+	 * measured, an earlier round's average strategy above the current
+	 * profile is worse than the current profile throughout.
+	 */
+	readonly from?: number;
+	/** For measurement: the largest magnitude stored, at most 127. Default 127. */
+	readonly steps?: number;
+	/** For measurement: one float64 scale per node and board instead of per hand. */
+	readonly blockScale?: boolean;
+	/** For measurement: round to nearest instead of at random. */
+	readonly nearest?: boolean;
+	/** For measurement: keep 32-bit regrets there, dropping only the sums. */
+	readonly float?: boolean;
+	/**
+	 * Largest single buffer to allocate, in bytes; storage is split in chunks
+	 * no bigger. Default 1 GiB: Chromium refuses an ArrayBuffer of 2 GiB, but
+	 * gives several smaller ones.
+	 */
+	readonly chunkBytes?: number;
 }
 
 /** Projected cost of solving a spot. */
@@ -177,6 +225,8 @@ export interface Estimate {
 	 * that does not fit at 32 bits is solved with.
 	 */
 	readonly compressedBytes: number;
+	/** Storage with `compactStorage`, which `maxBytes` is then checked against; else null. */
+	readonly compactBytes: number | null;
 	readonly secondsPerThousandIterations: number;
 	/** Whether the spot fits `maxBytes` at 16 bits or better. */
 	readonly fits: boolean;
@@ -188,7 +238,9 @@ export class SpotTooLargeError extends Error {
 	readonly estimate: Estimate;
 	constructor(estimate: Estimate, maxBytes: number) {
 		super(
-			`This spot needs ~${formatBytes(estimate.compressedBytes)} even at 16-bit precision, ` +
+			(estimate.compactBytes !== null
+				? `This spot needs ~${formatBytes(estimate.compactBytes)} even with compact storage, `
+				: `This spot needs ~${formatBytes(estimate.compressedBytes)} even at 16-bit precision, `) +
 				`but the limit is ${formatBytes(maxBytes)}.\n` +
 				`  ${estimate.decisionNodes} decision nodes x up to ${estimate.runouts.toLocaleString()} runouts ` +
 				`x ${Math.max(...estimate.combos)} combos.\n` +
@@ -334,9 +386,12 @@ export function defineSpot(config: SpotConfig): Spot {
 	const showdownBytes = runouts.counts[last] * (2 * COMBOS + COMBOS + 1) * 2;
 	const bytes = layout.bytes + showdownBytes;
 	const compressedBytes = buildLayout(tree, runouts, players, 2).bytes + showdownBytes;
+	const compact = config.compactStorage ? compactPlan(config.compactStorage, runouts.rounds) : null;
+	const compactBytes = compact ? buildLayout(tree, runouts, players, 4, compact).bytes + showdownBytes : null;
+	const needed = compactBytes ?? compressedBytes;
 
 	const suggestions: string[] = [];
-	if (compressedBytes > maxBytes) {
+	if (needed > maxBytes) {
 		const widest = Math.max(...[0, 1].flatMap((p) => forPlayer(rows, p).map((r) => r.length)));
 		if (widest > 1) suggestions.push(`use fewer bet sizes (currently up to ${widest} per round)`);
 		const raises = [0, 1].flatMap((p) => [forPlayer(config.maxRaises ?? 1, p)].flat());
@@ -353,8 +408,9 @@ export function defineSpot(config: SpotConfig): Spot {
 		totalSlots: layout.totalSlots,
 		bytes,
 		compressedBytes,
+		compactBytes,
 		secondsPerThousandIterations: (layout.totalSlots * 4 * 1000) / OPS_PER_SECOND,
-		fits: compressedBytes <= maxBytes,
+		fits: needed <= maxBytes,
 		suggestions,
 	};
 	if (!estimate.fits) throw new SpotTooLargeError(estimate, maxBytes);
@@ -921,7 +977,24 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// A saved strategy is loaded as float32 sums, so analysis stays there.
 	const maxBytes = spot.source.maxBytes ?? DEFAULT_MAX_BYTES;
 	const { totalSlots, bytes } = spot.estimate;
-	const precision: Precision = options.analysisOnly
+	const compact = spot.source.compactStorage ? compactPlan(spot.source.compactStorage, spot.runouts.rounds) : null;
+	if (compact) {
+		const clash = options.analysisOnly
+			? 'analysisOnly'
+			: options.warmStart
+				? 'warmStart'
+				: options.approximations?.coarseStart
+					? 'coarseStart'
+					: options.approximations?.chanceSampling
+						? 'chanceSampling'
+						: options.precision
+							? 'precision'
+							: null;
+		if (clash) throw new Error(`compactStorage does not combine with ${clash}`);
+	}
+	const precision: Precision = compact
+		? 'f32'
+		: options.analysisOnly
 		? 'f32'
 		: options.precision ??
 			(bytes <= maxBytes ? 'f32' : 'i16');
@@ -936,14 +1009,14 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 	const showdown = buildShowdownTable(spot.runouts, relevant);
-	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
+	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], compact ?? undefined);
 	const weights = runoutWeights(spot.runouts);
 
 	// The WebAssembly engine, where it applies: 32-bit storage and a platform
 	// with WebAssembly SIMD. Decided before the thread count, because the
 	// browser build can only thread the engine.
 	const wantsEngine =
-		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false;
+		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false && !compact;
 	// Sampling's state is one thread's; see `Approximations.chanceSampling`.
 	const samplingOptions = options.approximations?.chanceSampling;
 	const requested = samplingOptions ? 1 : resolveWorkers(options, wantsEngine);
@@ -992,6 +1065,15 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		strategySum: engine ? engine.strategySum : makeSumStore(precision, allocate(layout.totalSlots * width)),
 		regretScale: quantised ? new Float64Array(allocate(layout.blocks * 8)) : null,
 		sumScale: quantised ? new Float64Array(allocate(layout.blocks * 8)) : null,
+		compact,
+		compactRegret: !compact
+			? null
+			: layout.chunkSlots.map((slots) =>
+					compact.float ? new Float32Array(allocate(slots * 4)) : new Int8Array(allocate(slots)),
+				),
+		handShift: compact?.perHand ? layout.chunkHands.map((hands) => new Uint8Array(allocate(hands))) : null,
+		compactScale:
+			compact && !compact.perHand && !compact.float ? new Float64Array(allocate(layout.blocks * 8)) : null,
 		scratch: makeTerminalScratch(),
 		chipScale: spot.chipScale,
 		active,
@@ -1047,7 +1129,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		if (warm && coarsePlan) coarseMs.set(solver, coarsePlan.elapsed);
 		// The engine runs its own threads; the JavaScript pool is for the rest.
 		pool = plan && !engine
-			? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
+			? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd, compact }, requested)
 			: null;
 	} catch (error) {
 		// The engine's threads would otherwise stay parked on this run for good.
@@ -1104,6 +1186,22 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 				options.approximations?.currentProfileEv === true,
 			);
 		},
+	};
+}
+
+/** Validate `SpotConfig.compactStorage` into the solver's plan. */
+function compactPlan(settings: CompactStorage, rounds: number): CompactPlan {
+	const from = settings.from ?? 0;
+	if (!Number.isInteger(from) || from < 0 || from >= rounds) {
+		throw new Error(`compactStorage.from must be a round of this spot, 0 to ${rounds - 1}; got ${from}`);
+	}
+	const steps = settings.steps ?? 127;
+	if (!Number.isInteger(steps) || steps < 1 || steps > 127) {
+		throw new Error(`compactStorage.steps must be an integer from 1 to 127; got ${steps}`);
+	}
+	return {
+		from, steps, perHand: !settings.blockScale && !settings.float, stochastic: !settings.nearest,
+		float: settings.float === true, chunkBytes: settings.chunkBytes ?? 2 ** 30,
 	};
 }
 

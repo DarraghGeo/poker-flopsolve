@@ -121,6 +121,10 @@ export interface WorkerSetup {
 	/** Per-block scales, for 16-bit storage only. */
 	readonly regretScale: SharedArrayBuffer | null;
 	readonly sumScale: SharedArrayBuffer | null;
+	/** Compact storage's regrets and hand scales, else null. */
+	readonly compactRegret: SharedArrayBuffer[] | null;
+	readonly handShift: SharedArrayBuffer[] | null;
+	readonly compactScale: SharedArrayBuffer | null;
 	readonly control: SharedArrayBuffer;
 	readonly exchange: SharedArrayBuffer;
 	readonly entryCount: number;
@@ -175,6 +179,9 @@ export function startPool(
 			strategySum: ctx.strategySum.buffer as SharedArrayBuffer,
 			regretScale: (ctx.regretScale?.buffer as SharedArrayBuffer | undefined) ?? null,
 			sumScale: (ctx.sumScale?.buffer as SharedArrayBuffer | undefined) ?? null,
+			compactRegret: ctx.compactRegret?.map((chunk) => chunk.buffer as SharedArrayBuffer) ?? null,
+			handShift: ctx.handShift?.map((chunk) => chunk.buffer as SharedArrayBuffer) ?? null,
+			compactScale: (ctx.compactScale?.buffer as SharedArrayBuffer | undefined) ?? null,
 			control: controlBuffer,
 			exchange: exchangeBuffer,
 			entryCount,

@@ -1,0 +1,55 @@
+{
+ "spot": "T0mono",
+ "variant": "wasm",
+ "workers": 4,
+ "engine": "wasm",
+ "storageMiB": 1143.9,
+ "estimateMiB": 1149,
+ "peakRssMiB": 1315,
+ "setupSeconds": 0.3,
+ "rows": [
+  {
+   "iterations": 20,
+   "trainSeconds": 18.1,
+   "exploitability": 49.5592,
+   "positiveShare": 0.6096
+  },
+  {
+   "iterations": 40,
+   "trainSeconds": 33.9,
+   "exploitability": 15.593,
+   "positiveShare": 0.5906
+  },
+  {
+   "iterations": 80,
+   "trainSeconds": 64.9,
+   "exploitability": 4.7607,
+   "positiveShare": 0.5677
+  },
+  {
+   "iterations": 160,
+   "trainSeconds": 127.9,
+   "exploitability": 1.8535,
+   "positiveShare": 0.5651
+  },
+  {
+   "iterations": 320,
+   "trainSeconds": 252.6,
+   "exploitability": 0.7066,
+   "positiveShare": 0.5539
+  },
+  {
+   "iterations": 480,
+   "trainSeconds": 372.6,
+   "exploitability": 0.4266,
+   "positiveShare": 0.5515
+  },
+  {
+   "iterations": 640,
+   "trainSeconds": 493.3,
+   "exploitability": 0.2185,
+   "positiveShare": 0.5542
+  }
+ ],
+ "sizeChoice": null
+}
