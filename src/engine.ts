@@ -13,7 +13,7 @@
  */
 
 import { COMBOS, DECK } from './cards.ts';
-import type { ActiveLists, Layout, PlayerIndex, RootTraversal } from './cfr.ts';
+import type { ActiveLists, Layout, PlayerIndex, RootTraversal, SamplingPlan } from './cfr.ts';
 import { dcfrFactors, Mode, treeDepth } from './cfr.ts';
 import type { HandSpace } from './hands.ts';
 import type { Runouts } from './runouts.ts';
@@ -69,6 +69,8 @@ export interface EngineInput {
 	readonly hands: HandSpace;
 	readonly runoutWeight: Float64Array;
 	readonly chipScale: number;
+	/** Chance sampling's layout, for `Approximations.chanceSampling`; unset for none. */
+	readonly sampling?: SamplingPlan;
 }
 
 /** A running engine. */
@@ -76,6 +78,8 @@ export interface Engine {
 	/** The accumulators, as views onto the engine's memory. */
 	readonly regret: Float32Array;
 	readonly strategySum: Float32Array;
+	/** Chance sampling's state, as views onto the engine's memory; null without sampling. */
+	readonly sampling: { baseline: Float32Array; lastWalk: Int32Array; lastUpdate: Int32Array } | null;
 	/** Install as the solver's root traversal; `dcfr` picks the update rule. */
 	root(dcfr: boolean): RootTraversal;
 	/** Release worker threads, if any. */
@@ -173,6 +177,15 @@ export function createEngine(
 	const reach = pool ? add(null, entries * 2 * rowBytes) : -1;
 	const values = pool ? add(null, entries * rowBytes) : -1;
 	const partials = pool ? add(null, (threads - 1) * entries * rowBytes) : -1;
+	// Chance sampling, only when asked for.
+	const plan = input.sampling;
+	const sample = plan
+		? {
+				baseOffset: add(plan.baseOffset), boardOffset: add(plan.boardOffset), walkOffset: add(plan.walkOffset),
+				blockOffset: add(layout.blockOffset), baseline: add(null, plan.values * 4), lastWalk: add(null, plan.walks * 4),
+				lastUpdate: add(null, plan.blocks * 4),
+			}
+		: null;
 
 	const offsets: number[] = [];
 	let total = 64;
@@ -201,6 +214,21 @@ export function createEngine(
 	const exports = instance.exports as unknown as EngineExports;
 	exports.init(offsets[own[0].header]);
 	exports.setMaxActions(maxActions);
+	let samplingViews: Engine['sampling'] = null;
+	if (plan && sample) {
+		let mask = 0;
+		for (let r = 0; r < plan.rounds.length; r++) if (plan.rounds[r]) mask |= 1 << r;
+		exports.setSampling(
+			mask, plan.p, plan.every, plan.unbiased ? 1 : 0, plan.catchUp ? 1 : 0,
+			offsets[sample.baseOffset], offsets[sample.boardOffset], offsets[sample.walkOffset],
+			offsets[sample.baseline], offsets[sample.lastWalk], offsets[sample.lastUpdate], offsets[sample.blockOffset],
+		);
+		samplingViews = {
+			baseline: new Float32Array(memory.buffer, offsets[sample.baseline], plan.values),
+			lastWalk: new Int32Array(memory.buffer, offsets[sample.lastWalk], plan.walks),
+			lastUpdate: new Int32Array(memory.buffer, offsets[sample.lastUpdate], plan.blocks),
+		};
+	}
 
 	const regret = new Float32Array(memory.buffer, offsets[REGRET], layout.totalSlots);
 	const strategySum = new Float32Array(memory.buffer, offsets[SUMS], layout.totalSlots);
@@ -272,6 +300,7 @@ export function createEngine(
 			for (let i = 0; i < count; i++) into[i] = weights[active.list[from + i]];
 		}
 		const [positive, negative, sum, weight, clamp] = settingsFor(mode, iterWeight, dcfr);
+		if (plan) exports.setIteration(mode === Mode.Train ? iterWeight : 0, dcfr ? 1 : 0);
 		let at: number;
 		if (!pool) {
 			at = exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
@@ -323,6 +352,7 @@ export function createEngine(
 	return {
 		regret,
 		strategySum,
+		sampling: samplingViews,
 		threads,
 		root(dcfr) {
 			return (mode, traverser, iterWeight) => run(mode, traverser, iterWeight, dcfr);
@@ -344,6 +374,12 @@ export interface EngineExports {
 	setShard(round: number, start: number, end: number): void;
 	setExchange(entries: number, reach: number, values: number, stride: number): void;
 	setPhase(phase: number, apply: number): void;
+	setSampling(
+		rounds: number, p: number, every: number, unbiased: number, catchUp: number,
+		baseOffsets: number, boardOffsets: number, walkOffsets: number,
+		baselines: number, lastWalks: number, lastUpdates: number, blockOffsets: number,
+	): void;
+	setIteration(t: number, dcfr: number): void;
 	run(mode: number, traverser: number, me: number, opp: number, positive: number, negative: number, sum: number, weight: number, clamp: number): number;
 	runChance(mode: number, traverser: number, node: number, me: number, opp: number, positive: number, negative: number, sum: number, weight: number, clamp: number): number;
 }

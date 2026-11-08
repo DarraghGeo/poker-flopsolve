@@ -26,11 +26,14 @@ import { warmStart } from './warm.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
 import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit } from './platform/node.ts';
-import type { Context, PlayerIndex, RegretStore, Solver, SumStore } from './cfr.ts';
+import type { Context, PlayerIndex, RegretStore, SamplingOptions, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
 	buildPlayerIndex,
+	makeSampling,
+	planSampling,
+	samplingBytes,
 	makeSolver,
 	makeTerminalScratch,
 	matchupMass,
@@ -44,7 +47,7 @@ export type { ResolvedBoard } from './runouts.ts';
 export type { WarmStartReport } from './warm.ts';
 export { simdAvailable } from './kernels.ts';
 export type { BetSize } from './tree.ts';
-export type { Solver } from './cfr.ts';
+export type { SamplingOptions, Solver } from './cfr.ts';
 export { ACTION_LABELS, ActionKind, NodeKind } from './tree.ts';
 export type { PerPlayer, RaiseSizes } from './tree.ts';
 /** 'node' or 'browser': which build is running. */
@@ -612,6 +615,8 @@ export interface Approximations {
 	 * 140 ms, three leaves more than an exact flop iteration (about 350 ms),
 	 * before the range-dependent features it needs.
 	 */
+	/** EXPERIMENT (#25): chance sampling with last-value baselines. */
+	readonly chanceSampling?: SamplingOptions;
 }
 
 export type Algorithm = 'cfr+' | 'dcfr';
@@ -769,7 +774,9 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// browser build can only thread the engine.
 	const wantsEngine =
 		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false;
-	const requested = resolveWorkers(options, wantsEngine);
+	// Sampling's state is one thread's; see `Approximations.chanceSampling`.
+	const samplingOptions = options.approximations?.chanceSampling;
+	const requested = samplingOptions ? 1 : resolveWorkers(options, wantsEngine);
 	const plan = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
 
 	// Workers need the accumulators in shared memory. Allocating shared for a
@@ -781,12 +788,22 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 
 	const active = buildActiveLists(spot.runouts, spot.players, showdown);
 	const hands = buildHandSpace(spot.runouts, spot.players, active);
+	if (samplingOptions && quantised) throw new Error('chanceSampling needs 32- or 64-bit storage');
+	const samplingPlan = samplingOptions ? planSampling(spot.tree, spot.runouts, active, layout, samplingOptions) : undefined;
+	// Measured as the precision choice above measures storage: by the estimate.
+	const storageBytes = Math.max(bytes, layout.bytes);
+	if (samplingPlan && storageBytes + samplingBytes(samplingPlan) > maxBytes) {
+		throw new Error(
+			`chanceSampling needs ${Math.ceil(samplingBytes(samplingPlan) / 2 ** 20)} MiB of baselines beside ` +
+				`${Math.ceil(storageBytes / 2 ** 20)} MiB of storage, over maxBytes; sample fewer rounds or raise maxBytes`,
+		);
+	}
 	// The engine owns the storage; the context sees it through views.
 	const engine = wantsEngine
 		? createEngine(
 				{
 					tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
-					runoutWeight: weights, chipScale: spot.chipScale,
+					runoutWeight: weights, chipScale: spot.chipScale, sampling: samplingPlan,
 				},
 				plan ? { plan, threads: requested, spawn: spawnEngineWorker } : undefined,
 			)
@@ -826,6 +843,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		totalMass: matchupMass(spot.players[0].weights, spot.players[1].weights) * weights[0],
 		dcfr: (options.algorithm ?? 'dcfr') === 'dcfr',
 	};
+	if (samplingPlan) ctx.sampling = makeSampling(samplingPlan, engine?.sampling ?? undefined);
 
 	// Seeded before any worker starts, so they all see the inherited values.
 	let warm: WarmStartReport | null = null;
@@ -837,6 +855,8 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			const source = options.warmStart;
 			warm = warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
 			offset = options.warmIteration ?? source.totalIterations;
+			// Inherited accumulators are discounted up to where the count resumes.
+			ctx.sampling?.lastUpdate.fill(offset);
 		}
 
 		solver = makeSolver(ctx);

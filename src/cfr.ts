@@ -232,6 +232,164 @@ export interface Context {
 	expandOrbits: boolean;
 	/** Use the WebAssembly SIMD kernels where the platform has them. */
 	readonly simd: boolean;
+	/**
+	 * Chance sampling with baselines, for `Approximations.chanceSampling`;
+	 * unset or null for the exact traversal.
+	 */
+	sampling?: Sampling | null;
+}
+
+/** How chance sampling picks deals; see `Approximations.chanceSampling`. */
+export interface SamplingOptions {
+	/**
+	 * Probability of walking each deal on a training iteration, chosen at
+	 * random per deal and iteration. Default 0.35. Ignored with `every`.
+	 */
+	readonly p?: number;
+	/**
+	 * Walk every deal exactly once every this many iterations, in rotation,
+	 * instead of at random. Measured, it converges worse than random at the
+	 * same rate; kept for comparison.
+	 */
+	readonly every?: number;
+	/**
+	 * Betting rounds whose deals are sampled, counted from the spot's first:
+	 * from a flop, 1 is the turn and 2 the river. Default every round after
+	 * the first.
+	 */
+	readonly rounds?: readonly number[];
+	/**
+	 * How a walked deal's fresh value meets its baseline: 'unbiased' adds
+	 * `(v - b) / p` to the baseline, the VR-MCCFR estimator; 'latest' uses
+	 * `v` itself, the freshest value without the correction.
+	 */
+	readonly estimator?: 'unbiased' | 'latest';
+	/** Apply the DCFR discounts a skipped subtree missed when it is next walked. Default true. */
+	readonly catchUp?: boolean;
+}
+
+/** Where sampling keeps what, for a spot; see `makeSampling`. */
+export interface SamplingPlan {
+	readonly rounds: Uint8Array;
+	readonly p: number;
+	readonly every: number;
+	readonly unbiased: boolean;
+	readonly catchUp: boolean;
+	/** Per chance node into a sampled round: where its baselines start, else -1. */
+	readonly baseOffset: Int32Array;
+	/** Per list slot of a sampled round: offset of that board and player's baseline within a node's. */
+	readonly boardOffset: Int32Array;
+	/** Per chance node: where its last-walk entries start, two per child board. */
+	readonly walkOffset: Int32Array;
+	/** Baseline values, last-walk entries and blocks the state holds. */
+	readonly values: number;
+	readonly walks: number;
+	readonly blocks: number;
+}
+
+/** Sampling state: baselines, when each was last walked, when each block was last updated. */
+export interface Sampling extends SamplingPlan {
+	readonly baseline: Float32Array;
+	readonly lastWalk: Int32Array;
+	/** Per block: the iteration it was last updated in, for DCFR catch-up. */
+	readonly lastUpdate: Int32Array;
+	/** Memory the state takes. */
+	readonly bytes: number;
+}
+
+/** Lay out sampling state for a spot. */
+export function planSampling(
+	tree: Tree,
+	runouts: Runouts,
+	active: ActiveLists,
+	layout: Layout,
+	options: SamplingOptions,
+): SamplingPlan {
+	const rounds = new Uint8Array(runouts.rounds);
+	const asked = options.rounds ?? Array.from({ length: runouts.rounds }, (_, r) => r);
+	for (const r of asked) if (r > 0 && r < runouts.rounds) rounds[r] = 1;
+	const boardOffset = new Int32Array(active.roundBase[runouts.rounds] * 2);
+	const perNode = new Float64Array(runouts.rounds);
+	for (let r = 1; r < runouts.rounds; r++) {
+		if (!rounds[r]) continue;
+		let total = 0;
+		for (let b = 0; b < runouts.counts[r]; b++) {
+			for (let p = 0; p < 2; p++) {
+				const slot = (active.roundBase[r] + b) * 2 + p;
+				boardOffset[slot] = total;
+				total += active.count[slot];
+			}
+		}
+		perNode[r] = total;
+	}
+	const baseOffset = new Int32Array(tree.nodeCount).fill(-1);
+	const walkOffset = new Int32Array(tree.nodeCount).fill(-1);
+	let values = 0;
+	let walks = 0;
+	for (let node = 0; node < tree.nodeCount; node++) {
+		if (tree.kind[node] !== NodeKind.Chance) continue;
+		const next = tree.round[node] + 1;
+		if (next >= runouts.rounds || !rounds[next]) continue;
+		baseOffset[node] = values;
+		walkOffset[node] = walks;
+		values += perNode[next];
+		walks += runouts.counts[next] * 2;
+	}
+	if (values > 0x3fffffff) throw new Error('chanceSampling: too many baseline values for this spot');
+	const every = options.every ?? 0;
+	const p = every > 0 ? 1 / every : (options.p ?? 0.35);
+	if (!(p > 0 && p <= 1)) throw new Error(`chanceSampling: p must be in (0, 1], got ${p}`);
+	return {
+		rounds, p, every,
+		unbiased: (options.estimator ?? 'unbiased') === 'unbiased',
+		catchUp: options.catchUp ?? true,
+		baseOffset, boardOffset, walkOffset,
+		values, walks, blocks: layout.blocks,
+	};
+}
+
+/** Bytes sampling state takes beyond its plan's small offset tables. */
+export function samplingBytes(plan: SamplingPlan): number {
+	return (plan.values + plan.walks + plan.blocks) * 4;
+}
+
+/** Sampling state over the given storage, or freshly allocated. */
+export function makeSampling(
+	plan: SamplingPlan,
+	storage?: { baseline: Float32Array; lastWalk: Int32Array; lastUpdate: Int32Array },
+): Sampling {
+	return {
+		...plan,
+		baseline: storage?.baseline ?? new Float32Array(plan.values),
+		lastWalk: storage?.lastWalk ?? new Int32Array(plan.walks),
+		lastUpdate: storage?.lastUpdate ?? new Int32Array(plan.blocks),
+		bytes: samplingBytes(plan),
+	};
+}
+
+/** Whether a deal is walked on an iteration. */
+function sampled(s: Sampling, node: number, board: number, t: number): boolean {
+	let h = Math.imul(node ^ Math.imul(board, 0x9e3779b1), 0x85ebca6b);
+	if (s.every > 0) {
+		h ^= h >>> 13;
+		h = Math.imul(h, 0xc2b2ae35);
+		h ^= h >>> 16;
+		return ((h >>> 0) + t) % s.every === 0;
+	}
+	h ^= Math.imul(t, 0x27d4eb2f);
+	h ^= h >>> 15;
+	h = Math.imul(h, 0xc2b2ae35);
+	h ^= h >>> 13;
+	h = Math.imul(h, 0x165667b1);
+	h ^= h >>> 16;
+	return (h >>> 0) / 4294967296 < s.p;
+}
+
+const factorCache: { keepPositive: number; keepNegative: number; keepSum: number }[] = [];
+function cachedFactors(t: number): { keepPositive: number; keepNegative: number; keepSum: number } {
+	let f = factorCache[t];
+	if (f === undefined) factorCache[t] = f = dcfrFactors(t);
+	return f;
 }
 
 /**
@@ -515,6 +673,7 @@ export function treeDepth(tree: Tree): number {
  * traversal, so discounting at that visit is the same as discounting
  * everything between iterations — without a separate pass over memory.
  */
+// assembly/engine.ts repeats these in its sampling catch-up; keep in step.
 const DCFR_ALPHA = 1.5;
 const DCFR_BETA = 0;
 const DCFR_GAMMA = 3;
@@ -739,6 +898,12 @@ function traverse(
 		const from = sharded && ctx.shardStart > first ? ctx.shardStart : first;
 		const to = sharded && ctx.shardEnd < last ? ctx.shardEnd : last;
 
+		// Chance sampling decides how each deal's values are had; how they
+		// spread over the deal's mirror images is the same either way.
+		const sampling = ctx.sampling ?? null;
+		const sampleHere =
+			sampling !== null && mode === Mode.Train && ctx.applyUpdates && !ctx.expandOrbits && sampling.rounds[nextRound] === 1;
+
 		for (let childBoard = from; childBoard < to; childBoard++) {
 			const childMySlot = (lists.roundBase[nextRound] + childBoard) * 2 + traverser;
 			const childOppSlot = (lists.roundBase[nextRound] + childBoard) * 2 + opponent;
@@ -751,10 +916,15 @@ function traverse(
 			// child hand's parent is `up`, through the deal's relabelling.
 			// Without `expandOrbits`, reach is symmetric under the relabelling,
 			// so one walk serves every member and only the values are spread.
-			let value: Float64Array | null = null;
+			let value: Float64Array | Float32Array | null = null;
 			for (let m = firstMember; m < membersEnd; m++) {
 				const upMe = upStart[m * 2 + traverser];
-				if (value === null || ctx.expandOrbits) {
+				if (sampleHere && value === null) {
+					value = sampledValue(
+						ctx, sampling!, buffers, traverser, iterWeight, node, child, nextRound, childBoard,
+						reachMe, reachOpp, childMe, childOpp, depth,
+					);
+				} else if (value === null || ctx.expandOrbits) {
 					const upOpp = upStart[m * 2 + opponent];
 					for (let k = 0; k < nMe; k++) childMe[k] = reachMe[up[upMe + k]];
 					for (let k = 0; k < nOpp; k++) childOpp[k] = reachOpp[up[upOpp + k]];
@@ -861,7 +1031,22 @@ function traverse(
 		);
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.dcfr) {
 		// `iterWeight` is the iteration number, counted from 1.
-		const { keepPositive, keepNegative, keepSum } = dcfrFactors(iterWeight);
+		let { keepPositive, keepNegative, keepSum } = dcfrFactors(iterWeight);
+		const sampling = ctx.sampling;
+		if (sampling !== undefined && sampling !== null) {
+			// A subtree chance sampling skipped missed those iterations'
+			// discounts; nothing was added meanwhile, so each sign held.
+			const block = ctx.layout.blockOffset[node] + board;
+			if (sampling.catchUp) {
+				for (let s = sampling.lastUpdate[block] + 1; s < iterWeight; s++) {
+					const f = cachedFactors(s);
+					keepPositive *= f.keepPositive;
+					keepNegative *= f.keepNegative;
+					keepSum *= f.keepSum;
+				}
+			}
+			sampling.lastUpdate[block] = iterWeight;
+		}
 		const regret = ctx.regret;
 		const strategySum = ctx.strategySum;
 		for (let a = 0; a < actions; a++) {
@@ -893,6 +1078,62 @@ function traverse(
 	}
 
 	return out;
+}
+
+/**
+ * One deal's values in a sampled chance node's training walk. A deal not
+ * walked gives its baseline, the values it returned when last walked; a
+ * walked deal gives `b + (v - b) / p` and its `v` becomes the new baseline
+ * (with the 'latest' estimator, `v` itself). A deal never walked yet is
+ * always walked. Returned in the child's hand space, as a walk's are.
+ */
+function sampledValue(
+	ctx: Context,
+	s: Sampling,
+	buffers: Buffers,
+	traverser: 0 | 1,
+	t: number,
+	node: number,
+	child: number,
+	nextRound: number,
+	childBoard: number,
+	reachMe: Float64Array,
+	reachOpp: Float64Array,
+	childMe: Float64Array,
+	childOpp: Float64Array,
+	depth: number,
+): Float64Array | Float32Array {
+	const lists = ctx.active;
+	const opponent = (1 - traverser) as 0 | 1;
+	const childMySlot = (lists.roundBase[nextRound] + childBoard) * 2 + traverser;
+	const nMe = lists.count[childMySlot];
+	const at = s.baseOffset[node] + s.boardOffset[childMySlot];
+	const walkAt = s.walkOffset[node] + childBoard * 2 + traverser;
+	const fresh = s.lastWalk[walkAt] === 0;
+	if (!fresh && !sampled(s, node, childBoard, t)) return s.baseline.subarray(at, at + nMe);
+
+	const childOppSlot = (lists.roundBase[nextRound] + childBoard) * 2 + opponent;
+	const nOpp = lists.count[childOppSlot];
+	const member = ctx.runouts.orbitStart[nextRound][childBoard];
+	const upStart = ctx.hands.upStart[nextRound];
+	const up = ctx.hands.up;
+	const upMe = upStart[member * 2 + traverser];
+	const upOpp = upStart[member * 2 + opponent];
+	for (let k = 0; k < nMe; k++) childMe[k] = reachMe[up[upMe + k]];
+	for (let k = 0; k < nOpp; k++) childOpp[k] = reachOpp[up[upOpp + k]];
+	const value = traverse(ctx, buffers, Mode.Train, traverser, t, child, childBoard, childMe, childOpp, depth + 1);
+	// The child's buffer is free again, so the estimate goes in place.
+	const weight = s.unbiased ? 1 / s.p : 1;
+	const baseline = s.baseline;
+	for (let k = 0; k < nMe; k++) {
+		const v = value[k];
+		const b = baseline[at + k];
+		baseline[at + k] = v;
+		// `v + (w - 1)(v - b)` is `b + w(v - b)`, and exactly `v` at w = 1.
+		if (!fresh) value[k] = v + (weight - 1) * (v - b);
+	}
+	s.lastWalk[walkAt] = t;
+	return value;
 }
 
 /**

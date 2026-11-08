@@ -1,0 +1,124 @@
+/**
+ * Chance sampling with baselines (`Approximations.chanceSampling`): off, the
+ * solve is untouched; at p = 1 it is the exact solve; below, both engines
+ * pick the same deals and it still converges.
+ */
+
+import { describe, expect, it } from 'vitest';
+import { createRun, defineSpot } from '../src/index.ts';
+import type { SolveOptions, SpotConfig } from '../src/index.ts';
+import { SPOTS } from '../bench/compare/spots.ts';
+
+const flop: SpotConfig = {
+	board: 'Ts 9s 4h', pot: 60, stack: 100,
+	oop: 'AA,KK,QQ,AKs,AQs,KQs,76s,65s', ip: 'JJ,TT,99,AJs,KJs,QJs,JTs,T9s',
+	betSizes: [[0.66]], maxRaises: 1,
+};
+
+function solveWith(config: SpotConfig, iterations: number, options: SolveOptions) {
+	const run = createRun(defineSpot(config), { workers: 1, ...options });
+	try {
+		run.step(iterations);
+		return {
+			engine: run.engine,
+			regret: Float64Array.from(run.solver.ctx.regret),
+			sums: Float64Array.from(run.solver.ctx.strategySum),
+			exploitability: run.exploitabilityPercent(),
+			ev: run.snapshot().ev(0),
+			bytes: run.solver.ctx.sampling?.bytes ?? 0,
+		};
+	} finally {
+		run.close();
+	}
+}
+
+/** Index of the first entry that differs, or -1; vitest's deep equality is too slow on storage. */
+function firstDifference(a: Float64Array, b: Float64Array): number {
+	if (a.length !== b.length) return -2;
+	for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) return i;
+	return -1;
+}
+
+const sampling = (chanceSampling: NonNullable<SolveOptions['approximations']>['chanceSampling']): SolveOptions => ({
+	approximations: { chanceSampling },
+});
+
+describe('chance sampling', () => {
+	it('is off by default', () => {
+		const run = createRun(defineSpot(flop), { workers: 1 });
+		expect(run.solver.ctx.sampling ?? null).toBeNull();
+		run.close();
+	});
+
+	for (const engine of [undefined, 'js'] as const) {
+		for (const algorithm of ['dcfr', 'cfr+'] as const) {
+			it(`at p = 1 is the exact solve, bit for bit (${engine ?? 'wasm'}, ${algorithm})`, () => {
+				const exact = solveWith(flop, 12, { engine, algorithm });
+				const sampled = solveWith(flop, 12, { engine, algorithm, ...sampling({ p: 1, rounds: [1, 2] }) });
+				expect(sampled.engine).toBe(exact.engine);
+				expect(firstDifference(sampled.regret, exact.regret)).toBe(-1);
+				expect(firstDifference(sampled.sums, exact.sums)).toBe(-1);
+			});
+		}
+	}
+
+	it('walks fewer deals per iteration and still converges', () => {
+		const exact = solveWith(flop, 100, {});
+		const sampled = solveWith(flop, 100, sampling({ p: 0.5, rounds: [2] }));
+		expect(sampled.bytes).toBeGreaterThan(0);
+		expect(sampled.exploitability).toBeLessThan(1);
+		expect(sampled.exploitability).toBeLessThan(5 * exact.exploitability);
+		expect(Math.abs(sampled.ev - exact.ev)).toBeLessThan(0.5);
+	});
+
+	it('picks the same deals in both engines', () => {
+		// After one iteration the engines agree to float precision, so the same
+		// deals were walked; a different choice would move values by whole
+		// subtrees. Then, over many, they converge alike.
+		for (const options of [sampling({ p: 0.4, rounds: [1, 2] }), sampling({ every: 3 })]) {
+			const wasm = solveWith(flop, 3, options);
+			const js = solveWith(flop, 3, { ...options, engine: 'js' });
+			expect(wasm.engine).toBe('wasm');
+			expect(wasm.exploitability).toBeCloseTo(js.exploitability, 2);
+			expect(wasm.ev).toBeCloseTo(js.ev, 3);
+		}
+		const wasm = solveWith(flop, 60, sampling({ p: 0.4 }));
+		const js = solveWith(flop, 60, { ...sampling({ p: 0.4 }), engine: 'js' });
+		expect(Math.abs(wasm.exploitability - js.exploitability)).toBeLessThan(0.3 * js.exploitability + 0.05);
+	});
+
+	it('samples turn deals too, with the fresh-value estimator and without catch-up', () => {
+		for (const options of [
+			sampling({ p: 0.5, rounds: [1, 2] }),
+			sampling({ p: 0.5, catchUp: false }),
+			sampling({ p: 0.5, estimator: 'latest' }),
+		]) {
+			expect(solveWith(flop, 60, options).exploitability).toBeLessThan(10);
+		}
+	});
+
+	it('resumes a warm start without wiping the inherited regrets', () => {
+		const options = sampling({ p: 0.5 });
+		const first = createRun(defineSpot(flop), { workers: 1, ...options });
+		first.step(40);
+		const before = first.exploitabilityPercent();
+		const second = createRun(defineSpot(flop), { workers: 1, ...options, warmStart: first });
+		second.step(5);
+		expect(second.exploitabilityPercent()).toBeLessThan(1.5 * before + 0.05);
+		first.close();
+		second.close();
+	});
+
+	it('runs on one thread, and refuses 16-bit storage and a p outside (0, 1]', () => {
+		const run = createRun(defineSpot(SPOTS.turn), { workers: 4, ...sampling({ p: 0.5, rounds: [1] }) });
+		expect(run.workers).toBe(1);
+		run.close();
+		expect(() => createRun(defineSpot(SPOTS.turn), { precision: 'i16', ...sampling({ p: 0.5 }) })).toThrow(/16|32/);
+		expect(() => createRun(defineSpot(SPOTS.turn), sampling({ p: 0 }))).toThrow(/p must/);
+		expect(() => createRun(defineSpot(SPOTS.turn), sampling({ p: 1.5 }))).toThrow(/p must/);
+		// The baselines count against maxBytes beside the storage.
+		const tight = defineSpot({ ...flop, maxBytes: defineSpot(flop).estimate.bytes + 16 });
+		expect(() => createRun(tight, { precision: 'f32', ...sampling({ p: 0.5 }) })).toThrow(/maxBytes/);
+		createRun(tight, { precision: 'f32' }).close();
+	});
+});
