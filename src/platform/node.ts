@@ -15,8 +15,13 @@ import type { EngineWorkerSetup } from '../engine.ts';
 /** Which build this is. */
 export const PLATFORM = 'node';
 
-/** Whether `workers > 1` can be honoured here. */
-export const THREADS_AVAILABLE = true;
+/**
+ * The most threads a solve can use here: as many as asked, on either engine.
+ * @param _engine whether the WebAssembly engine is to run
+ */
+export function threadLimit(_engine: boolean): number {
+	return Infinity;
+}
 
 /** Default ceiling on solver storage. */
 export const DEFAULT_MAX_BYTES = 6 * 1024 * 1024 * 1024;
@@ -80,4 +85,25 @@ export function spawnEngineWorker(setup: EngineWorkerSetup, onError: (error: Err
 			void thread.terminate();
 		},
 	};
+}
+
+/**
+ * Why a solve gets fewer threads than it asked for: never, in Node.
+ * @param _engine whether the WebAssembly engine is to run
+ */
+export function threadAdvice(_engine: boolean): string {
+	return '';
+}
+
+/** Node always has worker threads. */
+export function threadsUnavailableReason(): string | null {
+	return null;
+}
+
+/**
+ * Nothing to start ahead of time in Node: threads start with each solve.
+ * @param count threads wanted, this one included; defaults to {@link defaultWorkerCount}
+ */
+export async function prepareThreads(count?: number): Promise<number> {
+	return Math.max(1, Math.floor(count ?? defaultWorkerCount()));
 }

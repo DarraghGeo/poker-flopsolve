@@ -25,7 +25,7 @@ import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
-import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, THREADS_AVAILABLE } from './platform/node.ts';
+import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit } from './platform/node.ts';
 import type { Context, PlayerIndex, RegretStore, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
@@ -427,7 +427,9 @@ export interface SolveOptions {
 	 * exploitability, so never the largest error in the answer, but do not
 	 * expect two worker counts to agree bit for bit.
 	 *
-	 * The browser build is single-threaded: any count resolves to 1 there.
+	 * The browser build is single-threaded unless `enableThreads` from
+	 * `poker-flopsolve/threads` has started its workers; any count above what
+	 * is available resolves to what is, with one warning.
 	 */
 	readonly workers?: number | 'auto';
 	/**
@@ -519,6 +521,78 @@ export interface Approximations {
 	 * cost more iterations than it saved: a flop spot on 4 threads reached
 	 * 0.3% of pot in 14.1 s exact, 23.1 s at p = 0.5, and not within 400
 	 * iterations at p = 0.25; at best it broke even to 1%.
+	 *
+	 * Hand classes at the flop root — each player's flop vector shortened to
+	 * weighted classes of nearly equivalent combos (rank pair, suitedness, and
+	 * how many flop cards share each hole card's suit), expanded back to
+	 * combos at the turn deal — were counted and not built, because they
+	 * cannot pay: the flop round is 0.005% to 0.02% of the decision slots and
+	 * terminal work of the bench flop spots (rainbow, monotone, and the
+	 * same in pairs-and-broadway form), the river 99%, so shortening the flop
+	 * vectors 2 to 3 times (198 combos to 92 classes on As Kh 7d, 217 to 75 on
+	 * Ks 9s 4s) bounds the speed-up at 0.02%. Carried through to the river
+	 * the same classes would shorten vectors 2.0 to 3.1 times, but members of
+	 * a class block different cards on each runout, so that is the rejected
+	 * river buckets above with blocker detail averaged away as well.
+	 *
+	 * Regret-based pruning — skipping the subtree below an action no hand of
+	 * the actor plays (Brown & Sandholm, 2015) — was measured before building
+	 * and is not offered either; `bench/prune-census.ts` counts the work it
+	 * could skip. The provably safe form cannot skip anything under this DCFR:
+	 * with β = 0 a negative regret is halved every iteration, so it never
+	 * falls below twice the largest one-iteration regret, and the skip it
+	 * proves safe is zero iterations. The unsafe form's ceiling is small too.
+	 * Below actions played by no hand sat 4–10% of the work to reach 0.5% and
+	 * 0.3% of pot, on the bench flop, monotone, wide-flop and turn spots and
+	 * on pairs-and-broadway ranges. Most of that was iterations 2–5, before
+	 * every board has a hand that likes each action, and after them it was
+	 * 1–8% per iteration. Half of it, at opponent nodes, could be skipped
+	 * without changing any value, but the traverser's own nodes below would
+	 * then miss their discount and strategy-sum update.
+	 *
+	 * Depth-limited solving (Brown, Sandholm & Amos, 2018) was built and
+	 * measured too: the tree stopped at the deal of the river (or the turn),
+	 * and at each leaf both players chose per hand, unseen by the other, one
+	 * of k fixed continuations: check down; value-bet the top 30% with
+	 * balanced bluffs and call by MDF; that betting ×1.5; that calling ×1.5;
+	 * top-half bet and call. CFR trained the choice. It cut flop memory about
+	 * tenfold (246 MB to 22 MB) but lost on accuracy and did not win on speed.
+	 * Against an exact solve to 0.1% of pot, the depth-limited game's own
+	 * equilibrium kept per-combination root EVs 2–5% of pot off on average
+	 * (8–20% for single combos), with draws and made hands worst and air
+	 * nearly right. That is the implied-odds and value-extraction play a fixed
+	 * continuation keyed on starting-range percentile cannot follow once the
+	 * flop and turn have narrowed the ranges. The exact solver stopped at 15 s,
+	 * single-threaded in Chromium, was closer on every spot measured: 0.02% on
+	 * the monotone flop, 0.3–0.6% on the wide one, 2.0–2.4% on AsKh7d at pot
+	 * 100, where the best depth-limited run was 4.2%. It was not faster either.
+	 * These trees' river betting is one size with no raise, already as cheap
+	 * as a leaf's five terminal passes, so with k ≥ 2 an iteration cost as
+	 * much as the full tree. Cutting at the turn was cheaper still, and worse:
+	 * 3–14% mean error. The implementation is in this repository's history
+	 * (commit 32e8424, issue #21).
+	 *
+	 * Cheaper EV estimates (issue #27) were measured offline with bench/ev on
+	 * three flops, against each solve run on to 0.045% of pot, and none is
+	 * offered here. The idea was that per-hand EVs settle before
+	 * exploitability does; they do not. The range-weighted mean error of
+	 * per-hand root EVs runs at 1 to 2.5 times the exploitability throughout,
+	 * so getting under 1% of pot takes about 47 iterations on every spot.
+	 * Stopping on EV stability stopped too early: the change between checks
+	 * understates the error left, and at ε 0.5% it stopped with 2.2–2.6% of
+	 * pot still wrong. `targetPercent` already tracks the error. Bracketing
+	 * with the best-response values did not help either: their midpoint with
+	 * the average was worse than the average alone, and the best blend, fitted
+	 * in hindsight, gained at most 10% with a weight that drifted from 0.1 to
+	 * 0.85 over a run. Extrapolating the EV sequence was unstable because
+	 * DCFR's average values do not follow a clean C/T^p. Even with each
+	 * correction capped at three times the last step, Richardson on the
+	 * whole vector beat the plain average at only 11 of 51 checkpoints and
+	 * was up to 8 times worse; per-hand Aitken beat it at 17 of 51 and was
+	 * up to 4 times worse. The one win was evaluating EVs under the
+	 * current profile rather than the average: at equal iterations its error
+	 * was lower at 62 of 65 checkpoints, often by 2 to 4 times. Issue #35 takes
+	 * that up as its own opt-in.
 	 *
 	 * Learned turn-leaf values — solving only the flop betting and asking a
 	 * model for each hand's value where the turn is dealt, as DeepStack does —
@@ -690,7 +764,12 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
 	const weights = runoutWeights(spot.runouts);
 
-	const requested = resolveWorkers(options);
+	// The WebAssembly engine, where it applies: 32-bit storage and a platform
+	// with WebAssembly SIMD. Decided before the thread count, because the
+	// browser build can only thread the engine.
+	const wantsEngine =
+		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false;
+	const requested = resolveWorkers(options, wantsEngine);
 	const plan = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
 
 	// Workers need the accumulators in shared memory. Allocating shared for a
@@ -702,19 +781,16 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 
 	const active = buildActiveLists(spot.runouts, spot.players, showdown);
 	const hands = buildHandSpace(spot.runouts, spot.players, active);
-	// The WebAssembly engine, where it applies: one thread, 32-bit storage,
-	// a platform with WebAssembly SIMD. It owns the storage; the context sees
-	// it through views.
-	const engine =
-		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false
-			? createEngine(
-					{
-						tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
-						runoutWeight: weights, chipScale: spot.chipScale,
-					},
-					plan ? { plan, threads: requested, spawn: spawnEngineWorker } : undefined,
-				)
-			: null;
+	// The engine owns the storage; the context sees it through views.
+	const engine = wantsEngine
+		? createEngine(
+				{
+					tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
+					runoutWeight: weights, chipScale: spot.chipScale,
+				},
+				plan ? { plan, threads: requested, spawn: spawnEngineWorker } : undefined,
+			)
+		: null;
 	const ctx: Context = {
 		tree: spot.tree,
 		runouts: spot.runouts,
@@ -754,17 +830,25 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// Seeded before any worker starts, so they all see the inherited values.
 	let warm: WarmStartReport | null = null;
 	let offset = 0;
-	if (options.warmStart) {
-		const source = options.warmStart;
-		warm = warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
-		offset = options.warmIteration ?? source.totalIterations;
-	}
+	let solver: Solver;
+	let pool: Pool | null;
+	try {
+		if (options.warmStart) {
+			const source = options.warmStart;
+			warm = warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
+			offset = options.warmIteration ?? source.totalIterations;
+		}
 
-	const solver = makeSolver(ctx);
-	// The engine runs its own threads; the JavaScript pool is for the rest.
-	const pool: Pool | null = plan && !engine
-		? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
-		: null;
+		solver = makeSolver(ctx);
+		// The engine runs its own threads; the JavaScript pool is for the rest.
+		pool = plan && !engine
+			? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
+			: null;
+	} catch (error) {
+		// The engine's threads would otherwise stay parked on this run for good.
+		engine?.close();
+		throw error;
+	}
 	if (pool) solver.useRoot(pool.traverse);
 	if (engine) solver.useRoot(engine.root(ctx.dcfr));
 	const threadCount = pool ? pool.workers : engine ? engine.threads : 1;
@@ -848,21 +932,27 @@ function rangeRankMerge(players: readonly [PlayerIndex, PlayerIndex], maxGap: nu
 	return { ranks: (a, b) => allowed[a * 13 + b] === 1, maxGap };
 }
 
-let warnedThreads = false;
+const threadWarnings = new Set<string>();
 
 /**
- * Threads a run will use. The browser build has none to offer, so anything
- * above one falls back to the calling thread, with a single warning.
+ * Threads a run will use. Anything above what the platform can run now falls
+ * back to what it can, with one warning per reason: the browser build threads
+ * only the WebAssembly engine, and only after `enableThreads` from
+ * `poker-flopsolve/threads` has started its workers.
+ * @param options solver tuning
+ * @param engine whether the WebAssembly engine is to run
  */
-function resolveWorkers(options: SolveOptions): number {
+function resolveWorkers(options: SolveOptions, engine: boolean): number {
 	if (options.analysisOnly) return 1;
 	const asked = options.workers === 'auto' ? defaultWorkerCount() : (options.workers ?? 1);
-	if (asked > 1 && !THREADS_AVAILABLE) {
-		if (!warnedThreads) {
-			warnedThreads = true;
-			console.warn(`poker-flopsolve: worker threads are Node-only; solving on one thread (${PLATFORM} build)`);
+	const limit = threadLimit(engine);
+	if (asked > limit) {
+		const advice = threadAdvice(engine);
+		if (!threadWarnings.has(advice)) {
+			threadWarnings.add(advice);
+			console.warn(`poker-flopsolve: ${asked} threads asked for, solving on ${limit} (${PLATFORM} build): ${advice}`);
 		}
-		return 1;
+		return limit;
 	}
 	return asked;
 }
