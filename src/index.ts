@@ -25,7 +25,7 @@ import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
-import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, THREADS_AVAILABLE } from './platform/node.ts';
+import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadLimit } from './platform/node.ts';
 import type { Context, PlayerIndex, RegretStore, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
@@ -427,7 +427,9 @@ export interface SolveOptions {
 	 * exploitability, so never the largest error in the answer, but do not
 	 * expect two worker counts to agree bit for bit.
 	 *
-	 * The browser build is single-threaded: any count resolves to 1 there.
+	 * The browser build is single-threaded unless `enableThreads` from
+	 * `poker-flopsolve/threads` has started its workers; any count above what
+	 * is available resolves to what is, with one warning.
 	 */
 	readonly workers?: number | 'auto';
 	/**
@@ -672,7 +674,12 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
 	const weights = runoutWeights(spot.runouts);
 
-	const requested = resolveWorkers(options);
+	// The WebAssembly engine, where it applies: 32-bit storage and a platform
+	// with WebAssembly SIMD. Decided before the thread count, because the
+	// browser build can only thread the engine.
+	const wantsEngine =
+		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false;
+	const requested = resolveWorkers(options, wantsEngine);
 	const plan = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
 
 	// Workers need the accumulators in shared memory. Allocating shared for a
@@ -684,19 +691,16 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 
 	const active = buildActiveLists(spot.runouts, spot.players, showdown);
 	const hands = buildHandSpace(spot.runouts, spot.players, active);
-	// The WebAssembly engine, where it applies: one thread, 32-bit storage,
-	// a platform with WebAssembly SIMD. It owns the storage; the context sees
-	// it through views.
-	const engine =
-		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false
-			? createEngine(
-					{
-						tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
-						runoutWeight: weights, chipScale: spot.chipScale,
-					},
-					plan ? { plan, threads: requested, spawn: spawnEngineWorker } : undefined,
-				)
-			: null;
+	// The engine owns the storage; the context sees it through views.
+	const engine = wantsEngine
+		? createEngine(
+				{
+					tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
+					runoutWeight: weights, chipScale: spot.chipScale,
+				},
+				plan ? { plan, threads: requested, spawn: spawnEngineWorker } : undefined,
+			)
+		: null;
 	const ctx: Context = {
 		tree: spot.tree,
 		runouts: spot.runouts,
@@ -833,18 +837,28 @@ function rangeRankMerge(players: readonly [PlayerIndex, PlayerIndex], maxGap: nu
 let warnedThreads = false;
 
 /**
- * Threads a run will use. The browser build has none to offer, so anything
- * above one falls back to the calling thread, with a single warning.
+ * Threads a run will use. Anything above what the platform can run now falls
+ * back to what it can, with a single warning: the browser build threads only
+ * the WebAssembly engine, and only after `enableThreads` from
+ * `poker-flopsolve/threads` has started its workers.
+ * @param options solver tuning
+ * @param engine whether the WebAssembly engine is to run
  */
-function resolveWorkers(options: SolveOptions): number {
+function resolveWorkers(options: SolveOptions, engine: boolean): number {
 	if (options.analysisOnly) return 1;
 	const asked = options.workers === 'auto' ? defaultWorkerCount() : (options.workers ?? 1);
-	if (asked > 1 && !THREADS_AVAILABLE) {
+	const limit = threadLimit(engine);
+	if (asked > limit) {
 		if (!warnedThreads) {
 			warnedThreads = true;
-			console.warn(`poker-flopsolve: worker threads are Node-only; solving on one thread (${PLATFORM} build)`);
+			console.warn(
+				limit > 1
+					? `poker-flopsolve: ${asked} threads asked for, ${limit} available; solving on ${limit} (${PLATFORM} build)`
+					: `poker-flopsolve: no worker threads available; solving on one thread (${PLATFORM} build). ` +
+							'In a browser, call enableThreads() from poker-flopsolve/threads first, in a cross-origin isolated Web Worker.',
+			);
 		}
-		return 1;
+		return limit;
 	}
 	return asked;
 }

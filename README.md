@@ -235,7 +235,7 @@ earlier streets any more accurate than their coarse model of the future.
 
 The package also runs in a browser, for the small solves a page wants: river spots and
 narrow turn spots. Bundlers pick the browser build (`dist/browser.js`) automatically
-through the `browser` export condition. It is the same solver, single-threaded:
+through the `browser` export condition. It is the same solver, single-threaded by default:
 
 - no worker threads, so `workers` resolves to 1 (asking for more logs one warning);
 - no `SharedArrayBuffer`, so the page needs no cross-origin isolation headers;
@@ -245,10 +245,54 @@ through the `browser` export condition. It is the same solver, single-threaded:
 A solve blocks the thread it runs on, so host it in a Web Worker and step it in chunks;
 [`examples/browser-worker.ts`](examples/browser-worker.ts) does that with progress and a
 stop message in about sixty lines. Flop spots and wide turn spots belong in Node, where
-`workers` splits the runouts across cores.
+`workers` splits the runouts across cores, or in a browser with threads turned on.
 
-`npm test` checks the browser build in headless Chromium against Node (skipped where
-Playwright is not installed), and `npm run bench:browser` times it beside Node.
+### Threads in the browser (opt-in)
+
+A page can split a solve across cores as Node does, with no approximation. Import
+`enableThreads` from `poker-flopsolve/threads` and await it once, in the Web Worker that
+solves, before solving:
+
+```ts
+import { createRun, defineSpot } from 'poker-flopsolve';
+import { enableThreads } from 'poker-flopsolve/threads';
+
+const threads = await enableThreads();   // navigator.hardwareConcurrency, or 1 if unavailable
+const run = createRun(defineSpot(config), { workers: threads });
+```
+
+It starts `threads − 1` engine workers that share the WebAssembly engine's memory, exactly
+as Node's threads do, so a fixed thread count gives the same answer as Node at that count
+(bit for bit where the browser's V8 agrees with Node's on `Math.pow`, as it did in every
+measurement here). They stay started between solves; a solve borrows them and gives them back on
+`close()`. `enableThreads(1)` stops them. Only the WebAssembly engine (the default) is
+threaded; `engine: 'js'` or `precision: 'f64'`/`'i16'` solve on one thread.
+
+Threads need:
+
+- a **cross-origin isolated** page, which gives `SharedArrayBuffer`. Serve the page
+  with these headers, and every script it loads from the same origin or with CORS:
+
+  ```
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  ```
+
+- the solve to run in a **Web Worker**, since a page's main thread may not block on
+  `Atomics.wait`;
+- `blob:` workers allowed, if the page sets a Content Security Policy (`worker-src blob:`).
+
+Where any of these is missing, `enableThreads` resolves to 1 and solves stay on one
+thread; `threadsUnavailable()` says why. Without the import nothing changes: the main
+bundle carries only a lookup for the threads, and a solve gives the same results as
+before. The UI's dev server (`npm run ui`) sends the two headers.
+
+On a 4-core container, headless Chromium, a flop solve to 0.3% of pot took 24.0 s on one
+thread and 8.7 s on four (`npm run bench:browser:threads`).
+
+`npm test` checks the browser build in headless Chromium against Node, single-threaded and
+threaded (skipped where Playwright is not installed). `npm run bench:browser` times it
+beside Node, and `npm run bench:browser:threads` times flop solves at each thread count.
 
 ## Performance
 
