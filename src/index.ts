@@ -520,6 +520,34 @@ export interface Approximations {
 	 * 0.3% of pot in 14.1 s exact, 23.1 s at p = 0.5, and not within 400
 	 * iterations at p = 0.25; at best it broke even to 1%.
 	 *
+	 * Hand classes at the flop root — each player's flop vector shortened to
+	 * weighted classes of nearly equivalent combos (rank pair, suitedness, and
+	 * how many flop cards share each hole card's suit), expanded back to
+	 * combos at the turn deal — were counted and not built, because they
+	 * cannot pay: the flop round is 0.005% to 0.02% of the decision slots and
+	 * terminal work of the bench flop spots (rainbow, monotone, and the
+	 * same in pairs-and-broadway form), the river 99%, so shortening the flop
+	 * vectors 2 to 3 times (198 combos to 92 classes on As Kh 7d, 217 to 75 on
+	 * Ks 9s 4s) bounds the speed-up at 0.02%. Carried through to the river
+	 * the same classes would shorten vectors 2.0 to 3.1 times, but members of
+	 * a class block different cards on each runout, so that is the rejected
+	 * river buckets above with blocker detail averaged away as well.
+	 *
+	 * Regret-based pruning — skipping the subtree below an action no hand of
+	 * the actor plays (Brown & Sandholm, 2015) — was measured before building
+	 * and is not offered either; `bench/prune-census.ts` counts the work it
+	 * could skip. The provably safe form cannot skip anything under this DCFR:
+	 * with β = 0 a negative regret is halved every iteration, so it never
+	 * falls below twice the largest one-iteration regret, and the skip it
+	 * proves safe is zero iterations. The unsafe form's ceiling is small too.
+	 * Below actions played by no hand sat 4–10% of the work to reach 0.5% and
+	 * 0.3% of pot, on the bench flop, monotone, wide-flop and turn spots and
+	 * on pairs-and-broadway ranges. Most of that was iterations 2–5, before
+	 * every board has a hand that likes each action, and after them it was
+	 * 1–8% per iteration. Half of it, at opponent nodes, could be skipped
+	 * without changing any value, but the traverser's own nodes below would
+	 * then miss their discount and strategy-sum update.
+	 *
 	 * Depth-limited solving (Brown, Sandholm & Amos, 2018) was built and
 	 * measured too: the tree stopped at the deal of the river (or the turn),
 	 * and at each leaf both players chose per hand, unseen by the other, one
