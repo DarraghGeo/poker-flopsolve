@@ -48,13 +48,17 @@ const solution = load
 const seconds = (performance.now() - started) / 1000;
 if (!load) console.log(`solved: ${solution.iterations} it, ${solution.exploitabilityPercent().toFixed(3)}%, ${seconds.toFixed(0)} s`);
 
-/** The saved average strategy in an analysis-only run of the same spot. */
+/** The saved average strategy in a run of the same spot (analysis-only runs keep float sums). */
 function loadSaved() {
-	const run = createRun(spot, { analysisOnly: true, precision, engine: 'js' });
+	const run = createRun(spot, { precision, engine: 'js' });
 	const { strategySum, sumScale } = run.solver.ctx;
 	const raw = new Uint8Array(strategySum.buffer, strategySum.byteOffset, strategySum.byteLength);
 	const fd = openSync(new URL('strategy.sums', OUT), 'r');
-	for (let at = 0; at < raw.byteLength; ) at += readSync(fd, raw, at, Math.min(2 ** 30, raw.byteLength - at), at);
+	for (let at = 0; at < raw.byteLength; ) {
+		const read = readSync(fd, raw, at, Math.min(2 ** 30, raw.byteLength - at), at);
+		if (read === 0) throw new Error(`strategy.sums ends at ${at} of ${raw.byteLength} bytes`);
+		at += read;
+	}
 	closeSync(fd);
 	if (sumScale) {
 		const scales = readFileSync(new URL('strategy.scales', OUT));
