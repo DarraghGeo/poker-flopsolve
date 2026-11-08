@@ -48,6 +48,7 @@ for (const [label, coarse] of [
 		}
 	}
 }
+for (const iterations of [15, 25, 40, 60]) SCHEDULES.push({ name: `option ${iterations}`, coarseStart: { iterations } });
 const chosen = only ? SCHEDULES.filter((s) => only.includes(s.name)) : SCHEDULES;
 
 const results: Record<string, Sample[]> = browser

@@ -696,7 +696,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		: options.precision ??
 			(bytes <= maxBytes ? 'f32' : 'i16');
 
-	const coarse = coarseStart(spot, options);
+	const coarseSettings = checkCoarseStart(options);
 
 	// Hands neither player holds never carry reach, so they need no ranking.
 	const relevant = new Uint8Array(COMBOS);
@@ -771,15 +771,19 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// Seeded before any worker starts, so they all see the inherited values.
 	let warm: WarmStartReport | null = null;
 	let offset = 0;
+	const coarse = coarseSettings ? coarseStart(spot, options, coarseSettings) : null;
 	if (options.warmStart) {
 		const source = options.warmStart;
 		warm = warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
 		offset = options.warmIteration ?? source.totalIterations;
 	} else if (coarse) {
 		// Regrets only: the bucketed game's average would have to be outweighed.
-		warm = warmStart(ctx, coarse.solver.ctx, false);
+		try {
+			warm = warmStart(ctx, coarse.solver.ctx, false);
+		} finally {
+			coarse.close();
+		}
 		offset = options.warmIteration ?? coarse.totalIterations;
-		coarse.close();
 	}
 
 	const solver = makeSolver(ctx);
@@ -841,19 +845,28 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 const DEFAULT_COARSE_GAP = 3;
 
 /**
- * The solved coarse run behind `approximations.coarseStart`, or null when
- * there is none to solve: the option is unset, or bucketing folds no runouts
- * together, so the coarse spot would be the real one.
+ * `approximations.coarseStart`, validated before anything is allocated, or
+ * null when unset.
  */
-function coarseStart(spot: Spot, options: SolveOptions): SolveRun | null {
+function checkCoarseStart(options: SolveOptions): CoarseStart | null {
 	const settings = options.approximations?.coarseStart;
 	if (!settings) return null;
-	const { iterations, runoutBuckets = DEFAULT_COARSE_GAP } = settings;
+	const { iterations } = settings;
 	if (!(Number.isInteger(iterations) && iterations >= 0)) {
 		throw new Error(`coarseStart.iterations must be a whole number of iterations; got ${iterations}`);
 	}
 	if (options.warmStart) throw new Error('coarseStart is a warm start of its own; give one or the other, not both');
 	if (options.analysisOnly) throw new Error('coarseStart solves; an analysis-only run must never be stepped');
+	return settings;
+}
+
+/**
+ * The solved coarse run behind `approximations.coarseStart`, or null when
+ * there is none to solve: no iterations, or bucketing folds no runouts
+ * together, so the coarse spot would be the real one.
+ */
+function coarseStart(spot: Spot, options: SolveOptions, settings: CoarseStart): SolveRun | null {
+	const { iterations, runoutBuckets = DEFAULT_COARSE_GAP } = settings;
 	if (iterations === 0) return null;
 	// Never a narrower gap than the spot already uses.
 	const own = spot.source.runoutBuckets;
@@ -869,7 +882,12 @@ function coarseStart(spot: Spot, options: SolveOptions): SolveRun | null {
 		engine: options.engine,
 		approximations: rest,
 	});
-	run.step(iterations);
+	try {
+		run.step(iterations);
+	} catch (error) {
+		run.close();
+		throw error;
+	}
 	return run;
 }
 
@@ -946,9 +964,11 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 	const iterations = options.iterations ?? 500;
 	const target = options.targetPercent ?? 0;
 	const fixed = options.exploitEvery ?? 0;
+	const begun = Date.now();
 	const run = createRun(spot, options);
 	const history: Progress[] = [];
-	const started = Date.now();
+	// A coarse start solves inside createRun, and that is solving time too.
+	const started = options.approximations?.coarseStart ? begun : Date.now();
 
 	try {
 		return runAll();

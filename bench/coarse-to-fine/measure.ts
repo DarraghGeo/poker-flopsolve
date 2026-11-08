@@ -13,7 +13,7 @@
  */
 
 import { COMBO_CARDS, COMBOS, createRun, defineSpot } from '../../src/index.ts';
-import type { SolveRun, SpotConfig } from '../../src/index.ts';
+import type { CoarseStart, SolveRun, SpotConfig } from '../../src/index.ts';
 import { warmStart } from '../../src/warm.ts';
 
 /** Per-combination root EV of each player, in % of pot; NaN outside the range. */
@@ -129,6 +129,8 @@ export interface Schedule {
 	readonly warmIteration?: number;
 	/** Carry the coarse average strategy over too, not only the regrets. */
 	readonly averages?: boolean;
+	/** Instead of the above: the shipped option, `approximations.coarseStart`. */
+	readonly coarseStart?: CoarseStart;
 }
 
 /** One checkpoint of a timed solve. */
@@ -198,8 +200,10 @@ export function timedSolve(
 			workers: 1,
 			warmStart: fineFrom,
 			warmIteration: fineFrom ? schedule.warmIteration : undefined,
+			approximations: schedule.coarseStart ? { coarseStart: schedule.coarseStart } : undefined,
 		}),
 	);
+	coarseIterations = fine.totalIterations - fine.completed;
 	if (fineFrom && schedule.averages) timed(() => warmStart(fine.solver.ctx, fineFrom.solver.ctx, true));
 	fineFrom?.close();
 	runFor(fine, budgetMs, 'fine', () => coarseIterations + fine.completed);
