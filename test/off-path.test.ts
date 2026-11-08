@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createRun, defineSpot, type SolveOptions } from '../src/index.ts';
-import { NodeKind } from '../src/tree.ts';
+import { SPOTS } from './regression-spots.ts';
 
 /**
  * A hand that equilibrium play stops sending to a node still has a strategy
@@ -8,7 +8,7 @@ import { NodeKind } from '../src/tree.ts';
  * hand, an engine compared against the solve) plays that strategy. With sums
  * weighted by the hand's own reach, the near-uniform first iterations dominate
  * what little it adds later, so it would fold, call and raise at about equal
- * shares. Sums that count each iteration's strategy whatever the hand's reach
+ * shares. DCFR sums that count each iteration's strategy whatever the hand's reach
  * give it the strategy its regrets have settled on instead. On this spot
  * after 300 iterations that took near-uniform play among barely-reached hands
  * from about 8% to 0.6% (from 1.8% to 0.7% at 16-bit precision, where #7
@@ -34,7 +34,6 @@ function nearUniform(options: SolveOptions, iterations: number): { engine: strin
 	let barely = 0;
 	let uniform = 0;
 	for (const node of tree.decisionNodes) {
-		if (tree.kind[node] !== NodeKind.Decision) continue;
 		const player = tree.player[node] as 0 | 1;
 		const index = spot.players[player];
 		const round = tree.round[node];
@@ -75,6 +74,24 @@ describe('hands that equilibrium stops sending to a node', () => {
 	it('do not play near-uniformly there at 16-bit precision', () => {
 		const { barely, uniform } = nearUniform({ precision: 'i16' }, 300);
 		expect(barely).toBeGreaterThan(100);
-			expect(uniform).toBeLessThan(barely * 0.012);
+		expect(uniform).toBeLessThan(barely * 0.012);
 	});
+
+	// CFR+'s iterates oscillate, so its sums keep the own-reach weighting:
+	// unweighted, this river spot measured 0.140% of pot after 300 iterations
+	// against 0.064%.
+	for (const engine of ['js', 'wasm'] as const) {
+		it(`keep own-reach weighting under CFR+ (${engine} engine)`, () => {
+			const run = createRun(defineSpot(SPOTS['river f64'].config), {
+				workers: 1, precision: 'f32', algorithm: 'cfr+', ...(engine === 'js' ? { engine } : {}),
+			});
+			try {
+				expect(run.engine).toBe(engine);
+				run.step(300);
+				expect(run.exploitabilityPercent()).toBeLessThan(0.09);
+			} finally {
+				run.close();
+			}
+		});
+	}
 });

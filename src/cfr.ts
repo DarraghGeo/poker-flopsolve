@@ -682,7 +682,9 @@ export function treeDepth(tree: Tree): number {
  * stops sending to a node then still averages to what its regrets settled on
  * there; with own-reach weighting the near-uniform early iterations swamped
  * it, so play continued off the path was close to random (issue #8). This
- * holds for CFR+ and every precision too, here and in assembly/engine.ts.
+ * holds at every precision, here and in assembly/engine.ts. CFR+ keeps the
+ * own-reach weighting: its iterates oscillate, and unweighted they averaged
+ * to 2–3× the exploitability at the same iteration count.
  */
 // assembly/engine.ts repeats these in its sampling catch-up; keep in step.
 const DCFR_ALPHA = 1.5;
@@ -763,8 +765,10 @@ function regretMatch(regret: RegretStore, base: number, actions: number, count: 
 /**
  * Average strategy from accumulated sums, which are never negative.
  *
- * A hand whose sum is zero here never reached this node on its own, so the
- * average says nothing about it. Its regrets are still updated — weighted by
+ * A hand whose sum is zero here has no average to give: under CFR+, whose
+ * sums follow the hand's own reach, it never reached this node on its own;
+ * under DCFR, whose sums do not (issue #8), only a loaded strategy with gaps,
+ * a warm start or 16-bit rounding leaves one. Its regrets are still updated — weighted by
  * the opponent's reach — so it plays the current strategy: whatever goes on to
  * continue it from here (a best response, another player's rules, a user
  * browsing the line) then sees sensible play rather than every action at an
@@ -1045,7 +1049,7 @@ function traverse(
 	if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.regretScale !== null) {
 		updateQuantised(
 			ctx, ctx.layout.blockOffset[node] + board, slotBase, actions, stride,
-			iterWeight, strategy, actionValues, out,
+			iterWeight, reachMe, strategy, actionValues, out,
 		);
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.dcfr) {
 		// `iterWeight` is the iteration number, counted from 1.
@@ -1090,7 +1094,7 @@ function traverse(
 				// CFR+: clamp the accumulated regret at zero in the same pass.
 				const updated = regret[at] + actionValues[offset + i] - out[i];
 				regret[at] = updated > 0 ? updated : 0;
-				strategySum[at] += iterWeight * strategy[row + i];
+				strategySum[at] += iterWeight * reachMe[i] * strategy[row + i];
 			}
 		}
 	}
@@ -1178,6 +1182,7 @@ function updateQuantised(
 	actions: number,
 	count: number,
 	iterWeight: number,
+	reachMe: Float64Array,
 	strategy: Float64Array,
 	actionValues: Float64Array,
 	out: Float64Array,
@@ -1217,7 +1222,9 @@ function updateQuantised(
 			if (magnitude > largestRegret) largestRegret = magnitude;
 			actionValues[offset + i] = updated;
 
-			const sum = strategySum[at] * oldSum * keepSum + weight * strategy[a * count + i];
+			// DCFR adds the strategy unweighted by own reach (issue #8); CFR+ keeps the weight.
+			const added = clamp ? weight * reachMe[i] * strategy[a * count + i] : weight * strategy[a * count + i];
+			const sum = strategySum[at] * oldSum * keepSum + added;
 			if (sum > largestSum) largestSum = sum;
 			strategy[a * count + i] = sum;
 		}

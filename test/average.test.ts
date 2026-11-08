@@ -4,8 +4,8 @@ import { averageStrategy } from '../src/cfr.ts';
 import { COMBOS } from '../src/cards.ts';
 
 /**
- * A hand whose strategy sum at a node is zero never reached it on its own, so
- * the average says nothing about it: it plays the current strategy, from its
+ * A hand whose strategy sum at a node is zero (under CFR+, one that never
+ * reached it on its own) has no average to give there: it plays the current strategy, from its
  * regrets, rather than every action at an equal share.
  */
 
@@ -18,7 +18,7 @@ const turn = () =>
 		betSizes: [[0.66]], maxRaises: 1,
 	});
 
-describe('average strategy where a hand never reached the node', () => {
+describe('average strategy where a hand has no strategy sum at the node', () => {
 	const run = createRun(turn(), { precision: 'i16' });
 	run.step(100);
 	const { solver, spot } = run;
