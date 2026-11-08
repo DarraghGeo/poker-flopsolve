@@ -794,6 +794,42 @@ export interface Approximations {
 	 * 3–14% mean error. The implementation is in this repository's history
 	 * (commit 32e8424, issue #21).
 	 *
+	 * The same idea was measured again for memory (issue #48), with
+	 * continuations from a solved blueprint instead of fixed rules and the cut
+	 * at the turn deal, and is not offered either. A one-size blueprint (0.75
+	 * pot, no raise, 235 MiB) was solved first. Each flop line into the turn
+	 * took the blueprint's turn and river strategy from the blueprint line most
+	 * like it, played out from the line's real pot and stacks. Both players
+	 * then picked per hand among k continuations: the blueprint, and copies
+	 * leaning ×5 toward folding, calling or raising. The flop was solved with
+	 * every size and raise.
+	 *
+	 * Leaf values were stored as each player's EV per hand for each pair of
+	 * picks, a pair of hands worth the difference. Plain per-hand vectors
+	 * made the leaf game non-zero-sum and CFR cycled. Exact per-pair tables
+	 * cost about n times the walks (n the opponent's hands) to build.
+	 *
+	 * It fit easily. On the round's target spot (As Kh 7d, pot 55, stack 975,
+	 * sizes 0.33 / 0.75 / 1.5, a 0.75 raise, three aggressions; 17 GiB exact)
+	 * it peaked at 0.5–0.8 GiB and took 31–55 s on 4 threads in Chromium. It
+	 * lost on accuracy.
+	 *
+	 * Root EV per combination was off by these amounts on average, in % of
+	 * pot, OOP / IP:
+	 *
+	 * - 4.5 / 4.4 against an exact T₀ (all-in-only raise, 0.84% of pot),
+	 *   where the one-size blueprint alone was 5.2 / 6.4;
+	 * - 3.1–3.6 / 2.3–3.8 on Ks 9s 4s, against 3.5 / 4.4;
+	 * - 6.3 / 4.7–6.1 on a T-shaped spot at SPR 3, against 2.0 / 3.0.
+	 *
+	 * Single hands were off by up to 35% of pot. The best root bet size per
+	 * hand matched the exact solve for 32–37% of the range on As Kh 7d,
+	 * chance for three sizes. More continuations (k = 2, 4) never helped.
+	 * Exact per-pair leaf tables only brought it level with the blueprint
+	 * alone. So it does no better than solving its own blueprint, which
+	 * already fits. The implementation and bench are in this repository's
+	 * history (commit ab0b66a, issue #48).
+	 *
 	 * Cheaper EV estimates (issue #27) were measured offline with bench/ev on
 	 * three flops, against each solve run on to 0.045% of pot, and none is
 	 * offered here. The idea was that per-hand EVs settle before
@@ -882,6 +918,131 @@ export interface Approximations {
 	 * each iteration, would cost tens of times more and was not built. The
 	 * implementation is in this repository's history (commit 0f80fcc);
 	 * `bench/ooc/` keeps the OPFS throughput and sizing benchmarks.
+	 *
+	 * Pruning for space (#52) — freeing the storage under lines no hand plays,
+	 * as best-response pruning does (Brown & Sandholm, 2017), and rebuilding
+	 * it if the line comes back — was measured before building and is not
+	 * offered. `bench/prune-space-census.ts` walks both players' reach under
+	 * the current profile after every iteration and counts the regret and
+	 * strategy-sum storage of blocks (a node on one board) that one player or
+	 * the other reaches with no hand. That is everything freeing could release.
+	 * On T₀ (AsKh7d, pot 55, stack 975, bets 33/75/150%, all-in raise, two
+	 * aggressions, 5.1 GiB at f32) it was 2.8%, 3.4%, 7.6% and 15.8% of
+	 * storage at iterations 20, 50, 100 and 200 (1.1% of pot). Only 6.0% had
+	 * stayed unreached for the last 50 iterations, and no decision node was
+	 * unreached on every board it is dealt on, which is the unit a whole-node
+	 * allocator would free. The target tree itself on Ks9s4s (3.75 GiB) was
+	 * alike: 15.0% per block at iteration 150 (2.5% of pot), 3.3% for 50
+	 * iterations running, 0% per node. Turn-rooted copies of the target's
+	 * betting, solved to 0.3–0.6% of pot, reached 15–20% per block and 3–4%
+	 * per node. Some hand on some board keeps every line alive: per node,
+	 * almost nothing can be freed, and per block, freeing all of it would
+	 * still leave the target at about 14 GiB at f32, where 2 GiB needs a
+	 * cut of about 9×.
+	 *
+	 * The bound that makes freeing safe does not hold here either. With
+	 * DCFR's β = 0 a negative regret halves every iteration, so it never
+	 * falls below about twice the largest one-iteration regret, and the
+	 * number of iterations it proves an action stays unprofitable is zero
+	 * (as for pruning work, above). And WebAssembly memory grows but never
+	 * shrinks, so freed blocks only cut peak memory if storage starts small
+	 * and is allocated when the traversal first reaches it. That means a
+	 * per-block indirection through every kernel, the AssemblyScript engine,
+	 * the threads' shared memory, the 16-bit scales and warm starts, for an
+	 * 8–20% saving at best.
+	 *
+	 * Runout clusters — potential-aware card abstraction (Ganzfried &
+	 * Sandholm, 2014): turn and river cards grouped by k-medoids under the
+	 * earth mover's distance between each range's river-equity distribution,
+	 * plus flush, straight and pair texture, one walk per cluster with reach
+	 * gathered from every member — were built and measured as well, and left
+	 * out (prototype and data in bench/clusters, commit ef1fa9c). Rank swaps
+	 * alone cannot get there: suited connectors leave only ranks 2-5 swappable on
+	 * AsKh7d, so about 37 of 49 turns stay apart whatever k asks for, and the
+	 * rest need hands mapped by strength order, and that is where the error
+	 * comes from. At 15 s in the browser, single-threaded (measured before
+	 * #8 changed how strategy sums are weighted), true exploitability:
+	 * bench flop 2.3% at k = 16 (rivers 20) against 1.8% exact and 0.7% for
+	 * `runoutBuckets`, which also beat it on per-combination EV; both monotone
+	 * flops lost to exact on every measure. It won only where exact gets
+	 * almost nowhere in 15 s — a two-size wide flop, under 10 iterations —
+	 * and on the pairs-and-broadway flop's EVs (mean error 0.3% of pot against
+	 * 1.0%, at 0.8% exploitability against 0.6%). Its error has a floor that
+	 * more iterations do not lower: on the bench flop 1.1-3.2% of pot mean
+	 * per-combination EV error and 2.2-4.7% exploitability from k = 16 down
+	 * to 4, on the wide flop 1.3-2.3% and 4-10%.
+	 *
+	 * Action translation of raises (#54) was built and measured, and is not
+	 * offered. The tree solved sized raises only over opening bets of chosen
+	 * sizes and offered just fold, call and the shove facing any other bet.
+	 * A full-tree raise over a 0.33 or 1.5 bet was read from the solved raise
+	 * over the nearest anchor, 0.75 (the pseudo-harmonic mapping is the
+	 * identity there, since the raise is 0.75 of the pot in both lines). Sized
+	 * raises are 64% of the round's target T (AsKh7d, 17.2 GiB at 32 bits):
+	 * those over a 0.33 bet 35%, over 0.75 20%, over 1.5 9%. Cutting them is
+	 * not enough. Raises over 0.75 alone left 9.1 GiB (4.6 at 16 bits), and
+	 * dropping every sized raise left 5.8 (2.9), both over the 2 GiB mark. On
+	 * the monotone Ks9s4s, where T is 3.75 GiB (1.9 at 16 bits, already
+	 * under the mark), raises over 0.75 alone took it to 2.0 GiB (1.0). That
+	 * solve needed 680 iterations to 0.3% of pot where the full tree needed
+	 * 510, and ran 20 minutes on 4 threads. Its per-combination root EVs were
+	 * 2.1–2.3% of pot off the full tree's on average and 8–9% at worst. Out
+	 * of position still chose the same root bet size for 93% of its range,
+	 * and for every hand with a clear preference. In position, after a check,
+	 * it agreed for 51%: a 0.33 bet that cannot be raised looks too good.
+	 * Translated into the full tree, the strategy was exploitable for 43% of
+	 * the pot. A turn spot with T's betting (AsKh7d2c) said the same: 2.2–3.4%
+	 * mean EV error and 31–68% exploitability across the anchor choices,
+	 * against 92–128% with no translation at all. The leak is the pairing.
+	 * With the full tree's own strategy put into only the translated
+	 * subtrees, exploitability was 0.2%. With the translated subtrees kept and
+	 * the full tree's strategy everywhere else, it was 0.14%. What fails is
+	 * the abstract game's 0.33 and 1.5 bets, shaped knowing they cannot be
+	 * raised, met by responses made for a range that could. Matching the
+	 * anchor's continue frequency at the first translated decision did not
+	 * help (39%). This is the pathology Ganzfried and Sandholm (2013)
+	 * describe. The implementation is in this repository's history (commit
+	 * f40fb76). `bench/translation/census.ts` keeps the storage census, and
+	 * `bench/translation/results/` keeps the measurements.
+	 *
+	 * Strategy grafting over bet sizes (#56; Waugh, Bard & Bowling, 2009) —
+	 * one size at a time in the same memory, stitched by a small game that
+	 * picks each hand's size — was built for the flop's opening bet,
+	 * measured, and is not offered. `bench/graft/` has it. R, the game it
+	 * approximates, is T's three sizes (and the shove) on the flop's opening
+	 * bet with 0.75 after it. Its grafts are cut down to the subtrees they
+	 * add: R's tree with every opening edge but one taken out, below OOP's
+	 * bet and below IP's bet after a check, plus check-check. Each is solved
+	 * alone for the ranges the stitch sends in, and only per-hand root values
+	 * are kept. The stitch is RM+ at the two opening decisions on those
+	 * values, one update per round of re-solving every piece; the trunk is
+	 * CFR-D's, two decisions deep.
+	 *
+	 * Memory is what it promises: the largest piece is 868 MiB at 32 bits on
+	 * AsKh7d (191 MiB on Ks9s4s) where R is 3.7 GiB (0.81), and grafting
+	 * every street's opening bet would not grow it. Time and accuracy are
+	 * not. The pieces partition R, so a round costs about one solve of R,
+	 * and the stitch needs many rounds. The ranges move from round to round,
+	 * every piece re-equilibrates, and the trunk oscillates as CFR-D's does.
+	 * On Ks9s4s, 4 threads in Node, R itself solved to 0.25% of pot in 158
+	 * s. Grafted with 150 iterations a piece: the 0.75 blueprint's opening
+	 * spread over the three sizes, then one round, took 130 s and was 61% of
+	 * pot exploitable in R, with root EVs 1.1–2.9% of pot off per combination
+	 * on average and the preferred size agreeing with R's for 86% (OOP) and
+	 * 47% (IP after a check) of hands. Four rounds took 396 s: 15%, 13–16%
+	 * off. Eight took 809 s: 6.6%, 8.5–9.8% off, 78% and 28%; RM+'s latest
+	 * stitch instead of its average, 820 s: 13%, 12–13% off. On AsKh7d one
+	 * round after the blueprint took 417 s and was 91% exploitable, 2.2% off,
+	 * the size agreeing for 22% and 41% of hands. On a small turn
+	 * spot that R solves to 0.18% in 4 s, 64 rounds took 186 s and were
+	 * still 7–11% exploitable. Even the reference's own opening strategy,
+	 * fed in for one round, came out 42% exploitable: an opening a hand never
+	 * takes (the shove, IP's bets after a check) gets an answer to the
+	 * pieces' floor range, not an equilibrium one, until the stitch's rounds
+	 * correct it. And it is still only R: exactly solved, R's root EVs are
+	 * 0.8–1.0% of pot off T's per combination on Ks9s4s (T itself took 50
+	 * minutes on 4 threads to 0.23%), and T's turn and river sizes would
+	 * need grafts per flop line, which multiplies the solves.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each

@@ -88,12 +88,13 @@ export const ISOLATION_HEADERS = {
  * Run a module's default export in a Web Worker in headless Chromium.
  * @param source TypeScript whose default export is an async function returning JSON-safe data
  * @param timeoutMs how long to wait for it
- * @param options `isolated` serves the page cross-origin isolated
+ * @param options `isolated` serves the page cross-origin isolated; `launch`
+ *   is passed to Playwright's `chromium.launch` (flags, headed, a channel)
  */
 export async function runInBrowser<T>(
 	source: string,
 	timeoutMs = 120_000,
-	options: { isolated?: boolean } = {},
+	options: { isolated?: boolean; launch?: Record<string, unknown> } = {},
 ): Promise<T> {
 	const playwright = loadPlaywright();
 	const entry = await bundleForBrowser(source);
@@ -115,7 +116,7 @@ export async function runInBrowser<T>(
 
 	let browser;
 	try {
-		browser = await playwright.chromium.launch();
+		browser = await playwright.chromium.launch(options.launch);
 	} catch (error) {
 		server.close();
 		throw new NoBrowserError(`Chromium could not start: ${String(error)}`);

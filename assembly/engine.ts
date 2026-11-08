@@ -600,7 +600,7 @@ function matchAverage(sumBase: usize, regretBase: usize, actions: i32, n: i32, s
 			store<f32>(total + o, load<f32>(total + o) + v);
 		}
 	}
-	// Hands that never reached this node fall back to the current strategy.
+	// Hands with no sum here (under CFR+, never reached) fall back to the current strategy.
 	for (let i = 0; i < n; i++) {
 		const o = <usize>i << 2;
 		if (load<f32>(total + o) > 0) continue;
@@ -656,7 +656,11 @@ function update(base: usize, sumBase: usize, actions: i32, n: i32, reachMe: usiz
 			let updated = f32x4.add(f32x4.mul(r, factor), f32x4.sub(v128.load(actionValues + row + o), v128.load(value + o)));
 			if (clamp) updated = f32x4.max(updated, zero);
 			v128.store(base + row + o, updated);
-			const s = f32x4.add(f32x4.mul(v128.load(sumBase + row + o), keep), f32x4.mul(w, f32x4.mul(v128.load(reachMe + o), v128.load(strategy + row + o))));
+			// DCFR adds the strategy unweighted by own reach (issue #8); CFR+ keeps the weight.
+			let played = v128.load(strategy + row + o);
+			if (clamp) played = f32x4.mul(v128.load(reachMe + o), played);
+			const added = f32x4.mul(w, played);
+			const s = f32x4.add(f32x4.mul(v128.load(sumBase + row + o), keep), added);
 			v128.store(sumBase + row + o, s);
 		}
 		for (; i < n; i++) {
@@ -665,7 +669,9 @@ function update(base: usize, sumBase: usize, actions: i32, n: i32, reachMe: usiz
 			let updated = r * (r > 0 ? keepPositive : keepNegative) + load<f32>(actionValues + row + o) - load<f32>(value + o);
 			if (clamp && updated < 0) updated = 0;
 			store<f32>(base + row + o, updated);
-			store<f32>(sumBase + row + o, load<f32>(sumBase + row + o) * keepSum + weight * load<f32>(reachMe + o) * load<f32>(strategy + row + o));
+			let played = load<f32>(strategy + row + o);
+			if (clamp) played = load<f32>(reachMe + o) * played;
+			store<f32>(sumBase + row + o, load<f32>(sumBase + row + o) * keepSum + weight * played);
 		}
 	}
 }
