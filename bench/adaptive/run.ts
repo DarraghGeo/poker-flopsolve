@@ -77,7 +77,7 @@ if (isStatic && fourth in STATIC_RULES) {
 		const bytes = treeBytes(full, kept);
 		const left = budget - bytes;
 		const allowance = round === maxRounds - 1 ? left : left / 2;
-		const probed = await probeAll(full, kept, current.run, { ...options, probeBytes: Math.max(budget, bytes * 1.5) });
+		const probed = await probeAll(full, kept, current.run, { ...options, probeBytes: process.env.PROBE_GIB ? Number(process.env.PROBE_GIB) * GiB : Math.max(budget, bytes * 1.5) });
 		probed.sort((a, b) => b.gain / b.bytes - a.gain / a.bytes);
 		const added: GrowRound['added'] = [];
 		let spent = 0;
@@ -109,10 +109,12 @@ const growSeconds = (performance.now() - started) / 1000;
 const final = solveTo(config, 0.3, 2000, options);
 final.run.close();
 const measured = measure(final.run, final.seconds, final.exploitability);
-const name = isStatic ? `static-${fourth}` : `adaptive-${third}${seed === 'base' ? '' : `-${seed}`}`;
+const name = isStatic ? `static-${fourth}` : `adaptive-${third}${seed === 'base' ? '' : `-${seed}`}${process.env.PROBE_GIB ? `-probe${process.env.PROBE_GIB}` : ''}`;
 const out = {
 	board, full: fullName, name, config, growSeconds: isStatic ? 0 : growSeconds, rounds, ...measured,
 	sizes: kept ? sizesSummary(full, kept) : null,
+	// Peak resident memory of the whole process, growth included.
+	peakRssGiB: process.resourceUsage().maxRSS / 2 ** 20,
 };
 writeFileSync(new URL(`./results/${board}-${fullName}-${name}.json`, import.meta.url), JSON.stringify(out, null, 1));
 log(JSON.stringify({ ...out, config: undefined, rounds: rounds.map((r) => ({ ...r, added: r.added.length })), evs: undefined, actions: undefined }, null, 1));
