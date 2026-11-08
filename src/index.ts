@@ -520,6 +520,19 @@ export interface Approximations {
 	 * 0.3% of pot in 14.1 s exact, 23.1 s at p = 0.5, and not within 400
 	 * iterations at p = 0.25; at best it broke even to 1%.
 	 *
+	 * Hand classes at the flop root — each player's flop vector shortened to
+	 * weighted classes of nearly equivalent combos (rank pair, suitedness, and
+	 * how many flop cards share each hole card's suit), expanded back to
+	 * combos at the turn deal — were counted and not built, because they
+	 * cannot pay: the flop round is 0.005% to 0.02% of the decision slots and
+	 * terminal work of the bench flop spots (rainbow, monotone, and the
+	 * same in pairs-and-broadway form), the river 99%, so shortening the flop
+	 * vectors 2 to 3 times (198 combos to 92 classes on As Kh 7d, 217 to 75 on
+	 * Ks 9s 4s) bounds the speed-up at 0.02%. Carried through to the river
+	 * the same classes would shorten vectors 2.0 to 3.1 times, but members of
+	 * a class block different cards on each runout, so that is the rejected
+	 * river buckets above with blocker detail averaged away as well.
+	 *
 	 * Regret-based pruning — skipping the subtree below an action no hand of
 	 * the actor plays (Brown & Sandholm, 2015) — was measured before building
 	 * and is not offered either; `bench/prune-census.ts` counts the work it
