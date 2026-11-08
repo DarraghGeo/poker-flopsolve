@@ -679,7 +679,7 @@ interface Buffers {
 	readonly cardSums: Float64Array;
 }
 
-function makeBuffers(tree: Tree, maxActions: number, simd: boolean): Buffers {
+export function makeBuffers(tree: Tree, maxActions: number, simd: boolean): Buffers {
 	const depth = treeDepth(tree) + 2;
 	const make = <T>(factory: () => T): T[] => Array.from({ length: depth }, factory);
 	const kernels = simd ? loadKernels(depth, maxActions * COMBOS) : null;
@@ -872,7 +872,7 @@ export function averageStrategy(
  * their active list there — and `reachOpp` likewise for the opponent. The
  * result is valid for the traverser's `count` hands on this board.
  */
-function traverse(
+export function traverse(
 	ctx: Context,
 	buffers: Buffers,
 	mode: Mode,
@@ -1398,6 +1398,11 @@ export interface Solver {
 		liveCount: number,
 	): Float64Array;
 	/**
+	 * The whole-tree traversal `iterate` and the other passes run now: this
+	 * thread's own, or what `useRoot` routed them to. For wrapping it.
+	 */
+	readonly root: RootTraversal;
+	/**
 	 * Counterfactual values under the average strategy from any node against
 	 * each of `hands` alone, at the reach given for it: the same as `valuesAt`
 	 * with a one-hot opponent reach, for many opposing hands in one walk.
@@ -1474,6 +1479,9 @@ export function makeSolver(ctx: Context): Solver {
 			return rootCount;
 		},
 		traverseRoot: run,
+		get root() {
+			return root;
+		},
 		useRoot(next) {
 			root = next ?? run;
 		},

@@ -1,0 +1,146 @@
+monotone 1size: 306 nodes, 675 runouts, 264 MiB f32 / 137 MiB i16
+  10 it, 41.015%, 3 s
+  20 it, 13.171%, 5 s
+  40 it, 2.905%, 9 s
+  80 it, 0.832%, 17 s
+  134 it, 0.298%, 29 s
+blueprint: 134 it, 0.298% (own game), 29 s, storage 264 MiB, peak RSS 475 MiB
+root EV error (% pot): OOP mae 2.323 max 10.559 range 0.889; IP mae 2.179 max 20.159 range 0.889
+  OOP at root: size agreement 98.6%, best-action agreement 86.6%, strategy TV 0.107; action EV mae check 2.29, bet 18.15 2.47, bet 41.25 3.13, bet 82.5 5.73, allin 975 3.72
+  IP after check: size agreement 65.4%, best-action agreement 74.9%, strategy TV 0.116; action EV mae check 2.63, bet 18.15 2.56, bet 41.25 2.67, bet 82.5 3.41, allin 975 11.17
+bet_18.15_call_-2h (pot 91.3, line reached 16.3%, reference local expl 0.05%): blueprint reach TV 0.181/0.021, blueprint class-TV 0.279/0.230, reference self-gain 0.058/0.039
+  unsafe          p0: 18.2 s, 30.9 MiB, TV 0.122, class-TV 0.080, gain 9.654% pot, excess over blueprint -0.465%
+  unsafe          p1: 17.3 s, 30.9 MiB, TV 0.073, class-TV 0.062, gain 0.658% pot, excess over blueprint 1.091%
+  resolve         p0: 17.5 s, 30.9 MiB, TV 0.204, class-TV 0.172, gain 9.103% pot, excess over blueprint 0.914%
+  resolve         p1: 16.9 s, 30.9 MiB, TV 0.126, class-TV 0.106, gain 1.771% pot, excess over blueprint 2.317%
+  maxmargin       p0: 17.7 s, 30.9 MiB, TV 0.254, class-TV 0.227, gain 9.755% pot, excess over blueprint 1.453%
+  maxmargin       p1: 18.2 s, 30.9 MiB, TV 0.146, class-TV 0.126, gain 2.940% pot, excess over blueprint 3.252%
+  reach-maxmargin p0: 16.7 s, 30.9 MiB, TV 0.249, class-TV 0.219, gain 9.453% pot, excess over blueprint 1.386%
+  reach-maxmargin p1: 20.7 s, 30.9 MiB, TV 0.152, class-TV 0.130, gain 2.881% pot, excess over blueprint 2.824%
+bet_18.15_call_-As (pot 91.3, line reached 16.3%, reference local expl 0.06%): blueprint reach TV 0.187/0.021, blueprint class-TV 0.130/0.233, reference self-gain 0.072/0.041
+  unsafe          p0: 7.8 s, 11.6 MiB, TV 0.027, class-TV 0.024, gain 4.750% pot, excess over blueprint -1.006%
+  unsafe          p1: 7.6 s, 11.6 MiB, TV 0.062, class-TV 0.061, gain 0.566% pot, excess over blueprint 1.692%
+  resolve         p0: 7.0 s, 11.6 MiB, TV 0.048, class-TV 0.048, gain 4.450% pot, excess over blueprint 0.386%
+  resolve         p1: 6.9 s, 11.6 MiB, TV 0.139, class-TV 0.123, gain 1.667% pot, excess over blueprint 3.026%
+  maxmargin       p0: 8.1 s, 11.6 MiB, TV 0.056, class-TV 0.050, gain 4.770% pot, excess over blueprint 1.157%
+  maxmargin       p1: 7.6 s, 11.6 MiB, TV 0.143, class-TV 0.140, gain 2.013% pot, excess over blueprint 3.475%
+  reach-maxmargin p0: 7.9 s, 11.6 MiB, TV 0.050, class-TV 0.050, gain 4.198% pot, excess over blueprint 0.427%
+  reach-maxmargin p1: 9.5 s, 11.6 MiB, TV 0.146, class-TV 0.143, gain 1.893% pot, excess over blueprint 3.075%
+bet_18.15_call_-Qd (pot 91.3, line reached 16.3%, reference local expl 0.04%): blueprint reach TV 0.185/0.023, blueprint class-TV 0.227/0.215, reference self-gain 0.051/0.038
+  unsafe          p0: 17.0 s, 29.6 MiB, TV 0.116, class-TV 0.078, gain 6.644% pot, excess over blueprint -0.570%
+  unsafe          p1: 16.8 s, 29.6 MiB, TV 0.099, class-TV 0.063, gain 0.826% pot, excess over blueprint 1.110%
+  resolve         p0: 16.4 s, 29.6 MiB, TV 0.154, class-TV 0.124, gain 7.022% pot, excess over blueprint 0.694%
+  resolve         p1: 15.9 s, 29.6 MiB, TV 0.134, class-TV 0.099, gain 1.664% pot, excess over blueprint 2.203%
+  maxmargin       p0: 16.2 s, 29.6 MiB, TV 0.186, class-TV 0.144, gain 7.388% pot, excess over blueprint 0.763%
+  maxmargin       p1: 16.6 s, 29.6 MiB, TV 0.185, class-TV 0.135, gain 2.762% pot, excess over blueprint 3.071%
+  reach-maxmargin p0: 17.7 s, 29.6 MiB, TV 0.158, class-TV 0.123, gain 7.656% pot, excess over blueprint 0.611%
+  reach-maxmargin p1: 18.8 s, 29.6 MiB, TV 0.191, class-TV 0.141, gain 2.748% pot, excess over blueprint 2.725%
+bet_18.15_raise_86.63_call_-2h (pot 228.26, line reached 0.4%, reference local expl 0.15%): blueprint reach TV 0.117/0.242, blueprint class-TV 0.125/0.183, reference self-gain 0.030/0.261
+  unsafe          p0: 7.5 s, 13.6 MiB, TV 0.078, class-TV 0.075, gain 4.496% pot, excess over blueprint 0.540%
+  unsafe          p1: 7.8 s, 13.6 MiB, TV 0.123, class-TV 0.122, gain 10.779% pot, excess over blueprint 0.313%
+  resolve         p0: 7.8 s, 13.6 MiB, TV 0.193, class-TV 0.192, gain 4.796% pot, excess over blueprint 1.232%
+  resolve         p1: 8.0 s, 13.6 MiB, TV 0.108, class-TV 0.099, gain 9.150% pot, excess over blueprint 0.681%
+  maxmargin       p0: 7.6 s, 13.6 MiB, TV 0.192, class-TV 0.190, gain 4.740% pot, excess over blueprint 2.059%
+  maxmargin       p1: 7.7 s, 13.6 MiB, TV 0.142, class-TV 0.138, gain 11.096% pot, excess over blueprint 2.290%
+  reach-maxmargin p0: 8.5 s, 13.6 MiB, TV 0.203, class-TV 0.202, gain 5.158% pot, excess over blueprint 1.727%
+  reach-maxmargin p1: 10.9 s, 13.6 MiB, TV 0.097, class-TV 0.093, gain 8.756% pot, excess over blueprint 0.703%
+bet_18.15_raise_86.63_call_-As (pot 228.26, line reached 0.4%, reference local expl 0.28%): blueprint reach TV 0.124/0.280, blueprint class-TV 0.088/0.108, reference self-gain 0.030/0.538
+  unsafe          p0: 3.2 s, 5.1 MiB, TV 0.335, class-TV 0.222, gain 3.834% pot, excess over blueprint -0.650%
+  unsafe          p1: 3.1 s, 5.1 MiB, TV 0.071, class-TV 0.066, gain 7.950% pot, excess over blueprint 0.849%
+  resolve         p0: 3.1 s, 5.1 MiB, TV 0.311, class-TV 0.141, gain 3.959% pot, excess over blueprint 0.162%
+  resolve         p1: 3.4 s, 5.1 MiB, TV 0.075, class-TV 0.073, gain 7.074% pot, excess over blueprint 1.068%
+  maxmargin       p0: 3.3 s, 5.1 MiB, TV 0.272, class-TV 0.193, gain 6.100% pot, excess over blueprint 1.758%
+  maxmargin       p1: 3.4 s, 5.1 MiB, TV 0.086, class-TV 0.080, gain 10.549% pot, excess over blueprint 5.988%
+  reach-maxmargin p0: 3.6 s, 5.1 MiB, TV 0.299, class-TV 0.192, gain 4.902% pot, excess over blueprint 1.045%
+  reach-maxmargin p1: 6.6 s, 5.1 MiB, TV 0.078, class-TV 0.075, gain 7.807% pot, excess over blueprint 1.238%
+bet_18.15_raise_86.63_call_-Qd (pot 228.26, line reached 0.4%, reference local expl 0.14%): blueprint reach TV 0.121/0.240, blueprint class-TV 0.094/0.117, reference self-gain 0.036/0.253
+  unsafe          p0: 7.5 s, 13.0 MiB, TV 0.076, class-TV 0.052, gain 4.337% pot, excess over blueprint -0.244%
+  unsafe          p1: 7.3 s, 13.0 MiB, TV 0.099, class-TV 0.088, gain 9.359% pot, excess over blueprint 1.290%
+  resolve         p0: 7.4 s, 13.0 MiB, TV 0.095, class-TV 0.093, gain 4.404% pot, excess over blueprint 1.188%
+  resolve         p1: 7.7 s, 13.0 MiB, TV 0.132, class-TV 0.078, gain 8.076% pot, excess over blueprint 1.638%
+  maxmargin       p0: 7.3 s, 13.0 MiB, TV 0.093, class-TV 0.092, gain 5.427% pot, excess over blueprint 2.231%
+  maxmargin       p1: 7.6 s, 13.0 MiB, TV 0.141, class-TV 0.097, gain 9.618% pot, excess over blueprint 3.530%
+  reach-maxmargin p0: 8.1 s, 13.0 MiB, TV 0.102, class-TV 0.100, gain 4.999% pot, excess over blueprint 1.927%
+  reach-maxmargin p1: 10.4 s, 13.0 MiB, TV 0.138, class-TV 0.089, gain 9.113% pot, excess over blueprint 1.208%
+check_bet_18.15_call_-2h (pot 91.3, line reached 0.5%, reference local expl 0.27%): blueprint reach TV 0.105/0.286, blueprint class-TV 0.056/0.189, reference self-gain 0.064/0.475
+  unsafe          p0: 17.4 s, 30.9 MiB, TV 0.033, class-TV 0.033, gain 4.433% pot, excess over blueprint -0.615%
+  unsafe          p1: 18.6 s, 30.9 MiB, TV 0.136, class-TV 0.122, gain 12.274% pot, excess over blueprint 1.331%
+  resolve         p0: 17.1 s, 30.9 MiB, TV 0.042, class-TV 0.042, gain 5.371% pot, excess over blueprint 0.976%
+  resolve         p1: 17.2 s, 30.9 MiB, TV 0.231, class-TV 0.136, gain 13.289% pot, excess over blueprint 2.340%
+  maxmargin       p0: 17.1 s, 30.9 MiB, TV 0.052, class-TV 0.052, gain 7.503% pot, excess over blueprint 4.052%
+  maxmargin       p1: 16.9 s, 30.9 MiB, TV 0.357, class-TV 0.164, gain 16.816% pot, excess over blueprint 3.850%
+  reach-maxmargin p0: 18.5 s, 30.9 MiB, TV 0.051, class-TV 0.051, gain 7.277% pot, excess over blueprint 3.788%
+  reach-maxmargin p1: 20.3 s, 30.9 MiB, TV 0.358, class-TV 0.162, gain 16.725% pot, excess over blueprint 3.832%
+check_bet_18.15_call_-As (pot 91.3, line reached 0.5%, reference local expl 0.57%): blueprint reach TV 0.088/0.292, blueprint class-TV 0.329/0.271, reference self-gain 0.127/1.009
+  unsafe          p0: 7.5 s, 11.6 MiB, TV 0.367, class-TV 0.285, gain 14.067% pot, excess over blueprint -3.294%
+  unsafe          p1: 7.6 s, 11.6 MiB, TV 0.175, class-TV 0.168, gain 11.350% pot, excess over blueprint 4.099%
+  resolve         p0: 8.0 s, 11.6 MiB, TV 0.209, class-TV 0.184, gain 8.657% pot, excess over blueprint 0.218%
+  resolve         p1: 7.5 s, 11.6 MiB, TV 0.165, class-TV 0.156, gain 11.369% pot, excess over blueprint 4.955%
+  maxmargin       p0: 8.4 s, 11.6 MiB, TV 0.215, class-TV 0.213, gain 7.588% pot, excess over blueprint 0.934%
+  maxmargin       p1: 6.9 s, 11.6 MiB, TV 0.250, class-TV 0.234, gain 12.160% pot, excess over blueprint 9.533%
+  reach-maxmargin p0: 8.4 s, 11.6 MiB, TV 0.216, class-TV 0.215, gain 7.663% pot, excess over blueprint 0.688%
+  reach-maxmargin p1: 10.4 s, 11.6 MiB, TV 0.242, class-TV 0.229, gain 11.817% pot, excess over blueprint 9.373%
+check_bet_18.15_call_-Qd (pot 91.3, line reached 0.5%, reference local expl 0.24%): blueprint reach TV 0.108/0.290, blueprint class-TV 0.046/0.233, reference self-gain 0.051/0.427
+  unsafe          p0: 16.2 s, 29.6 MiB, TV 0.025, class-TV 0.025, gain 4.727% pot, excess over blueprint -0.284%
+  unsafe          p1: 17.1 s, 29.6 MiB, TV 0.209, class-TV 0.171, gain 12.223% pot, excess over blueprint 0.992%
+  resolve         p0: 17.3 s, 29.6 MiB, TV 0.043, class-TV 0.043, gain 6.909% pot, excess over blueprint 0.736%
+  resolve         p1: 16.1 s, 29.6 MiB, TV 0.265, class-TV 0.145, gain 12.539% pot, excess over blueprint 2.801%
+  maxmargin       p0: 16.9 s, 29.6 MiB, TV 0.046, class-TV 0.046, gain 7.605% pot, excess over blueprint 2.689%
+  maxmargin       p1: 16.9 s, 29.6 MiB, TV 0.359, class-TV 0.188, gain 14.394% pot, excess over blueprint 3.104%
+  reach-maxmargin p0: 17.3 s, 29.6 MiB, TV 0.045, class-TV 0.045, gain 7.563% pot, excess over blueprint 2.496%
+  reach-maxmargin p1: 19.2 s, 29.6 MiB, TV 0.379, class-TV 0.182, gain 12.672% pot, excess over blueprint 3.886%
+check_bet_41.25_call_-2h (pot 137.5, line reached 6.5%, reference local expl 0.06%): blueprint reach TV 0.092/0.148, blueprint class-TV 0.082/0.096, reference self-gain 0.040/0.074
+  unsafe          p0: 11.8 s, 21.1 MiB, TV 0.027, class-TV 0.027, gain 2.219% pot, excess over blueprint 0.652%
+  unsafe          p1: 12.2 s, 21.1 MiB, TV 0.179, class-TV 0.088, gain 4.551% pot, excess over blueprint 0.667%
+  resolve         p0: 11.8 s, 21.1 MiB, TV 0.057, class-TV 0.057, gain 3.521% pot, excess over blueprint 1.743%
+  resolve         p1: 11.4 s, 21.1 MiB, TV 0.349, class-TV 0.121, gain 5.518% pot, excess over blueprint 1.614%
+  maxmargin       p0: 11.6 s, 21.1 MiB, TV 0.062, class-TV 0.062, gain 4.715% pot, excess over blueprint 3.330%
+  maxmargin       p1: 12.0 s, 21.1 MiB, TV 0.417, class-TV 0.139, gain 7.275% pot, excess over blueprint 2.150%
+  reach-maxmargin p0: 13.2 s, 21.1 MiB, TV 0.058, class-TV 0.058, gain 4.650% pot, excess over blueprint 3.303%
+  reach-maxmargin p1: 14.8 s, 21.1 MiB, TV 0.424, class-TV 0.151, gain 7.467% pot, excess over blueprint 2.050%
+check_bet_41.25_call_-As (pot 137.5, line reached 6.5%, reference local expl 0.08%): blueprint reach TV 0.086/0.180, blueprint class-TV 0.311/0.130, reference self-gain 0.035/0.123
+  unsafe          p0: 5.0 s, 7.9 MiB, TV 0.126, class-TV 0.124, gain 2.433% pot, excess over blueprint -0.481%
+  unsafe          p1: 5.2 s, 7.9 MiB, TV 0.092, class-TV 0.089, gain 4.045% pot, excess over blueprint 0.973%
+  resolve         p0: 4.9 s, 7.9 MiB, TV 0.177, class-TV 0.175, gain 3.169% pot, excess over blueprint 0.393%
+  resolve         p1: 5.2 s, 7.9 MiB, TV 0.115, class-TV 0.112, gain 4.138% pot, excess over blueprint 1.862%
+  maxmargin       p0: 4.9 s, 7.9 MiB, TV 0.210, class-TV 0.208, gain 3.217% pot, excess over blueprint 1.094%
+  maxmargin       p1: 4.8 s, 7.9 MiB, TV 0.130, class-TV 0.125, gain 5.189% pot, excess over blueprint 3.168%
+  reach-maxmargin p0: 6.1 s, 7.9 MiB, TV 0.194, class-TV 0.192, gain 3.065% pot, excess over blueprint 0.547%
+  reach-maxmargin p1: 7.8 s, 7.9 MiB, TV 0.134, class-TV 0.129, gain 5.496% pot, excess over blueprint 3.087%
+check_bet_41.25_call_-Qd (pot 137.5, line reached 6.5%, reference local expl 0.04%): blueprint reach TV 0.093/0.148, blueprint class-TV 0.048/0.174, reference self-gain 0.029/0.058
+  unsafe          p0: 11.5 s, 20.3 MiB, TV 0.018, class-TV 0.018, gain 2.370% pot, excess over blueprint 0.820%
+  unsafe          p1: 10.9 s, 20.3 MiB, TV 0.086, class-TV 0.075, gain 3.184% pot, excess over blueprint 0.184%
+  resolve         p0: 12.3 s, 20.3 MiB, TV 0.053, class-TV 0.053, gain 3.252% pot, excess over blueprint 1.740%
+  resolve         p1: 11.6 s, 20.3 MiB, TV 0.229, class-TV 0.107, gain 3.519% pot, excess over blueprint 1.024%
+  maxmargin       p0: 11.7 s, 20.3 MiB, TV 0.053, class-TV 0.053, gain 4.502% pot, excess over blueprint 2.982%
+  maxmargin       p1: 11.7 s, 20.3 MiB, TV 0.196, class-TV 0.113, gain 4.237% pot, excess over blueprint 1.443%
+  reach-maxmargin p0: 22.9 s, 20.3 MiB, TV 0.052, class-TV 0.052, gain 4.168% pot, excess over blueprint 2.975%
+  reach-maxmargin p1: 14.5 s, 20.3 MiB, TV 0.183, class-TV 0.116, gain 4.189% pot, excess over blueprint 1.056%
+check_check_-2h (pot 55, line reached 61.9%, reference local expl 0.06%): blueprint reach TV 0.069/0.075, blueprint class-TV 0.243/0.215, reference self-gain 0.047/0.066
+  unsafe          p0: 21.4 s, 40.2 MiB, TV 0.134, class-TV 0.089, gain 2.171% pot, excess over blueprint -0.450%
+  unsafe          p1: 22.9 s, 40.2 MiB, TV 0.083, class-TV 0.064, gain 4.185% pot, excess over blueprint 1.038%
+  resolve         p0: 22.0 s, 40.2 MiB, TV 0.158, class-TV 0.112, gain 2.967% pot, excess over blueprint 0.938%
+  resolve         p1: 21.3 s, 40.2 MiB, TV 0.124, class-TV 0.102, gain 4.612% pot, excess over blueprint 2.526%
+  maxmargin       p0: 21.1 s, 40.2 MiB, TV 0.146, class-TV 0.121, gain 3.807% pot, excess over blueprint 2.123%
+  maxmargin       p1: 21.4 s, 40.2 MiB, TV 0.169, class-TV 0.151, gain 6.949% pot, excess over blueprint 7.163%
+  reach-maxmargin p0: 22.7 s, 40.2 MiB, TV 0.139, class-TV 0.117, gain 3.598% pot, excess over blueprint 1.860%
+  reach-maxmargin p1: 24.0 s, 40.2 MiB, TV 0.174, class-TV 0.156, gain 7.138% pot, excess over blueprint 7.230%
+check_check_-As (pot 55, line reached 61.9%, reference local expl 0.07%): blueprint reach TV 0.064/0.059, blueprint class-TV 0.316/0.296, reference self-gain 0.055/0.087
+  unsafe          p0: 9.7 s, 15.0 MiB, TV 0.092, class-TV 0.082, gain 3.623% pot, excess over blueprint 0.132%
+  unsafe          p1: 9.5 s, 15.0 MiB, TV 0.090, class-TV 0.087, gain 4.766% pot, excess over blueprint 1.116%
+  resolve         p0: 8.8 s, 15.0 MiB, TV 0.153, class-TV 0.140, gain 4.105% pot, excess over blueprint 1.372%
+  resolve         p1: 9.5 s, 15.0 MiB, TV 0.226, class-TV 0.188, gain 5.659% pot, excess over blueprint 2.684%
+  maxmargin       p0: 9.8 s, 15.0 MiB, TV 0.155, class-TV 0.147, gain 4.749% pot, excess over blueprint 1.583%
+  maxmargin       p1: 9.4 s, 15.0 MiB, TV 0.247, class-TV 0.199, gain 6.720% pot, excess over blueprint 3.429%
+  reach-maxmargin p0: 11.6 s, 15.0 MiB, TV 0.156, class-TV 0.148, gain 4.642% pot, excess over blueprint 1.544%
+  reach-maxmargin p1: 12.0 s, 15.0 MiB, TV 0.247, class-TV 0.199, gain 6.774% pot, excess over blueprint 3.438%
+check_check_-Qd (pot 55, line reached 61.9%, reference local expl 0.07%): blueprint reach TV 0.071/0.078, blueprint class-TV 0.243/0.211, reference self-gain 0.054/0.081
+  unsafe          p0: 20.6 s, 38.5 MiB, TV 0.129, class-TV 0.102, gain 2.341% pot, excess over blueprint -1.258%
+  unsafe          p1: 20.9 s, 38.5 MiB, TV 0.096, class-TV 0.064, gain 5.481% pot, excess over blueprint 1.812%
+  resolve         p0: 21.1 s, 38.5 MiB, TV 0.161, class-TV 0.132, gain 3.841% pot, excess over blueprint 0.284%
+  resolve         p1: 20.7 s, 38.5 MiB, TV 0.141, class-TV 0.106, gain 5.200% pot, excess over blueprint 2.721%
+  maxmargin       p0: 21.6 s, 38.5 MiB, TV 0.176, class-TV 0.161, gain 4.704% pot, excess over blueprint 1.249%
+  maxmargin       p1: 21.1 s, 38.5 MiB, TV 0.180, class-TV 0.129, gain 7.535% pot, excess over blueprint 8.150%
+  reach-maxmargin p0: 22.4 s, 38.5 MiB, TV 0.173, class-TV 0.153, gain 4.453% pot, excess over blueprint 1.001%
+  reach-maxmargin p1: 23.6 s, 38.5 MiB, TV 0.183, class-TV 0.139, gain 7.578% pot, excess over blueprint 8.143%
+max RSS 0.57 GiB

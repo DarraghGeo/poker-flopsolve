@@ -35,10 +35,10 @@ import type { Tree } from './tree.ts';
 import { ActionKind, NodeKind } from './tree.ts';
 
 /** Largest ratio between two bet sizes, as pot fractions, still taken as the same. */
-const SIZE_TOLERANCE = 1.35;
+export const SIZE_TOLERANCE = 1.35;
 
-const REGRET_STEPS = 32767;
-const SUM_STEPS = 65535;
+export const REGRET_STEPS = 32767;
+export const SUM_STEPS = 65535;
 
 /** What a warm start carried over. */
 export interface WarmStartReport {
@@ -98,7 +98,7 @@ function matchEdge(to: Tree, edge: number, node: number, from: Tree, other: numb
 }
 
 /** Read one block — a node on a board — as plain numbers, `actions * count` of them. */
-function readBlock(
+export function readBlock(
 	store: RegretStore | SumStore,
 	scale: Float64Array | null,
 	block: number,
@@ -111,7 +111,7 @@ function readBlock(
 }
 
 /** Write one block, re-encoding it when storage is 16-bit. */
-function writeBlock(
+export function writeBlock(
 	store: RegretStore | SumStore,
 	scale: Float64Array | null,
 	steps: number,
@@ -135,7 +135,7 @@ function writeBlock(
 }
 
 /** The real cards of a stored board. */
-function realCards(runouts: Runouts, round: number, board: number): number[] {
+export function realCards(runouts: Runouts, round: number, board: number): number[] {
 	const width = runouts.width[round];
 	return Array.from(runouts.cards[round].subarray(board * width, (board + 1) * width));
 }

@@ -1,0 +1,22 @@
+monotone-T: 3.75 GiB f32, 1.90 GiB i16; solving at i16
+  line check check /: reached 61.85% of deals
+  saved check_check_-2h: 19.9 MiB, local exploitability 0.056% of its pot
+  saved check_check_-Qd: 19.1 MiB, local exploitability 0.067% of its pot
+  saved check_check_-As: 7.4 MiB, local exploitability 0.071% of its pot
+  line bet 18.15 call /: reached 16.26% of deals
+  saved bet_18.15_call_-2h: 14.2 MiB, local exploitability 0.049% of its pot
+  saved bet_18.15_call_-Qd: 13.5 MiB, local exploitability 0.044% of its pot
+  saved bet_18.15_call_-As: 5.2 MiB, local exploitability 0.057% of its pot
+  line check bet 41.25 call /: reached 6.47% of deals
+  saved check_bet_41.25_call_-2h: 8.7 MiB, local exploitability 0.057% of its pot
+  saved check_bet_41.25_call_-Qd: 8.3 MiB, local exploitability 0.043% of its pot
+  saved check_bet_41.25_call_-As: 3.2 MiB, local exploitability 0.079% of its pot
+  line check bet 18.15 call /: reached 0.54% of deals
+  saved check_bet_18.15_call_-2h: 15.3 MiB, local exploitability 0.270% of its pot
+  saved check_bet_18.15_call_-Qd: 14.7 MiB, local exploitability 0.239% of its pot
+  saved check_bet_18.15_call_-As: 5.7 MiB, local exploitability 0.568% of its pot
+  line bet 18.15 raise 86.63 call /: reached 0.37% of deals
+  saved bet_18.15_raise_86.63_call_-2h: 4.8 MiB, local exploitability 0.146% of its pot
+  saved bet_18.15_raise_86.63_call_-Qd: 4.6 MiB, local exploitability 0.145% of its pot
+  saved bet_18.15_raise_86.63_call_-As: 1.7 MiB, local exploitability 0.284% of its pot
+max rss 1.11 GiB
