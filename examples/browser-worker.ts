@@ -13,7 +13,10 @@
  *   // worker.postMessage({ type: 'stop' });
  *
  * The browser build is single-threaded and needs no special page headers. It
- * is meant for river and small turn spots; bigger spots belong in Node.
+ * is meant for river and small turn spots; bigger spots belong in Node, or in
+ * a browser with the opt-in threads: on a cross-origin isolated page,
+ * `await enableThreads()` from 'poker-flopsolve/threads' before the first
+ * solve and pass what it returns as `workers`. See the README.
  */
 
 import { createRun, defineSpot } from 'poker-flopsolve';
