@@ -21,6 +21,7 @@ import { suitSymmetries } from './abstraction.ts';
 import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
 import { buildHandSpace } from './hands.ts';
+import type { PageFile, Paging } from './paging.ts';
 import { createEngine } from './engine.ts';
 import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
@@ -50,6 +51,7 @@ export type { WarmStartReport } from './warm.ts';
 export { simdAvailable } from './kernels.ts';
 export type { BetSize } from './tree.ts';
 export type { SamplingOptions, Solver } from './cfr.ts';
+export type { PageFile } from './paging.ts';
 export { ACTION_LABELS, ActionKind, NodeKind } from './tree.ts';
 export type { PerPlayer, RaiseSizes } from './tree.ts';
 /** 'node' or 'browser': which build is running. */
@@ -505,6 +507,11 @@ export interface SolveOptions {
 	 */
 	readonly approximations?: Approximations;
 	/**
+	 * Keep the river's accumulators in a file instead of memory; see
+	 * `OutOfCore`. Unset, everything is in memory.
+	 */
+	readonly outOfCore?: OutOfCore;
+	/**
 	 * Use the WebAssembly SIMD kernels where the platform supports them,
 	 * falling back to JavaScript where it does not. Results are identical
 	 * either way, to the bit; this exists to compare the two. Default true.
@@ -757,6 +764,52 @@ export interface Approximations {
 	readonly chanceSampling?: SamplingOptions;
 }
 
+/**
+ * Out-of-core river storage (issue #55). A flop spot's flop and turn
+ * accumulators, the trunk, stay in memory; the river's, nearly all of the
+ * storage, live in `file`, and each traversal pages them through one buffer,
+ * one turn card of one turn chance node at a time, in file order. The game
+ * and the arithmetic are unchanged, so it solves the same spot to the same
+ * answer: at 32 bits bit for bit; at 16 bits up to the rounding dither, which
+ * is keyed by a slot's position in its page rather than in all of storage.
+ *
+ * Memory is the trunk, one page, the 16-bit scales (16 bytes per node and
+ * board) and the usual tables. Each training iteration reads the river's
+ * regrets twice and its sums once, and writes each once; an exploitability
+ * or EV pass reads it all once per player. The file is exactly the river's
+ * storage.
+ *
+ * Made by `outOfCore(file)` from the separate entry `poker-flopsolve/out-of-core`,
+ * so that a build that never pages carries none of it. In a browser, `file`
+ * is a `FileSystemSyncAccessHandle` on an Origin Private File System file,
+ * opened in the worker that runs the solve; in Node, `openPageFile(path)`
+ * from the same entry.
+ *
+ * Flop spots only; one thread, the JavaScript engine; not with `analysisOnly`,
+ * `warmStart`, `approximations.coarseStart` or `approximations.chanceSampling`.
+ * Precision defaults to 16 bits, since the file is what is short. The spot
+ * still checks its whole storage against `maxBytes` when it is defined, so
+ * raise `maxBytes` there to the size of the file.
+ */
+export interface OutOfCore {
+	/** Where the river goes. Truncated and overwritten. */
+	readonly file: PageFile;
+	/** The paging code itself; supplied by `outOfCore()`. */
+	readonly paging: Paging;
+}
+
+/** What an out-of-core run keeps where, and the I/O it has done. */
+export interface OutOfCoreReport {
+	/** Bytes of storage in memory: trunk, page buffers and scales. */
+	readonly residentBytes: number;
+	readonly fileBytes: number;
+	readonly bytesRead: number;
+	readonly bytesWritten: number;
+	readonly pageLoads: number;
+	/** Milliseconds spent in file reads and writes. */
+	readonly ioMs: number;
+}
+
 /** See `Approximations.coarseStart`. */
 export interface CoarseStart {
 	/** Iterations of the coarse spot to run before the real one. */
@@ -902,6 +955,8 @@ export interface SolveRun {
 	readonly workers: number;
 	/** The underlying solver, for per-node analysis once solving is done. */
 	readonly solver: Solver;
+	/** With `outOfCore`, where storage sits and the I/O so far; else null. */
+	outOfCore(): OutOfCoreReport | null;
 }
 
 /**
@@ -921,10 +976,12 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// A saved strategy is loaded as float32 sums, so analysis stays there.
 	const maxBytes = spot.source.maxBytes ?? DEFAULT_MAX_BYTES;
 	const { totalSlots, bytes } = spot.estimate;
+	const paged = options.outOfCore;
+	if (paged) paged.paging.check(spot, options);
 	const precision: Precision = options.analysisOnly
 		? 'f32'
 		: options.precision ??
-			(bytes <= maxBytes ? 'f32' : 'i16');
+			(paged ? 'i16' : bytes <= maxBytes ? 'f32' : 'i16');
 
 	// Planned before anything is allocated, so a bad option or a coarse spot
 	// that does not fit fails here; solved only once the real run exists.
@@ -936,17 +993,23 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 	const showdown = buildShowdownTable(spot.runouts, relevant);
-	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
+	const active = buildActiveLists(spot.runouts, spot.players, showdown);
+	const memoryLayout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
+	const pagedLayout = paged
+		? paged.paging.buildPagedLayout(spot.tree, spot.runouts, active, PRECISION_BYTES[precision], memoryLayout)
+		: null;
+	const layout = pagedLayout ? pagedLayout.layout : memoryLayout;
 	const weights = runoutWeights(spot.runouts);
 
 	// The WebAssembly engine, where it applies: 32-bit storage and a platform
 	// with WebAssembly SIMD. Decided before the thread count, because the
 	// browser build can only thread the engine.
 	const wantsEngine =
-		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false;
+		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false && !paged;
 	// Sampling's state is one thread's; see `Approximations.chanceSampling`.
+	// So is the pager's.
 	const samplingOptions = options.approximations?.chanceSampling;
-	const requested = samplingOptions ? 1 : resolveWorkers(options, wantsEngine);
+	const requested = samplingOptions || paged ? 1 : resolveWorkers(options, wantsEngine);
 	const plan = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
 
 	// Workers need the accumulators in shared memory. Allocating shared for a
@@ -956,7 +1019,6 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const width = PRECISION_BYTES[precision];
 	const quantised = precision === 'i16';
 
-	const active = buildActiveLists(spot.runouts, spot.players, showdown);
 	const hands = buildHandSpace(spot.runouts, spot.players, active);
 	if (samplingOptions && quantised) throw new Error('chanceSampling needs 32- or 64-bit storage');
 	const samplingPlan = samplingOptions ? planSampling(spot.tree, spot.runouts, active, layout, samplingOptions) : undefined;
@@ -1014,6 +1076,15 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		dcfr: (options.algorithm ?? 'dcfr') === 'dcfr',
 	};
 	if (samplingPlan) ctx.sampling = makeSampling(samplingPlan, engine?.sampling ?? undefined);
+	const pager = pagedLayout
+		? new paged!.paging.Pager(
+				pagedLayout.plan,
+				paged!.file,
+				makeRegretStore(precision, new ArrayBuffer(pagedLayout.plan.maxPageSlots * width)),
+				makeSumStore(precision, new ArrayBuffer(pagedLayout.plan.maxPageSlots * width)),
+			)
+		: null;
+	if (pager) ctx.pager = pager;
 
 	// Seeded before any worker starts, so they all see the inherited values.
 	let warm: WarmStartReport | null = null;
@@ -1026,6 +1097,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		}
 		if (options.warmStart) {
 			const source = options.warmStart;
+			if (source.solver.ctx.pager) throw new Error('A warm start copies storage, and an outOfCore run keeps its river in a file');
 			warm = options.warmCards
 				? warmStart(ctx, source.solver.ctx, false, options.warmCards)
 				: warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
@@ -1097,6 +1169,12 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			} finally {
 				real.close();
 			}
+		},
+		outOfCore() {
+			if (!pager) return null;
+			return {
+				residentBytes: layout.bytes, fileBytes: pager.plan.fileBytes, ...pager.stats,
+			};
 		},
 		snapshot(history = [], stoppedAt = 'iterations') {
 			return makeSolution(

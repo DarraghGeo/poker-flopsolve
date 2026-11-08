@@ -6,6 +6,7 @@
  * `scripts/browser-platform.ts`.
  */
 
+import { closeSync, fsyncSync, ftruncateSync, openSync, readSync, writeSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
@@ -106,4 +107,33 @@ export function threadsUnavailableReason(): string | null {
  */
 export async function prepareThreads(count?: number): Promise<number> {
 	return Math.max(1, Math.floor(count ?? defaultWorkerCount()));
+}
+
+/** A positioned-I/O file on disk, for `poker-flopsolve/out-of-core`. */
+export function openPageFile(path: string): {
+	read(buffer: Uint8Array, options: { at: number }): number;
+	write(buffer: Uint8Array, options: { at: number }): number;
+	truncate(size: number): void;
+	flush(): void;
+	close(): void;
+} {
+	const fd = openSync(path, 'w+');
+	// One call moves at most 2 GiB, so larger views go in pieces.
+	const STEP = 1 << 30;
+	const each = (move: (b: Uint8Array, at: number) => number, buffer: Uint8Array, at: number): number => {
+		let done = 0;
+		while (done < buffer.length) {
+			const n = move(buffer.subarray(done, Math.min(buffer.length, done + STEP)), at + done);
+			if (n <= 0) break;
+			done += n;
+		}
+		return done;
+	};
+	return {
+		read: (buffer, { at }) => each((b, p) => readSync(fd, b, 0, b.length, p), buffer, at),
+		write: (buffer, { at }) => each((b, p) => writeSync(fd, b, 0, b.length, p), buffer, at),
+		truncate: (size) => ftruncateSync(fd, size),
+		flush: () => fsyncSync(fd),
+		close: () => closeSync(fd),
+	};
 }
