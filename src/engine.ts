@@ -128,9 +128,11 @@ export function createEngine(
 	const compiledModule = compiledEngine(shared ? 'shared' : 'plain');
 	if (!compiledModule || !wasm) return null;
 	const { tree, runouts, layout, active, hands } = input;
-	// Its two 32-bit accumulators alone would pass wasm32's 4 GB, and its
-	// 32-bit offsets would wrap; the solve falls back to JavaScript.
-	if (layout.totalSlots * 8 > MAX_MEMORY) return null;
+	// Its two 32-bit accumulators alone would pass wasm32's 4 GB, so no
+	// engine; checked before anything is built. Such a layout is also the
+	// only kind that holds offsets as Float64, which the engine's 32-bit
+	// offset table could not take.
+	if (layout.totalSlots * 8 > MAX_MEMORY || !(layout.offset instanceof Int32Array)) return null;
 	const threads = pool ? pool.threads : 1;
 
 	const flatten = (parts: readonly Int32Array[]): [Int32Array, Int32Array] => {
@@ -158,7 +160,7 @@ export function createEngine(
 	// Shared by every thread, in header order.
 	const common = [
 		add(tree.kind), add(tree.round), add(Uint8Array.from(tree.player, (p) => (p < 0 ? 255 : p))), add(tree.firstEdge),
-		add(tree.numEdges), add(tree.edgeChild), add(tree.payoff), add(Int32Array.from(layout.offset)), add(layout.rowStart),
+		add(tree.numEdges), add(tree.edgeChild), add(tree.payoff), add(layout.offset), add(layout.rowStart),
 		add(active.roundBase), add(active.start), add(Int32Array.from(active.count)), add(active.cardA), add(active.cardB),
 		add(active.strength), add(active.packed), add(Float32Array.from(active.multiplicity)), add(active.memberStart),
 		add(active.memberA), add(active.memberB), add(upRound), add(upStart), add(hands.up),
