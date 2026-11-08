@@ -176,14 +176,17 @@ export interface SpotConfig {
 	 * What is lost is recall: a player plays one strategy for every line that
 	 * met, though the ranges each line brings differ. Each history's regret is
 	 * weighted by how often the acting hand plays into it, which cut the cost
-	 * fourfold against plain CFR's sum. Measured against the exact solve
-	 * (0.25% of pot) on AsKh7d, pot 55, stack 975, one 50% size and an all-in
-	 * raise, after 300 iterations: river sharing 4.0% of pot exploitability
-	 * (in the full game: the strategy is one for every node, so this is
-	 * exact), per-combination root EV off by 0.67% of pot on average and
-	 * 6.8% at worst. Do not expect it to approach equilibrium; expect a
-	 * strategy a few percent of the pot from it, in a spot that otherwise
-	 * does not fit.
+	 * fourfold against plain CFR's sum. Measured on AsKh7d, pot 55, stack
+	 * 975, against the exact solve, 4 threads: with sizes 33/75/150%, an
+	 * all-in raise and two aggressions, 5.8 GiB became 1.22 GiB, and after
+	 * 400 iterations the strategy was 8.0% of pot exploitable, with
+	 * per-combination root EVs 0.72% of pot off on average and 2.5% at worst
+	 * (the exact solve: 0.28%). With one 50% size, 4.0% exploitable after
+	 * 300 iterations, EVs 0.67% off on average and 6.8% at worst.
+	 * Exploitability is measured in the full game, which the strategy covers
+	 * node by node, so it is exact. Do not expect it to approach
+	 * equilibrium: expect a strategy several percent of the pot from it, in
+	 * a spot that otherwise does not fit.
 	 *
 	 * `true` shares the river. See `ShareHistories` for the turn and for
 	 * lossier buckets.
@@ -204,8 +207,9 @@ export interface ShareHistories {
 	/**
 	 * First round shared, counted from the spot's first: from a flop, 1
 	 * shares the turn too. Default the river alone. The turn is about 2% of a
-	 * flop spot's storage, and sharing it measured less accurate (5.7% of pot
-	 * exploitability against 4.0%), so it is rarely worth it.
+	 * flop spot's storage, and sharing it measured less accurate (9.4% of pot
+	 * exploitability against 8.0%, and 5.7% against 4.0%), so it is rarely
+	 * worth it.
 	 */
 	readonly fromRound?: number;
 	/**

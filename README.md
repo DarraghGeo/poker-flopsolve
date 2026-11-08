@@ -416,6 +416,35 @@ accuracy. On AhKdQc, 4 threads, to 0.3% of pot in the bucketed game:
 | | 1 | 1,396 | 4.9 s | 0.482% |
 | | 3 | 1,088 | 4.2 s | 0.542% |
 
+### History sharing (approximate, for memory)
+
+`shareHistories: true` keeps one set of river regrets and strategy sums for every betting
+line that reaches the river with the same pot. With pot-fraction sizes many lines meet:
+check, bet, call and bet, call, and every raise line taken in either order. Their river
+subtrees are identical, so their nodes can share storage. Each line is still walked with
+its own reach, so an iteration costs what it did; only storage shrinks. Off by default.
+
+It is lossy. A player plays one river strategy for every line that met, though each line
+brings different ranges. The strategy is still one for the whole game, so
+`exploitabilityPercent()` measures it exactly. Each line's regret is weighted by how often
+the hand plays into it (`weighting: 'reach'`, the default), which cost four times less
+than plain CFR's sum. Bench ranges, As Kh 7d, pot 55, stack 975, 4 threads, root EVs
+against the exact solve:
+
+| Tree | Storage, f32 | Exploitability | Root EV error, mean / max | Iterations |
+|---|---|---|---|---|
+| 3 sizes, all-in raise, 2 aggressions (exact: 0.28%) | 5.8 GiB → 1.22 GiB | 8.0% of pot | 0.72% / 2.5% of pot | 400 |
+| 1 size, all-in raise, 2 aggressions (exact: 0.25%) | 0.39 GiB → 0.14 GiB | 4.0% of pot | 0.67% / 6.8% of pot | 300 |
+
+On the three-size tree with a 75% raise and three aggressions, which does not fit
+otherwise, 173 river starts collapse to 23: 17.2 GiB becomes 2.9 GiB at 32 bits, and
+8.7 GiB becomes 1.5 GiB at 16. Expect a strategy a few percent of the pot from
+equilibrium, with EVs a little under 1% off on average, in a spot that would not
+otherwise fit. `{ fromRound: 1 }` shares the turn too, which saves about 1% more and
+measured less accurate (9.4% on the first tree). `{ spr: w }` also merges subtrees of one
+shape whose stack-to-pot ratios fall in a log-bucket of width `w`. That saves up to twice
+as much on three-size trees but is much lossier: 20% of pot at `w = 4`.
+
 ### Chance sampling (opt-in)
 
 `approximations: { chanceSampling: {} }` walks each turn and river deal on only some

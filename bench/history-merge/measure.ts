@@ -4,7 +4,9 @@
  *   node --import tsx bench/history-merge/measure.ts --spot M3 --variants exact,river,spr0.25 --iters 300
  *
  * The reference is the unshared spot solved to `--target` % of pot (default
- * 0.3), cached in `results/ref-<spot>.json`. Each variant runs `--iters`
+ * 0.3), cached in `results/ref-<spot>.json`; `--target none` skips it, for
+ * a spot whose exact solve does not fit, and reports exploitability alone.
+ * Each variant runs `--iters`
  * iterations and reports, at checkpoints: exploitability in the full game
  * (the shared strategy is one for every node, so this is exact), and the
  * error of per-combination root EVs against the reference, in % of pot —
@@ -12,8 +14,9 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { createRun, defineSpot } from '../../src/index.ts';
-import type { SolveOptions, SpotConfig } from '../../src/index.ts';
+import { COMBO_CARDS, COMBOS, createRun, defineSpot } from '../../src/index.ts';
+import type { SolveOptions, SolveRun, SpotConfig } from '../../src/index.ts';
+import { ActionKind } from '../../src/tree.ts';
 
 const OOP = 'AA-22,AKs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,AKo-ATo,KQo-KJo';
 const IP = 'TT-22,AQs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,76s,AQo-ATo,KQo';
@@ -53,6 +56,7 @@ const name = args.spot ?? 'M3';
 const config = SPOTS[name];
 const workers = Number(args.workers ?? 4);
 const target = Number(args.target ?? 0.3);
+const noReference = args.target === 'none';
 const iterations = Number(args.iters ?? 300);
 const precision = (args.precision ?? undefined) as SolveOptions['precision'];
 const engine = args.engine === 'js' ? ('js' as const) : undefined;
@@ -66,9 +70,73 @@ interface Reference {
 	seconds: number;
 	weights: number[][];
 	evs: number[][];
+	/** Out of position's EV in chips for each root action, per combination; absent in older files. */
+	actions?: number[][];
 }
 
-function reference(): Reference {
+/**
+ * Out of position's EV in chips per combination after each root action,
+ * under the average strategy: the value of opening with that action.
+ */
+function rootActions(run: SolveRun): number[][] {
+	const { spot, solver } = run;
+	const tree = spot.tree;
+	const me = new Float64Array(COMBOS);
+	const opp = new Float64Array(COMBOS);
+	for (const combo of spot.players[0].combos) me[combo] = spot.players[0].weights[combo];
+	for (const combo of spot.players[1].combos) opp[combo] = spot.players[1].weights[combo];
+	// Compatible opponent mass, which turns a counterfactual value into chips per dealt hand.
+	const mass = new Float64Array(COMBOS);
+	for (const combo of spot.players[0].combos) {
+		const a = COMBO_CARDS[combo * 2];
+		const b = COMBO_CARDS[combo * 2 + 1];
+		for (const h of spot.players[1].combos) {
+			const c = COMBO_CARDS[h * 2];
+			const d = COMBO_CARDS[h * 2 + 1];
+			if (c !== a && c !== b && d !== a && d !== b) mass[combo] += opp[h];
+		}
+	}
+	const scale = solver.ctx.runoutWeight[0];
+	const out: number[][] = [];
+	for (let e = 0; e < tree.numEdges[0]; e++) {
+		const child = tree.edgeChild[tree.firstEdge[0] + e];
+		const values = solver.valuesAt(child, 0, 0, me, opp, solver.rootLive, solver.rootCount);
+		out.push(Array.from(values, (v, combo) => (mass[combo] > 0 ? v / (mass[combo] * scale) : 0)));
+	}
+	return out;
+}
+
+/**
+ * Against the reference's root actions: the range-weighted mean error of
+ * each action's EV in % of pot, and how much of the range picks the same
+ * bet size as best among the sizes it can bet.
+ */
+function actionError(ref: Reference, run: SolveRun, values: number[][]): { mean: number; agree: number } {
+	const tree = run.spot.tree;
+	const bets: number[] = [];
+	for (let e = 0; e < tree.numEdges[0]; e++) {
+		if (tree.edgeAction[tree.firstEdge[0] + e] >= ActionKind.Bet) bets.push(e);
+	}
+	let sum = 0;
+	let mass = 0;
+	let agree = 0;
+	let weight = 0;
+	for (let combo = 0; combo < COMBOS; combo++) {
+		const w = ref.weights[0][combo];
+		if (!(w > 0) || ref.evs[0][combo] === 0) continue;
+		for (let a = 0; a < values.length; a++) {
+			sum += w * (100 * Math.abs(values[a][combo] - ref.actions![a][combo])) / pot;
+			mass += w;
+		}
+		const best = (v: number[][]): number => bets.reduce((x, y) => (v[y][combo] > v[x][combo] ? y : x));
+		weight += w;
+		if (best(values) === best(ref.actions!)) agree += w;
+	}
+	return { mean: sum / mass, agree: (100 * agree) / weight };
+}
+
+function reference(): Reference | null {
+	if (noReference) return null;
 	const file = new URL(`ref-${name}.json`, dir);
 	if (existsSync(file)) return JSON.parse(readFileSync(file, 'utf8')) as Reference;
 	const spot = defineSpot(config);
@@ -87,6 +155,7 @@ function reference(): Reference {
 		seconds: (performance.now() - started) / 1000,
 		weights: [0, 1].map((p) => Array.from(spot.players[p].weights)),
 		evs: [0, 1].map((p) => Array.from(solution.handEvs(p as 0 | 1))),
+		actions: rootActions(run),
 	};
 	run.close();
 	writeFileSync(file, JSON.stringify(ref));
@@ -94,7 +163,8 @@ function reference(): Reference {
 }
 
 /** Range-weighted mean and the largest error over combos weighted ≥ 1%, in % of pot. */
-function evError(ref: Reference, evs: Float64Array[]): { mean: number; max: number } {
+function evError(ref: Reference | null, evs: Float64Array[]): { mean: number; max: number } {
+	if (ref === null) return { mean: Number.NaN, max: Number.NaN };
 	let sum = 0;
 	let mass = 0;
 	let max = 0;
@@ -118,10 +188,12 @@ function peakRss(): number {
 
 const ref = reference();
 console.log(
-	`\n## ${name}: reference ${ref.exploitability.toFixed(3)}% of pot after ${ref.iterations} iterations (${ref.seconds.toFixed(0)} s, ${workers} threads)`,
+	ref
+		? `\n## ${name}: reference ${ref.exploitability.toFixed(3)}% of pot after ${ref.iterations} iterations (${ref.seconds.toFixed(0)} s, ${workers} threads)`
+		: `\n## ${name}: no reference`,
 );
-console.log('| variant | storage f32 | storage i16 | iterations | exploitability % | EV MAE % pot | EV max % pot | s/iter | engine | peak RSS |');
-console.log('|---|---|---|---|---|---|---|---|---|---|');
+console.log('| variant | storage f32 | storage i16 | iterations | exploitability % | EV MAE % pot | EV max % pot | root action EV MAE | same best size | s/iter | engine | peak RSS |');
+console.log('|---|---|---|---|---|---|---|---|---|---|---|---|');
 const checkpoints = (args.checkpoints ?? `${iterations}`).split(',').map(Number);
 for (const variant of (args.variants ?? 'exact').split(',')) {
 	const spot = defineSpot({ ...config, shareHistories: VARIANTS[variant] });
@@ -134,9 +206,11 @@ for (const variant of (args.variants ?? 'exact').split(',')) {
 		const solution = run.snapshot();
 		const error = evError(ref, [solution.handEvs(0), solution.handEvs(1)]);
 		const gib = (bytes: number): string => `${(bytes / 2 ** 30).toFixed(2)} GiB`;
+		const actions = ref?.actions ? actionError(ref, run, rootActions(run)) : null;
+		const actionColumns = actions ? `${actions.mean.toFixed(3)} | ${actions.agree.toFixed(1)}%` : '– | –';
 		console.log(
 			`| ${variant} | ${gib(spot.estimate.bytes)} | ${gib(spot.estimate.compressedBytes)} | ${at} | ${run.exploitabilityPercent().toFixed(3)} | ` +
-				`${error.mean.toFixed(3)} | ${error.max.toFixed(2)} | ${(elapsed / 1000 / at).toFixed(2)} | ${run.engine} | ${gib(peakRss())} |`,
+				`${error.mean.toFixed(3)} | ${error.max.toFixed(2)} | ${actionColumns} | ${(elapsed / 1000 / at).toFixed(2)} | ${run.engine} | ${gib(peakRss())} |`,
 		);
 	}
 	run.close();
