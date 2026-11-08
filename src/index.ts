@@ -119,6 +119,14 @@ export interface SpotConfig {
 	 * with 0.1, sizes 0.33 and 0.4 become one 0.365. Default 0, none.
 	 */
 	readonly mergeSizes?: number;
+	/**
+	 * Solve raises other than the shove only over opening bets of these
+	 * sizes, as `betSizes` lists them; facing any other bet the tree offers
+	 * fold, call and, with `allowAllIn`, the shove. An approximation of the
+	 * game with raises over every bet: see `Approximations` on action
+	 * translation. Unset, raises over every bet.
+	 */
+	readonly raiseOver?: readonly BetSize[];
 	/** Refuse a range wider than this many combinations. */
 	readonly maxCombos?: number;
 	/**
@@ -323,6 +331,7 @@ export function defineSpot(config: SpotConfig): Spot {
 			allInThreshold: config.allInThreshold,
 			noDonk: config.noDonk,
 			mergeSizes: config.mergeSizes,
+			raiseOver: config.raiseOver,
 			chipScale,
 			minRaiseUnits: chipScale,
 		},
