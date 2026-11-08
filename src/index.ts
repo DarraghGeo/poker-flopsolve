@@ -14,6 +14,7 @@ import type { PerPlayer } from './tree.ts';
 import { ACTION_LABELS, ActionKind, buildTree, forPlayer, isPerPlayer, mapPlayers, NodeKind, raisesPerRound } from './tree.ts';
 import type { Runouts } from './runouts.ts';
 import type { ResolvedBoard } from './runouts.ts';
+export { rankSwap } from './runouts.ts';
 import type { RunoutMerge } from './runouts.ts';
 import { boardAtRound, enumerateRunouts, rankSwap, resolveBoard } from './runouts.ts';
 import { suitSymmetries } from './abstraction.ts';
@@ -467,6 +468,22 @@ export interface SolveOptions {
 	 */
 	readonly warmStart?: Solution | SolveRun;
 	/**
+	 * For a `warmStart` from a solve of a different board: each card of this
+	 * spot's deck to the card of the old spot's it plays as, a permutation of
+	 * the 52 cards taking this board onto the old one. A rank swap (`6` and
+	 * `7` in every suit, say) carries a solve of AsKh6d onto AsKh7d with every
+	 * hand keeping its role: 66 there is 77 here (`rankSwap` builds that map).
+	 * Hands and runouts relabel through it; whatever the old ranges lacked
+	 * starts cold. Unset, a warm start must come from the same board.
+	 *
+	 * Measured on the bench flop (AsKh7d, single-threaded, to 0.5% of pot):
+	 * 52 iterations cold, 8 warm from a 0.1% solve of AsKh6d, 20 from AsQh7d.
+	 * It pays only when the whole old solve is at hand: seeding the flop's
+	 * decisions alone, as a downloadable library could, saved nothing (see
+	 * `Approximations`).
+	 */
+	readonly warmCards?: Uint8Array;
+	/**
 	 * The iteration to carry on counting from, which sets how heavily DCFR
 	 * discounts the inherited regrets and how CFR+ weights the averages. Unset,
 	 * the old solve's own count: the new solve continues it. Lower it to let
@@ -738,7 +755,9 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	let offset = 0;
 	if (options.warmStart) {
 		const source = options.warmStart;
-		warm = warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
+		warm = options.warmCards
+			? warmStart(ctx, source.solver.ctx, false, options.warmCards)
+			: warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
 		offset = options.warmIteration ?? source.totalIterations;
 	}
 
