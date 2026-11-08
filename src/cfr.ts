@@ -29,6 +29,7 @@ import { pairValues } from './pairs.ts';
 import type { Kernels } from './kernels.ts';
 import { loadKernels } from './kernels.ts';
 import { NodeKind } from './tree.ts';
+import type { LineScale } from './lines.ts';
 
 /** Which combinations a player holds, and where each sits in storage. */
 export interface PlayerIndex {
@@ -108,6 +109,7 @@ export function buildLayout(
 	runouts: Runouts,
 	players: readonly [PlayerIndex, PlayerIndex],
 	bytesPerElement: number,
+	boards?: { readonly from: Int32Array; readonly to: Int32Array },
 ): Layout {
 	// How many of each player's hands each board leaves live: a block's rows.
 	const roundBase = new Int32Array(runouts.rounds + 1);
@@ -145,6 +147,21 @@ export function buildLayout(
 		const node = tree.decisionNodes[i];
 		const actions = tree.numEdges[node];
 		if (actions > maxActions) maxActions = actions;
+		if (boards) {
+			// Only the boards of the node's own line: blocks stay addressed by
+			// board index, shifted so that its first board starts here.
+			const round = tree.round[node];
+			const slot = (board: number): number => (roundBase[round] + board) * 2 + tree.player[node];
+			const end = boards.to[node] < runouts.counts[round]
+				? rowStart[slot(boards.to[node])]
+				: totals[round * 2 + tree.player[node]];
+			const begin = rowStart[slot(boards.from[node])];
+			offset[node] = total - actions * begin;
+			blockOffset[node] = blocks - boards.from[node];
+			total += actions * (end - begin);
+			blocks += boards.to[node] - boards.from[node];
+			continue;
+		}
 		offset[node] = total;
 		blockOffset[node] = blocks;
 		total += actions * totals[tree.round[node] * 2 + tree.player[node]];
@@ -195,6 +212,13 @@ export interface Context {
 	readonly sumScale: Float64Array | null;
 	readonly scratch: TerminalScratch;
 	readonly chipScale: number;
+	/**
+	 * With `SpotConfig.lineRunouts`: per chance node, the children table its
+	 * deal uses and the per-hand rescaling of its values (see `lines.ts`).
+	 * Unset, every deal uses `runouts.childStart`.
+	 */
+	readonly lineStarts?: readonly (Int32Array | null)[];
+	readonly lineScales?: readonly (LineScale | null)[];
 	/** Which combinations each player can hold on each board. */
 	readonly active: ActiveLists;
 	/** How hand-space vectors move between boards and meet at terminals. */
@@ -914,8 +938,9 @@ function traverse(
 
 		// Workers own contiguous slices of the boards at the shard round.
 		const sharded = nextRound === ctx.shardRound;
-		const first = runouts.childStart[nextRound][board];
-		const last = runouts.childStart[nextRound][board + 1];
+		const starts = ctx.lineStarts === undefined ? runouts.childStart[nextRound] : ctx.lineStarts[node]!;
+		const first = starts[board];
+		const last = starts[board + 1];
 		const from = sharded && ctx.shardStart > first ? ctx.shardStart : first;
 		const to = sharded && ctx.shardEnd < last ? ctx.shardEnd : last;
 
@@ -963,6 +988,13 @@ function traverse(
 		}
 		if (lists.packed[mySlot]) {
 			for (let i = 0; i < myCount; i++) out[i] /= lists.multiplicity[myFrom + i];
+		}
+		if (ctx.lineScales !== undefined) {
+			const scale = ctx.lineScales[node];
+			if (scale !== null) {
+				const at = myFrom - scale.base;
+				for (let i = 0; i < myCount; i++) out[i] *= scale.values[at + i];
+			}
 		}
 		return out;
 	}

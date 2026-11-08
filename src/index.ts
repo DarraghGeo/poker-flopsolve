@@ -18,6 +18,9 @@ export { rankSwap } from './runouts.ts';
 import type { RunoutMerge } from './runouts.ts';
 import { boardAtRound, enumerateRunouts, rankSwap, resolveBoard } from './runouts.ts';
 import { suitSymmetries } from './abstraction.ts';
+import type { LineRunouts } from './lines.ts';
+import { DEFAULT_LINE_RUNOUTS, enumerateLineRunouts, lineBoards, lineScales, lineStarts } from './lines.ts';
+export type { LineRunouts } from './lines.ts';
 import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
 import { buildHandSpace } from './hands.ts';
@@ -157,6 +160,55 @@ export interface SpotConfig {
 	 * strategy in the real game, every card dealt. Default false.
 	 */
 	readonly runoutBuckets?: boolean | number;
+	/**
+	 * Deal coarser turn and river cards in the betting lines that are rarely
+	 * reached, and every card in the rest — an approximation that shrinks the
+	 * tree (issue #53). A chance node deals coarsely once the betting before
+	 * it, all streets so far, holds `aggressions` bets and raises or `raises`
+	 * raises, and every chance node below a coarse one does too. A coarse deal
+	 * stores one card per class of cards that pair, flush and straight the
+	 * board alike, with ranks folded in bands of `band`; each other card of
+	 * the class plays as it, hands unchanged. `true` is the recommended
+	 * `{ aggressions: 2, band: 3 }`. Off by default; unset, nothing changes.
+	 *
+	 * Measured on Ks 9s 4s with the round's three-size tree (pot 55, stack
+	 * 975, one raise size and all-in, three aggressions), 510 iterations on 4
+	 * threads against an exact solve to 0.30% of pot. Exploitability is in
+	 * the full game; EV error is per combination at the root, % of pot;
+	 * "size kept" is the share of the out-of-position range whose best root
+	 * bet size is still the exact solve's:
+	 *
+	 * | rule | f32 storage | exploitability | EV error mean (oop / ip) | worst | size kept |
+	 * |---|---|---|---|---|---|
+	 * | exact | 3.75 GiB | 0.30% | | | |
+	 * | `true` (aggressions 2, band 3) | 2.66 GiB | 3.8% | 0.6 / 0.8 | 2.6 / 3.5 | 100% |
+	 * | aggressions 2, band 13 | 1.68 GiB | 13.7% | 2.2 / 2.4 | 9.6 / 14.7 | 97% |
+	 * | raises 1, band 13 | 2.40 GiB | 8.0% | 1.9 / 3.1 | 7.0 / 11.2 | 100% |
+	 *
+	 * Rare lines are cheap to reach but not cheap to get wrong: raise lines
+	 * held 49% of the storage and 1.4% of the river deals reached, yet a best
+	 * response walks into a coarse subtree, and its strategy there shifts what
+	 * the earlier streets play. On the round's rainbow target (As Kh 7d, 8.7
+	 * GiB at 16 bits) the rules project to 3.9 GiB (`true`), 3.0 GiB
+	 * (aggressions 2, band 13) and 5.0 GiB (raises 1, band 13) at 16 bits;
+	 * `bench/history-runouts/plan.ts` projects any spot, and `census.ts`
+	 * splits a tree's storage by line. It multiplies with storage-side
+	 * savings rather than replacing them.
+	 *
+	 * Coarse deals miscount card removal: a hand holding the stored card is
+	 * dead on it and misses its whole class, and each hand's value is rescaled
+	 * to the deals it really has, so the game it solves is not quite zero-sum
+	 * and its own `exploitabilityPercent()` can read low or below zero; read
+	 * `trueExploitabilityPercent()`, which plays the strategy in the real
+	 * game, every card dealt (a real hand dead in the stored deal plays the
+	 * swapped hand's strategy, or uniformly). Board indices are per line:
+	 * `strategyAt`, `reachAt` and `subgameAt` take a board of the node's own
+	 * line, and `resolveBoard` takes the node to resolve a real board for.
+	 * JavaScript engine only (threaded in Node; one thread in the browser,
+	 * whose threads run the WebAssembly engine); not with `chanceSampling`,
+	 * `coarseStart` or a `warmStart` into it.
+	 */
+	readonly lineRunouts?: boolean | LineRunouts;
 }
 
 /** Projected cost of solving a spot. */
@@ -232,8 +284,10 @@ export interface Spot {
 	 * is not stored, and this is how to read it.
 	 *
 	 * @param board the spot's board followed by the cards dealt, in order
+	 * @param node with `lineRunouts`, a node whose line to read the board in:
+	 *   each line stores its own boards. Unset, the line of checks and calls.
 	 */
-	resolveBoard(board: string | readonly number[]): ResolvedBoard;
+	resolveBoard(board: string | readonly number[], node?: number): ResolvedBoard;
 }
 
 /**
@@ -304,13 +358,11 @@ export function defineSpot(config: SpotConfig): Spot {
 		config.isomorphism === false || board.length === 5
 			? undefined
 			: suitSymmetries(board, [players[0].weights, players[1].weights]);
-	const runouts = enumerateRunouts(
-		board,
-		symmetries,
+	const merge =
 		config.runoutBuckets && board.length < 5
 			? rangeRankMerge(players, config.runoutBuckets === true ? DEFAULT_BUCKET_GAP : config.runoutBuckets)
-			: undefined,
-	);
+			: undefined;
+	let runouts = enumerateRunouts(board, symmetries, merge);
 
 	const tree = buildTree(
 		{
@@ -328,12 +380,18 @@ export function defineSpot(config: SpotConfig): Spot {
 		},
 		runouts,
 	);
+	// The tree needs only the number of rounds; the line runouts need the tree.
+	if (config.lineRunouts && board.length < 5) {
+		const rule = config.lineRunouts === true ? DEFAULT_LINE_RUNOUTS : config.lineRunouts;
+		runouts = enumerateLineRunouts(board, symmetries, merge, tree, rule);
+	}
+	const boards = runouts.lines ? lineBoards(runouts.lines, tree) : undefined;
 
-	const layout = buildLayout(tree, runouts, players, 4);
+	const layout = buildLayout(tree, runouts, players, 4, boards);
 	const last = runouts.rounds - 1;
 	const showdownBytes = runouts.counts[last] * (2 * COMBOS + COMBOS + 1) * 2;
 	const bytes = layout.bytes + showdownBytes;
-	const compressedBytes = buildLayout(tree, runouts, players, 2).bytes + showdownBytes;
+	const compressedBytes = buildLayout(tree, runouts, players, 2, boards).bytes + showdownBytes;
 
 	const suggestions: string[] = [];
 	if (compressedBytes > maxBytes) {
@@ -369,8 +427,9 @@ export function defineSpot(config: SpotConfig): Spot {
 		potUnits: Math.round(config.pot * chipScale),
 		stackUnits: Math.round(config.stack * chipScale),
 		source: config,
-		resolveBoard(cards) {
-			return resolveBoard(runouts, typeof cards === 'string' ? parseCards(cards) : cards);
+		resolveBoard(cards, node) {
+			const starts = runouts.lines && node !== undefined ? lineStarts(runouts.lines, node) : undefined;
+			return resolveBoard(runouts, typeof cards === 'string' ? parseCards(cards) : cards, starts);
 		},
 	};
 }
@@ -1143,14 +1202,20 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 	const showdown = buildShowdownTable(spot.runouts, relevant);
-	const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
+	const lines = spot.runouts.lines;
+	const layout = buildLayout(
+		spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], lines ? lineBoards(lines, spot.tree) : undefined,
+	);
 	const weights = runoutWeights(spot.runouts);
 
 	// The WebAssembly engine, where it applies: 32-bit storage and a platform
 	// with WebAssembly SIMD. Decided before the thread count, because the
 	// browser build can only thread the engine.
 	const wantsEngine =
-		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false;
+		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false && !lines;
+	if (lines && (options.approximations?.chanceSampling || options.approximations?.coarseStart || options.warmStart)) {
+		throw new Error('lineRunouts does not combine with chanceSampling, coarseStart or a warmStart');
+	}
 	// Sampling's state is one thread's; see `Approximations.chanceSampling`.
 	const samplingOptions = options.approximations?.chanceSampling;
 	const requested = samplingOptions ? 1 : resolveWorkers(options, wantsEngine);
@@ -1221,6 +1286,11 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		dcfr: (options.algorithm ?? 'dcfr') === 'dcfr',
 	};
 	if (samplingPlan) ctx.sampling = makeSampling(samplingPlan, engine?.sampling ?? undefined);
+	if (lines) {
+		const writable = ctx as { lineStarts?: Context['lineStarts']; lineScales?: Context['lineScales'] };
+		writable.lineStarts = lines.chanceStart;
+		writable.lineScales = lineScales(spot.runouts, spot.tree, active, hands);
+	}
 
 	// Seeded before any worker starts, so they all see the inherited values.
 	let warm: WarmStartReport | null = null;
@@ -1294,7 +1364,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		},
 		trueExploitabilityPercent() {
 			if (!spot.runouts.approximate) return this.exploitabilityPercent();
-			const real = createRun(defineSpot({ ...spot.source, runoutBuckets: false }), {
+			const real = createRun(defineSpot({ ...spot.source, runoutBuckets: false, lineRunouts: undefined }), {
 				workers: threadCount,
 				precision,
 			});
@@ -1610,7 +1680,18 @@ function makeSolution(
 		return kind >= ActionKind.Bet ? `${ACTION_LABELS[kind]} ${amount}` : ACTION_LABELS[kind];
 	};
 
+	// With line runouts, each node stores only the boards of its own line.
+	const checkLineBoard = (node: number, board: number): void => {
+		const lines = spot.runouts.lines;
+		if (!lines) return;
+		const family = lines.families[lines.family[node]];
+		if (board < family.from || board >= family.to) {
+			throw new Error(`Board ${board} is not one node ${node}'s line deals: its boards are ${family.from} to ${family.to - 1}`);
+		}
+	};
+
 	const reachAt = (node: number, board: number, player: 0 | 1): Float64Array => {
+		checkLineBoard(node, board);
 		const index = spot.players[player];
 		const reach = new Float64Array(COMBOS);
 		for (let i = 0; i < index.count; i++) reach[index.combos[i]] = index.weights[index.combos[i]];
@@ -1659,6 +1740,7 @@ function makeSolution(
 		},
 		strategyAt(node, board) {
 			if (tree.kind[node] !== NodeKind.Decision) throw new Error(`Node ${node} is not a decision`);
+			checkLineBoard(node, board);
 			const owner = tree.player[node] as 0 | 1;
 			const { actions, probs } = solver.averageStrategyAt(node, board);
 			const names: string[] = [];
@@ -1685,6 +1767,7 @@ function makeSolution(
 			if (board < 0 || board >= spot.runouts.counts[round]) {
 				throw new Error(`Board ${board} is out of range for round ${round}`);
 			}
+			checkLineBoard(node, board);
 
 			// A round opens with both players level, so what is in the middle
 			// is dead money from here on and the stacks have shrunk equally.
