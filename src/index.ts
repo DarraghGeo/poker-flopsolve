@@ -512,9 +512,9 @@ export interface Approximations {
 	 * wider bench flop. A monotone flop, which a cold solve already settles
 	 * within 15 s, reached 0.5% error in half the time but ended a little
 	 * looser, 0.11% against 0.04%. To an exploitability target in Node it
-	 * was faster on all three: 0.1% on the monotone flop in 13.1 s instead of
-	 * 14.9, 0.2% on the wide one in 14.5 instead of 19.1, 0.3% on AsKh7d in
-	 * 19.4 instead of 26.2. Around 40 iterations suits a flop; far fewer
+	 * was faster on all three: 0.1% on the monotone flop in 14.5 s instead of
+	 * 15.3, 0.2% on the wide one in 15.5 instead of 19.3, 0.3% on AsKh7d in
+	 * 23.8 instead of 31.5. Around 40 iterations suits a flop; far fewer
 	 * leave the coarse solve too rough to help, far more spend the time
 	 * where the real solve would have spent it better.
 	 *
@@ -527,7 +527,11 @@ export interface Approximations {
 	 * `warmIteration` says otherwise. Both solves are in memory at the
 	 * switch, the coarse one about 60% the size of the real one on a flop. Where bucketing folds no runouts
 	 * together — a river spot, ranges with no rank symmetry — it does
-	 * nothing. Not with `warmStart`, which it already is.
+	 * nothing. Not with `warmStart`, which it already is. The coarse solve
+	 * runs inside `createRun`, all at once and without progress reports, so
+	 * a caller stepping a run to stay responsive should keep it short; it
+	 * must fit in what `maxBytes` leaves beside the real spot, at 16 bits if
+	 * not 32, or `createRun` refuses.
 	 */
 	readonly coarseStart?: CoarseStart;
 	/*
@@ -565,7 +569,7 @@ export interface CoarseStart {
 	 * The coarse spot's `runoutBuckets`, at least the spot's own. Default 3;
 	 * a wider gap folds more runouts only where the ranges allow it.
 	 */
-	readonly runoutBuckets?: true | number;
+	readonly runoutBuckets?: number;
 }
 
 export type Algorithm = 'cfr+' | 'dcfr';
@@ -709,7 +713,9 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		: options.precision ??
 			(bytes <= maxBytes ? 'f32' : 'i16');
 
-	const coarseSettings = checkCoarseStart(options);
+	// Planned before anything is allocated, so a bad option or a coarse spot
+	// that does not fit fails here; solved only once the real run exists.
+	const coarsePlan = planCoarseStart(spot, options, precision, maxBytes);
 
 	// Hands neither player holds never carry reach, so they need no ranking.
 	const relevant = new Uint8Array(COMBOS);
@@ -784,7 +790,13 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// Seeded before any worker starts, so they all see the inherited values.
 	let warm: WarmStartReport | null = null;
 	let offset = 0;
-	const coarse = coarseSettings ? coarseStart(spot, options, coarseSettings) : null;
+	let coarse: SolveRun | null = null;
+	try {
+		coarse = coarsePlan ? solveCoarse(coarsePlan, options) : null;
+	} catch (error) {
+		engine?.close();
+		throw error;
+	}
 	if (options.warmStart) {
 		const source = options.warmStart;
 		warm = warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
@@ -793,13 +805,18 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		// Regrets only: the bucketed game's average would have to be outweighed.
 		try {
 			warm = warmStart(ctx, coarse.solver.ctx, false);
+		} catch (error) {
+			engine?.close();
+			throw error;
 		} finally {
 			coarse.close();
 		}
 		offset = options.warmIteration ?? coarse.totalIterations;
+
 	}
 
 	const solver = makeSolver(ctx);
+	if (coarse) coarseMs.set(solver, coarsePlan!.elapsed);
 	// The engine runs its own threads; the JavaScript pool is for the rest.
 	const pool: Pool | null = plan && !engine
 		? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
@@ -857,50 +874,81 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 /** Bucket gap of the coarse spot when `CoarseStart.runoutBuckets` is unset. */
 const DEFAULT_COARSE_GAP = 3;
 
+/** A coarse start to run: its spot and settings, and once solved, how long it took. */
+interface CoarsePlan {
+	readonly spot: Spot;
+	readonly iterations: number;
+	readonly precision: Precision;
+	elapsed: number;
+}
+
+/** Milliseconds a run's coarse start took, by the real run's solver, for `solve()`'s clock. */
+const coarseMs = new WeakMap<Solver, number>();
+
 /**
- * `approximations.coarseStart`, validated before anything is allocated, or
- * null when unset.
+ * Validate `approximations.coarseStart` and define its spot, or null when
+ * there is nothing to solve: the option unset, no iterations, or bucketing
+ * folds no more runouts than the spot itself does.
+ *
+ * The coarse spot must fit in what `maxBytes` leaves beside the real one,
+ * since both are in memory at the switch; at 32 bits if it can, else 16.
  */
-function checkCoarseStart(options: SolveOptions): CoarseStart | null {
+function planCoarseStart(spot: Spot, options: SolveOptions, precision: Precision, maxBytes: number): CoarsePlan | null {
 	const settings = options.approximations?.coarseStart;
 	if (!settings) return null;
-	const { iterations } = settings;
+	const { iterations, runoutBuckets = DEFAULT_COARSE_GAP } = settings;
 	if (!(Number.isInteger(iterations) && iterations >= 0)) {
 		throw new Error(`coarseStart.iterations must be a whole number of iterations; got ${iterations}`);
 	}
+	if (!(Number.isInteger(runoutBuckets) && runoutBuckets >= 1)) {
+		throw new Error(`coarseStart.runoutBuckets must be a rank gap of 1 or more; got ${runoutBuckets}`);
+	}
 	if (options.warmStart) throw new Error('coarseStart is a warm start of its own; give one or the other, not both');
 	if (options.analysisOnly) throw new Error('coarseStart solves; an analysis-only run must never be stepped');
-	return settings;
+
+	// Never a narrower gap than the spot already uses, and only a wider one helps.
+	const own = spot.source.runoutBuckets;
+	const ownGap = own === true ? DEFAULT_BUCKET_GAP : own || 0;
+	if (iterations === 0 || spot.board.length === 5 || runoutBuckets <= ownGap) return null;
+	const coarseSpot = defineSpot({ ...spot.source, runoutBuckets });
+	if (coarseSpot.runouts.counts.at(-1)! >= spot.runouts.counts.at(-1)!) return null;
+
+	const used = precision === 'i16' ? spot.estimate.compressedBytes : spot.estimate.bytes * (precision === 'f64' ? 2 : 1);
+	const left = maxBytes - used;
+	const coarsePrecision: Precision =
+		options.precision ?? (coarseSpot.estimate.bytes <= left ? 'f32' : 'i16');
+	const needs =
+		coarsePrecision === 'i16'
+			? coarseSpot.estimate.compressedBytes
+			: coarseSpot.estimate.bytes * (coarsePrecision === 'f64' ? 2 : 1);
+	if (needs > left) {
+		throw new Error(
+			`coarseStart needs ~${formatBytes(needs)} beside this spot's ~${formatBytes(used)}, ` +
+				`over the ${formatBytes(maxBytes)} limit; raise maxBytes or leave coarseStart off`,
+		);
+	}
+	return { spot: coarseSpot, iterations, precision: coarsePrecision, elapsed: 0 };
 }
 
-/**
- * The solved coarse run behind `approximations.coarseStart`, or null when
- * there is none to solve: no iterations, or bucketing folds no runouts
- * together, so the coarse spot would be the real one.
- */
-function coarseStart(spot: Spot, options: SolveOptions, settings: CoarseStart): SolveRun | null {
-	const { iterations, runoutBuckets = DEFAULT_COARSE_GAP } = settings;
-	if (iterations === 0) return null;
-	// Never a narrower gap than the spot already uses.
-	const own = spot.source.runoutBuckets;
-	const gap = Math.max(runoutBuckets === true ? DEFAULT_BUCKET_GAP : runoutBuckets, own === true ? DEFAULT_BUCKET_GAP : own || 0);
-	const coarseSpot = defineSpot({ ...spot.source, runoutBuckets: gap });
-	if (coarseSpot.runouts.counts.at(-1)! >= spot.runouts.counts.at(-1)!) return null;
+/** Solve a planned coarse start, returning the run to warm-start from. */
+function solveCoarse(plan: CoarsePlan, options: SolveOptions): SolveRun {
+	const started = Date.now();
 	const { coarseStart: _, ...rest } = options.approximations!;
-	const run = createRun(coarseSpot, {
+	const run = createRun(plan.spot, {
 		workers: options.workers,
-		precision: options.precision,
+		precision: plan.precision,
 		algorithm: options.algorithm,
 		simd: options.simd,
 		engine: options.engine,
 		approximations: rest,
 	});
 	try {
-		run.step(iterations);
+		run.step(plan.iterations);
 	} catch (error) {
 		run.close();
 		throw error;
 	}
+	plan.elapsed = Date.now() - started;
 	return run;
 }
 
@@ -977,11 +1025,14 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 	const iterations = options.iterations ?? 500;
 	const target = options.targetPercent ?? 0;
 	const fixed = options.exploitEvery ?? 0;
-	const begun = Date.now();
 	const run = createRun(spot, options);
 	const history: Progress[] = [];
 	// A coarse start solves inside createRun, and that is solving time too.
-	const started = options.approximations?.coarseStart ? begun : Date.now();
+	const started = Date.now() - (coarseMs.get(run.solver) ?? 0);
+	// Where DCFR's count stands before this run's first iteration, for
+	// predicting the target; only a coarse start shifts it, as a warm start's
+	// checks were always scheduled from zero.
+	const before = coarseMs.has(run.solver) ? run.totalIterations : 0;
 
 	try {
 		return runAll();
@@ -1029,13 +1080,13 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 				// Aim just short of where the target is predicted to be met, so
 				// the overshoot is a few iterations rather than a whole doubling.
 				const predicted = predictCrossing(
-					prevIteration,
+					before + prevIteration,
 					prevExploitability,
-					done,
+					before + done,
 					info.exploitability,
 					(target * spot.potUnits) / (100 * spot.chipScale),
 				);
-				const aim = predicted > 0 ? predicted * 0.95 : done * MAX_GROWTH;
+				const aim = predicted > 0 ? predicted * 0.95 - before : done * MAX_GROWTH;
 				const bounded = Math.min(Math.max(aim, done * MIN_GROWTH), done * MAX_GROWTH);
 				next = Math.max(done + 1, Math.ceil(bounded));
 				prevIteration = done;

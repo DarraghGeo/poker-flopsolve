@@ -166,7 +166,7 @@ export function timedSolve(
 		clock += performance.now() - started;
 		return value;
 	};
-	// The real spot's run, for its weights; building it is not timed.
+	// Measured, paused out of the clock.
 	const measureAgainst = (run: SolveRun, stage: 'coarse' | 'fine', iterations: number): void => {
 		const evs = rootEvs(run);
 		samples.push({
@@ -203,7 +203,7 @@ export function timedSolve(
 			approximations: schedule.coarseStart ? { coarseStart: schedule.coarseStart } : undefined,
 		}),
 	);
-	coarseIterations = fine.totalIterations - fine.completed;
+	if (schedule.coarseStart) coarseIterations = fine.totalIterations - fine.completed;
 	if (fineFrom && schedule.averages) timed(() => warmStart(fine.solver.ctx, fineFrom.solver.ctx, true));
 	fineFrom?.close();
 	runFor(fine, budgetMs, 'fine', () => coarseIterations + fine.completed);

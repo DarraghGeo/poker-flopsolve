@@ -20,6 +20,7 @@ for (const name of names) {
 	const started = performance.now();
 	const solution = solve(defineSpot(config), { workers: 'auto', targetPercent: 0.1, iterations: 3000 });
 	const seconds = (performance.now() - started) / 1000;
+	if (solution.stoppedAt !== 'target') throw new Error(`${name} did not reach 0.1% of pot; not a reference`);
 	// Per-combination values are read on one thread: copy the strategy over.
 	const copy = createRun(defineSpot(config), { workers: 1, warmStart: solution });
 	const evs = rootEvs(copy);

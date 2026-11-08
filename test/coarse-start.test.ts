@@ -100,8 +100,36 @@ describe('coarse start', () => {
 			expect(() => createRun(defineSpot(flop), { ...ONE, approximations: { coarseStart: { iterations: -1 } } })).toThrow(
 				/coarseStart/,
 			);
+			expect(() =>
+				createRun(defineSpot(flop), { ...ONE, approximations: { coarseStart: { iterations: 5, runoutBuckets: Number.NaN } } }),
+			).toThrow(/coarseStart/);
+			expect(() =>
+				createRun(defineSpot(flop), { ...ONE, approximations: { coarseStart: { iterations: 5, runoutBuckets: 0 } } }),
+			).toThrow(/coarseStart/);
 		} finally {
 			before.close();
 		}
+	});
+
+	it('refuses a coarse spot that does not fit beside the real one under maxBytes', () => {
+		const spot = defineSpot(flop);
+		const tight = defineSpot({ ...flop, maxBytes: spot.estimate.bytes + 1024 });
+		expect(() => createRun(tight, { ...ONE, approximations: { coarseStart: { iterations: 5 } } })).toThrow(/maxBytes/);
+		// Room for both at 16 bits: the coarse spot drops to it rather than refuse.
+		const coarse = defineSpot({ ...flop, runoutBuckets: 3 });
+		const roomy = defineSpot({ ...flop, maxBytes: spot.estimate.bytes + coarse.estimate.compressedBytes + 1024 });
+		const run = createRun(roomy, { ...ONE, approximations: { coarseStart: { iterations: 2 } } });
+		try {
+			expect(run.totalIterations).toBe(2);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('counts the coarse solve in solve()\'s elapsed time', () => {
+		const solution = solve(defineSpot(flop), { ...ONE, iterations: 1, exploitEvery: 1, approximations: { coarseStart: { iterations: 30 } } });
+		const cold = solve(defineSpot(flop), { ...ONE, iterations: 1, exploitEvery: 1 });
+		// Thirty coarse iterations dwarf one real iteration and its check.
+		expect(solution.history[0].elapsedMs).toBeGreaterThan(cold.history[0].elapsedMs * 3);
 	});
 });
