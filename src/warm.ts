@@ -58,10 +58,12 @@ export interface WarmStartReport {
 /**
  * Pair each decision node of `to` with its counterpart in `from`, or -1.
  */
-export function matchNodes(to: Tree, from: Tree): Int32Array {
+export function matchNodes(to: Tree, from: Tree, fromRoot = 0): Int32Array {
 	const match = new Int32Array(to.nodeCount).fill(-1);
+	// A subgame's rounds count from its own first one.
+	const shift = from.round[fromRoot];
 	const walk = (a: number, b: number): void => {
-		if (to.kind[a] !== from.kind[b] || to.round[a] !== from.round[b]) return;
+		if (to.kind[a] !== from.kind[b] || to.round[a] + shift !== from.round[b]) return;
 		if (to.kind[a] === NodeKind.Chance) {
 			walk(to.edgeChild[to.firstEdge[a]], from.edgeChild[from.firstEdge[b]]);
 			return;
@@ -74,7 +76,7 @@ export function matchNodes(to: Tree, from: Tree): Int32Array {
 			if (other >= 0) walk(to.edgeChild[edge], from.edgeChild[other]);
 		}
 	};
-	walk(0, 0);
+	walk(0, fromRoot);
 	return match;
 }
 
@@ -147,14 +149,28 @@ function realCards(runouts: Runouts, round: number, board: number): number[] {
  * @param cards for a solve of a different board: each card of `to` to the card
  *   of `from` it plays as, a permutation of the deck taking `to`'s board onto
  *   `from`'s. Hands and dealt cards map through it too. Unset, the identity.
+ * @param fromNode for a subgame of `from`: the node of `from` where `to`
+ *   starts, a decision opening a betting round. `to`'s board is then that
+ *   node's board, `from`'s board followed by the cards dealt on the way.
+ *   Unset, the root. Not with `cards`.
  * @returns what matched
  * @throws if the boards differ, or `cards` does not take one onto the other
  */
-export function warmStart(to: Context, from: Context, averages: boolean, cards?: Uint8Array): WarmStartReport {
+export function warmStart(
+	to: Context,
+	from: Context,
+	averages: boolean,
+	cards?: Uint8Array,
+	fromNode = 0,
+): WarmStartReport {
 	const a = to.runouts.initial;
 	const b = from.runouts.initial;
-	if (cards) checkRelabelling(cards, a, b);
-	else if (a.length !== b.length || a.some((card, i) => card !== b[i])) {
+	// Rounds of `to` sit this many rounds into `from`.
+	const shift = from.tree.round[fromNode];
+	if (cards) {
+		if (fromNode !== 0) throw new Error('A subgame warm start cannot relabel cards');
+		checkRelabelling(cards, a, b);
+	} else if (a.length !== from.runouts.width[shift] || b.some((card, i) => card !== a[i])) {
 		throw new Error('A warm start must come from a solve of the same board, unless `warmCards` relabels one onto the other');
 	}
 	// A real board of `to` as `from` sees it: its own given board first, in
@@ -166,7 +182,7 @@ export function warmStart(to: Context, from: Context, averages: boolean, cards?:
 	for (let combo = 0; combo < COMBOS; combo++) {
 		comboOf[combo] = cards ? comboIndex(cards[COMBO_CARDS[combo * 2]], cards[COMBO_CARDS[combo * 2 + 1]]) : combo;
 	}
-	const match = matchNodes(to.tree, from.tree);
+	const match = matchNodes(to.tree, from.tree, fromNode);
 	const { tree } = to;
 	const width = to.layout.maxActions * COMBOS;
 	const oldRegret = new Float64Array(width);
@@ -197,7 +213,7 @@ export function warmStart(to: Context, from: Context, averages: boolean, cards?:
 		for (let board = 0; board < to.runouts.counts[round]; board++) {
 			const resolved = resolveBoard(from.runouts, asSource(realCards(to.runouts, round, board)));
 			// Blocks are laid out by position in each board's hand list.
-			const oldSlot = (from.active.roundBase[round] + resolved.board) * 2 + owner;
+			const oldSlot = (from.active.roundBase[round + shift] + resolved.board) * 2 + owner;
 			const oldFrom = from.active.start[oldSlot];
 			const oldCount = from.active.count[oldSlot];
 			const oldBlock = from.layout.blockOffset[old] + resolved.board;
