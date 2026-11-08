@@ -26,10 +26,11 @@ import type { SpotConfig } from '../src/index.ts';
 import { SPOTS as COMPARE } from '../bench/compare/spots.ts';
 import { compileBenchWasm } from '../bench/gpu/compile.ts';
 import type { ExperimentResult } from '../bench/gpu/experiment.ts';
+import { ARCHETYPES } from '../bench/leaf/lib.ts';
 import { bundleForBrowser, runInBrowser } from '../scripts/browser-harness.ts';
 
-const OOP = 'AA-22,AKs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,AKo-ATo,KQo-KJo';
-const IP = 'TT-22,AQs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,76s,AQo-ATo,KQo';
+const OOP = ARCHETYPES.benchOop;
+const IP = ARCHETYPES.benchIp;
 
 /** The spots of #29, with its measured browser times to 0.3% of pot: 1 thread, 4 threads. */
 const ALL: Record<string, { config: SpotConfig; baseline: [number, number] }> = {
@@ -45,8 +46,15 @@ const option = (name: string): string | undefined => {
 };
 const names = (option('spots') ?? Object.keys(ALL).join(',')).split(',');
 for (const name of names) if (!ALL[name]) throw new Error(`unknown spot ${name}; try ${Object.keys(ALL).join(', ')}`);
-const reps = Number(option('reps') ?? 5);
-const iterations = Number(option('iters') ?? 4);
+const count = (name: string, fallback: number): number => {
+	const value = Number(option(name) ?? fallback);
+	if (!Number.isInteger(value) || value < 1) throw new Error(`--${name} takes a whole number from 1`);
+	return value;
+};
+const reps = count('reps', 5);
+const iterations = count('iters', 4);
+/** How long a browser gets to finish, in ms. */
+const TIMEOUT_MS = 1_800_000;
 
 const wasm = Buffer.from(compileBenchWasm()).toString('base64');
 const spots = names.map((name) => ({ name, config: ALL[name].config }));
@@ -74,7 +82,7 @@ if (args.includes('--serve')) {
 	const launch: Record<string, unknown> = { args: flags, headless: !args.includes('--headed') };
 	const channel = option('channel');
 	if (channel) launch.channel = channel;
-	results = await runInBrowser<Record<string, ExperimentResult>>(ENTRY, 1_800_000, { launch });
+	results = await runInBrowser<Record<string, ExperimentResult>>(ENTRY, TIMEOUT_MS, { launch });
 }
 report(results);
 
@@ -85,10 +93,12 @@ async function serve(): Promise<Record<string, ExperimentResult>> {
 <pre id="out">Running; this takes a few minutes. Keep the tab in front.</pre>
 <script type="module">
 const worker = new Worker('./worker.js', { type: 'module' });
-worker.onmessage = async (event) => {
-	document.getElementById('out').textContent = JSON.stringify(event.data, null, 2);
-	await fetch('./result', { method: 'POST', body: JSON.stringify(event.data) });
+const send = async (data) => {
+	document.getElementById('out').textContent = JSON.stringify(data, null, 2);
+	await fetch('./result', { method: 'POST', body: JSON.stringify(data) });
 };
+worker.onmessage = (event) => send(event.data);
+worker.onerror = (event) => send({ ok: false, error: event.message || 'worker failed to load' });
 </script>`;
 	const shim = `import run from './entry.js';
 run().then((value) => postMessage({ ok: true, value }), (error) => postMessage({ ok: false, error: String(error && error.stack || error) }));`;
@@ -98,12 +108,17 @@ run().then((value) => postMessage({ ok: true, value }), (error) => postMessage({
 		'/entry.js': ['text/javascript', entry],
 	};
 	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			server.close();
+			reject(new Error(`no result from a browser within ${TIMEOUT_MS / 60000} minutes`));
+		}, TIMEOUT_MS);
 		const server = createServer((request, response) => {
 			if (request.method === 'POST' && request.url === '/result') {
 				let body = '';
 				request.on('data', (chunk) => (body += chunk));
 				request.on('end', () => {
 					response.writeHead(204).end();
+					clearTimeout(timer);
 					server.close();
 					const message = JSON.parse(body) as { ok: boolean; value?: Record<string, ExperimentResult>; error?: string };
 					if (message.ok) resolve(message.value!);
@@ -136,6 +151,8 @@ function report(all: Record<string, ExperimentResult>): void {
 	else if (first.software) console.log('SOFTWARE ADAPTER: the GPU columns are CPU emulation and mean nothing. Agreement is still checked.');
 	const ms = (v: number): string => (Number.isFinite(v) ? v.toFixed(1) : '-');
 	const times = (v: number): string => (Number.isFinite(v) ? `${v.toFixed(2)}x` : '-');
+	// Through --serve, JSON turns NaN and Infinity into null: both mean a broken value.
+	const error = (v: number | null): string => (typeof v === 'number' && Number.isFinite(v) ? v.toExponential(1) : 'BROKEN');
 
 	console.log('\nOne training iteration (both traversers): its river batch, and times in ms. "trip" adds upload and readback.\n');
 	const sizes = [['spot', 'showdowns', 'hands', 'MB up+down', 'match blocks', 'match slots', 'error sd', 'error match']];
@@ -146,7 +163,7 @@ function report(all: Record<string, ExperimentResult>): void {
 		const rm = r.match!;
 		sizes.push([
 			name, String(r.jobs), String(r.hands), (r.showdownBytes / 2 ** 20).toFixed(0), String(r.blocks), String(r.slots),
-			r.showdownError.toExponential(1), r.matchError.toExponential(1),
+			error(r.showdownError), error(r.matchError),
 		]);
 		timing.push([
 			name, ms(r.iterationMs), ms(sd.cpu), ms(sd.gpuKernel), ms(sd.gpuRoundTrip), ms(rm.cpu), ms(rm.gpuKernel), ms(rm.gpuRoundTrip),

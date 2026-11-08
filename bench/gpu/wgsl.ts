@@ -15,6 +15,8 @@
  * return depends on the workgroup id alone, so barriers stay uniform.
  */
 
+import { MAX_CARD_LIST, MAX_LIST } from './layout.ts';
+
 /** Threads per showdown workgroup; each scans `MAX_LIST / WG` entries. */
 export const SHOWDOWN_WG = 128;
 /** Workgroups per row of the dispatch grid; jobs past it go to the next row. */
@@ -36,14 +38,14 @@ struct Job {
 @group(0) @binding(7) var<storage, read_write> values: array<f32>;
 
 const WG: u32 = ${SHOWDOWN_WG}u;
-const MAX_LIST: u32 = 512u;
+const MAX_LIST: u32 = ${MAX_LIST}u;
 const CHUNK: u32 = MAX_LIST / WG;
 const BUCKETS: u32 = 52u;
 
-var<workgroup> prefix: array<f32, 513>;
-var<workgroup> level: array<i32, 512>;
-var<workgroup> runs: array<f32, 1024>;
-var<workgroup> pos: array<u32, 1024>;
+var<workgroup> prefix: array<f32, ${MAX_LIST + 1}>;
+var<workgroup> level: array<i32, ${MAX_LIST}>;
+var<workgroup> runs: array<f32, ${MAX_CARD_LIST}>;
+var<workgroup> pos: array<u32, ${MAX_CARD_LIST}>;
 var<workgroup> starts: array<u32, 53>;
 var<workgroup> partial: array<f32, ${SHOWDOWN_WG}>;
 
@@ -88,7 +90,7 @@ fn showdown(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_ind
 	// The opponent's strengths, and their reach scanned: a chunk per thread,
 	// then the chunk totals across threads.
 	for (var j = tid; j < n; j += WG) { level[j] = strength[job.oppFrom + j]; }
-	var chunk: array<f32, ${512 / SHOWDOWN_WG}>;
+	var chunk: array<f32, ${MAX_LIST / SHOWDOWN_WG}>;
 	var sum = 0.0;
 	for (var k = 0u; k < CHUNK; k++) {
 		let j = tid * CHUNK + k;

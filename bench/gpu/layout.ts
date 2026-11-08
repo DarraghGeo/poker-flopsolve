@@ -24,6 +24,7 @@
  */
 
 import { DECK } from '../../src/cards.ts';
+import { blockBase } from '../../src/cfr.ts';
 import type { ActiveLists, Layout } from '../../src/cfr.ts';
 import type { Runouts } from '../../src/runouts.ts';
 import { NodeKind } from '../../src/tree.ts';
@@ -176,7 +177,7 @@ export function listMatchBlocks(spot: PreparedSpot): MatchBlock[] {
 		const actions = tree.numEdges[node];
 		for (let board = 0; board < runouts.counts[round]; board++) {
 			const slot = (layout.roundBase[round] + board) * 2 + tree.player[node];
-			blocks.push({ offset: layout.offset[node] + actions * layout.rowStart[slot], actions, count: active.count[slot] });
+			blocks.push({ offset: blockBase(layout, tree, node, board), actions, count: active.count[slot] });
 		}
 	}
 	return blocks;

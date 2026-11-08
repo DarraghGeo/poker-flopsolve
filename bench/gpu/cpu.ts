@@ -21,6 +21,8 @@ export interface CpuBatch {
 	/** Regrets in; `runMatches` matches every block. */
 	readonly regret: Float32Array;
 	runMatches(): void;
+	/** Match block `index` alone; its strategy, `actions` rows of `count`. */
+	matchOne(index: number): Float32Array;
 }
 
 /**
@@ -76,5 +78,9 @@ export function cpuBatch(
 		regret: new Float32Array(memory.buffer, offsets[slots.regret], regretLength),
 		runShowdowns: () => exports.runShowdowns(offsets[slots.jobs], jobCount, offsets[slots.reach], offsets[slots.out]),
 		runMatches: () => exports.runMatches(offsets[slots.blocks], blockCount, offsets[slots.regret], offsets[slots.scratch]),
+		matchOne(index) {
+			exports.runMatches(offsets[slots.blocks] + index * 16, 1, offsets[slots.regret], offsets[slots.scratch]);
+			return new Float32Array(memory.buffer, offsets[slots.scratch], blocks[index * 4 + 1] * blocks[index * 4 + 2]);
+		},
 	};
 }

@@ -6,20 +6,17 @@
  * of a turn spot, packed and plain lists alike. The adapter here is usually
  * SwiftShader, which is fine for agreement, though not for timing. The test
  * skips where there is no Playwright Chromium or no adapter.
- *
- * The CPU side is a copy of the engine's functions (assembly/bench-showdown.ts),
- * so this also checks that the copy has not drifted from assembly/engine.ts.
  */
 
-import { readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { SpotConfig } from '../src/index.ts';
 import { compileBenchWasm } from '../bench/gpu/compile.ts';
 import type { ExperimentResult } from '../bench/gpu/experiment.ts';
 import { NoBrowserError, runInBrowser } from '../scripts/browser-harness.ts';
+import { ARCHETYPES } from '../bench/leaf/lib.ts';
 
-const OOP = 'AA-22,AKs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,AKo-ATo,KQo-KJo';
-const IP = 'TT-22,AQs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,76s,AQo-ATo,KQo';
+const OOP = ARCHETYPES.benchOop;
+const IP = ARCHETYPES.benchIp;
 
 const SPOTS: Record<string, SpotConfig> = {
 	// No symmetry left: plain lists.
@@ -27,24 +24,6 @@ const SPOTS: Record<string, SpotConfig> = {
 	// Three suits alike on the river: packed lists.
 	monotone: { board: 'Ks9s4s2s', pot: 60, stack: 120, oop: OOP, ip: IP, betSizes: [[0.66]], maxRaises: 1 },
 };
-
-/** The text of a top-level function in an AssemblyScript file. */
-function functionText(source: string, name: string): string {
-	const start = source.search(new RegExp(`^(@inline )?function ${name}\\(`, 'm'));
-	if (start < 0) throw new Error(`no function ${name}`);
-	const end = source.indexOf('\n}\n', start);
-	return source.slice(start, end + 2);
-}
-
-describe('bench copy of the engine kernels', () => {
-	it('matches assembly/engine.ts', () => {
-		const engine = readFileSync(new URL('../assembly/engine.ts', import.meta.url), 'utf8');
-		const copy = readFileSync(new URL('../assembly/bench-showdown.ts', import.meta.url), 'utf8');
-		for (const name of ['matchRegret', 'normaliseRows', 'showdown', 'addMembers', 'showdownPacked']) {
-			expect(functionText(copy, name), name).toBe(functionText(engine, name));
-		}
-	});
-});
 
 let results: Record<string, ExperimentResult> | null = null;
 

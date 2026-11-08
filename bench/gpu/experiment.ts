@@ -16,6 +16,8 @@ import type { SpotConfig } from '../../src/index.ts';
 import { cpuBatch } from './cpu.ts';
 import type { Batch, Gpu } from './host.ts';
 import { matchBatch, openGpu, showdownBatch } from './host.ts';
+import type { MatchBlock } from './layout.ts';
+import { rng } from '../leaf/lib.ts';
 import { buildShowdownTables, listMatchBlocks, listShowdownJobs, packBlocks, packJobs } from './layout.ts';
 
 export interface ExperimentOptions {
@@ -58,20 +60,10 @@ export interface ExperimentResult {
 	readonly iterationMs: number;
 }
 
-function random(seed: number): () => number {
-	let s = seed | 1;
-	return () => {
-		s ^= s << 13;
-		s ^= s >>> 17;
-		s ^= s << 5;
-		return (s >>> 0) / 4294967296;
-	};
-}
-
 async function median(reps: number, run: () => Promise<void> | void): Promise<number> {
 	await run(); // warm-up
 	const times: number[] = [];
-	for (let i = 0; i < reps; i++) {
+	for (let i = 0; i < Math.max(1, reps); i++) {
 		const started = performance.now();
 		await run();
 		times.push(performance.now() - started);
@@ -86,11 +78,17 @@ export default async function experiment(options: ExperimentOptions): Promise<Ex
 	const run = createRun(defineSpot(config), { workers: 1 });
 	const ctx = run.solver.ctx;
 	const tables = buildShowdownTables(ctx);
-	const blockList = listMatchBlocks(ctx);
+	// The river blocks, packed one after another: the batch moves only the
+	// regrets it matches.
+	const blockList: MatchBlock[] = [];
+	let regretLength = 0;
+	for (const block of listMatchBlocks(ctx)) {
+		blockList.push({ ...block, offset: regretLength });
+		regretLength += block.actions * block.count;
+	}
 	const blocks = packBlocks(blockList);
-	const regretLength = ctx.layout.totalSlots;
 	const maxActions = ctx.layout.maxActions;
-	const next = random(0x2545f491);
+	const next = rng(0x2545f491);
 
 	const gpu: Gpu | null = await openGpu();
 	let jobs = 0;
@@ -146,22 +144,24 @@ export default async function experiment(options: ExperimentOptions): Promise<Ex
 	let match: KernelTimes | null = null;
 	let matchError = 0;
 	const cpuMatch = options.verifyOnly ? 0 : 2 * (await median(reps, () => cpu.runMatches()));
+	// Both sides against plain JavaScript, on a sample of blocks.
+	const checkMatch = (b: number, got: Float32Array, at: number): void => {
+		const { offset, actions, count } = blockList[b];
+		for (let i = 0; i < count; i++) {
+			let total = 0;
+			for (let a = 0; a < actions; a++) total += Math.max(regret[offset + a * count + i], 0);
+			for (let a = 0; a < actions; a++) {
+				const want = total > 0 ? Math.max(regret[offset + a * count + i], 0) / total : 1 / actions;
+				const error = Math.abs(got[at + a * count + i] - want);
+				if (!(error <= matchError)) matchError = Number.isNaN(error) ? Infinity : error;
+			}
+		}
+	};
+	for (let b = 0; b < blockList.length; b += 13) checkMatch(b, cpu.matchOne(b), 0);
 	if (gpu) {
 		const batch = await matchBatch(gpu, regret, blocks);
 		const strategy = await batch.roundTrip();
-		for (let b = 0; b < blockList.length; b += 13) {
-			const { offset, actions, count } = blockList[b];
-			for (let i = 0; i < count; i++) {
-				let total = 0;
-				for (let a = 0; a < actions; a++) total += Math.max(regret[offset + a * count + i], 0);
-				for (let a = 0; a < actions; a++) {
-					const at = offset + a * count + i;
-					const want = total > 0 ? Math.max(regret[at], 0) / total : 1 / actions;
-					const error = Math.abs(strategy[at] - want);
-					if (!(error <= matchError)) matchError = Number.isNaN(error) ? Infinity : error;
-				}
-			}
-		}
+		for (let b = 0; b < blockList.length; b += 13) checkMatch(b, strategy, blockList[b].offset);
 		if (!options.verifyOnly) {
 			match = {
 				cpu: cpuMatch,

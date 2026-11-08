@@ -8,16 +8,18 @@
  * `gpu-showdown.browser.test.ts`.
  */
 
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { DECK } from '../src/cards.ts';
 import { createRun, defineSpot } from '../src/index.ts';
 import type { SpotConfig } from '../src/index.ts';
 import { showdownValuesHands, showdownValuesPacked } from '../src/hands.ts';
-import { buildShowdownTables, listMatchBlocks, listShowdownJobs, showdownByPrefix } from '../bench/gpu/layout.ts';
+import { MAX_CARD_LIST, MAX_LIST, buildShowdownTables, listMatchBlocks, listShowdownJobs, showdownByPrefix } from '../bench/gpu/layout.ts';
 import type { PreparedSpot } from '../bench/gpu/layout.ts';
+import { ARCHETYPES, rng } from '../bench/leaf/lib.ts';
 
-const OOP = 'AA-22,AKs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,AKo-ATo,KQo-KJo';
-const IP = 'TT-22,AQs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,76s,AQo-ATo,KQo';
+const OOP = ARCHETYPES.benchOop;
+const IP = ARCHETYPES.benchIp;
 
 /** A rainbow turn (no symmetry: plain lists) and a monotone flop (packed lists). */
 const SPOTS: Record<string, SpotConfig> = {
@@ -34,25 +36,38 @@ function prepare(config: SpotConfig): PreparedSpot {
 
 /** Deterministic reach, a third of it zero, as late in a solve. */
 function reachFor(count: number, seed: number): Float64Array {
-	let s = seed | 1;
-	const out = new Float64Array(count);
-	for (let i = 0; i < count; i++) {
-		s ^= s << 13;
-		s ^= s >>> 17;
-		s ^= s << 5;
-		const u = (s >>> 0) / 4294967296;
-		out[i] = u < 0.33 ? 0 : u;
-	}
-	return out;
+	const next = rng(seed);
+	return Float64Array.from({ length: count }, () => {
+		const u = next();
+		return u < 0.33 ? 0 : u;
+	});
 }
+
+/** The text of a top-level function in an AssemblyScript file. */
+function functionText(source: string, name: string): string {
+	const start = source.search(new RegExp(`^(@inline )?function ${name}\\(`, 'm'));
+	if (start < 0) throw new Error(`no function ${name}`);
+	const end = source.indexOf('\n}\n', start);
+	return source.slice(start, end + 2);
+}
+
+describe('bench copy of the engine kernels', () => {
+	it('matches assembly/engine.ts', () => {
+		const engine = readFileSync(new URL('../assembly/engine.ts', import.meta.url), 'utf8');
+		const copy = readFileSync(new URL('../assembly/bench-showdown.ts', import.meta.url), 'utf8');
+		for (const name of ['matchRegret', 'normaliseRows', 'showdown', 'addMembers', 'showdownPacked']) {
+			expect(functionText(copy, name), name).toBe(functionText(engine, name));
+		}
+	});
+});
 
 describe.each(Object.entries(SPOTS))('GPU showdown layout: %s', (_, config) => {
 	const spot = prepare(config);
 	const tables = buildShowdownTables(spot);
 
 	it('fits the kernel', () => {
-		expect(tables.maxList).toBeLessThanOrEqual(512);
-		expect(tables.maxCardList).toBeLessThanOrEqual(1024);
+		expect(tables.maxList).toBeLessThanOrEqual(MAX_LIST);
+		expect(tables.maxCardList).toBeLessThanOrEqual(MAX_CARD_LIST);
 	});
 
 	it('lists one job per river showdown node per river board', () => {

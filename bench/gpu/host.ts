@@ -14,6 +14,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Any = any;
 
+import { MAX_CARD_LIST, MAX_LIST } from './layout.ts';
 import type { ShowdownTables } from './layout.ts';
 import { GRID_ROW, MATCH_WGSL, SHOWDOWN_WGSL } from './wgsl.ts';
 
@@ -130,6 +131,12 @@ export async function showdownBatch(
 	reachLength: number,
 	outLength: number,
 ): Promise<Batch> {
+	if (tables.maxList > MAX_LIST || tables.maxCardList > MAX_CARD_LIST) {
+		throw new Error(
+			`a list of ${tables.maxList} hands (${tables.maxCardList} card positions) is past the kernel's ` +
+				`${MAX_LIST} (${MAX_CARD_LIST}); raise MAX_LIST and MAX_CARD_LIST in bench/gpu/layout.ts`,
+		);
+	}
 	const { device } = gpu;
 	const pipeline = await compile(device, SHOWDOWN_WGSL, 'showdown');
 	const reach = storage(device, reachLength * 4);

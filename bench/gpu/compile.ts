@@ -10,6 +10,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ASC_FLAGS } from '../../scripts/wasm-flags.ts';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
@@ -20,7 +21,7 @@ export function compileBenchWasm(): Uint8Array {
 		const out = join(scratch, 'bench.wasm');
 		execFileSync(
 			join(ROOT, 'node_modules', '.bin', 'asc'),
-			['assembly/bench-showdown.ts', '--enable', 'simd', '--enable', 'bulk-memory', '-O3', '--runtime', 'stub', '--importMemory', '--noAssert', '-o', out],
+			['assembly/bench-showdown.ts', ...ASC_FLAGS, '-o', out],
 			{ cwd: ROOT, stdio: 'pipe' },
 		);
 		return new Uint8Array(readFileSync(out));
