@@ -8,7 +8,8 @@
  * EVs, the out-of-position player's per-combo EV of each root action, and the
  * reach mass of each line class (raises and aggressions before each deal)
  * to `results/<spot>-ref.json`. `line` solves it with `lineRunouts`, for the
- * reference's iteration count or until its own game reaches `target`, and
+ * the reference's iteration count (its own game's exploitability is no stopping
+ * rule: the rescaled game is not zero-sum, and can read below zero), and
  * reports storage, peak memory, time, root-EV error, whether each hand still
  * prefers the reference's root bet size, and exploitability in the full game.
  */
@@ -135,7 +136,7 @@ function reachCensus(run: SolveRun): Record<string, number> {
 
 const gib = (bytes: number): string => `${(bytes / 2 ** 30).toFixed(2)} GiB`;
 
-function solveTo(config: SpotConfig, cap: number, label: string): { run: SolveRun; seconds: number; exploitability: number } {
+function solveTo(config: SpotConfig, cap: number, label: string, stopAtTarget = true): { run: SolveRun; seconds: number; exploitability: number } {
 	const spot = defineSpot({ ...config, maxBytes: 2 ** 36 });
 	console.log(`${label}: boards ${spot.runouts.counts.join('/')}, storage f32 ${gib(spot.estimate.bytes)}, i16 ${gib(spot.estimate.compressedBytes)}`);
 	const started = performance.now();
@@ -150,7 +151,7 @@ function solveTo(config: SpotConfig, cap: number, label: string): { run: SolveRu
 		if (run.completed >= next || run.completed === cap) {
 			exploitability = run.exploitabilityPercent();
 			console.log(`  ${run.completed} iterations, ${(solving / 1000).toFixed(0)} s solving, exploitability ${exploitability.toFixed(3)}%`);
-			if (exploitability <= target) break;
+			if (stopAtTarget && exploitability <= target) break;
 			next = run.completed + (exploitability > 2 * target ? 20 : 10);
 		}
 	}
@@ -180,7 +181,7 @@ if (mode === 'ref') {
 		band: Number(opt('band', '13')),
 	};
 	const label = `${name} ${JSON.stringify(rule)}`;
-	const { run, seconds, exploitability } = solveTo({ ...SPOTS[name], lineRunouts: rule }, Number(opt('iters', String(reference.iterations))), label);
+	const { run, seconds, exploitability } = solveTo({ ...SPOTS[name], lineRunouts: rule }, Number(opt('iters', String(reference.iterations))), label, false);
 	const peakRss = process.resourceUsage().maxRSS * 1024;
 	const heap = process.memoryUsage().heapUsed;
 	const [oop, ip] = rootError(rootEvs(run), reference.evs, run);
