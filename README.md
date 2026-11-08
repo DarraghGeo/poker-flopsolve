@@ -259,6 +259,69 @@ This is *unsafe* re-solving. The subgame is solved for the ranges that arrive, s
 strategy can be exploitable in ways the original allowed for. It also does not make the
 earlier streets any more accurate than their coarse model of the future.
 
+### Full flop betting, re-solved turns
+
+For a flop whose full tree does not fit, keep the flop's betting as it is and give the turn
+and river one size, then re-solve each turn you look at with the full betting.
+`resolveSubgame` does the re-solve; it is opt-in and tree-shaken away when unused.
+
+```ts
+import { defineSpot, resolveSubgame, solve } from 'poker-flopsolve';
+
+const full = { ...spot, betSizes: [[0.33, 0.75, 1.5]], raiseSizes: [[0.75]], maxRaises: 3, allowAllIn: true };
+const blueprint = solve(
+	defineSpot({
+		...full,
+		betSizes: [[0.33, 0.75, 1.5], [0.75], [0.75]],
+		raiseSizes: [[0.75], [0.75], [0.75]],
+		maxRaises: [3, 1, 1],
+		allowAllIn: [true, false, false],
+		runoutBuckets: 3,
+	}),
+	{ targetPercent: 0.3, precision: 'i16' },
+);
+const turn = resolveSubgame(blueprint, node, board, {
+	player: 0, // whose strategy to refine
+	betting: { betSizes: full.betSizes, raiseSizes: full.raiseSizes, maxRaises: 3, allowAllIn: true },
+	iterations: 300,
+});
+turn.solution.strategyAt(0, 0);
+```
+
+Measured on Ks 9s 4s (pot 55, stacks 975, the bench ranges) against the full tree solved
+to 0.093% of pot (99 minutes, 2.3 GB at i16 on four threads):
+
+| | blueprint, 1 turn/river size | + 3 runout buckets, i16 |
+|---|---|---|
+| storage | 264 MiB | 97 MiB |
+| solve to 0.3%, Node, 4 threads | 27 s | 55 s |
+| root EV error per hand, OOP / IP | 2.3 / 2.2% of pot (max 10.6 / 20.2) | 2.3 / 2.2% (max 10.1 / 19.5) |
+| root size agreement, OOP / IP after a check | 98.6% / 65.4% | 100% / 62.0% |
+| EV the root play loses at the full tree's values, OOP / IP | 0.027 / 0.022% of pot | 0.028 / 0.020% |
+
+IP's low size agreement after a check is near-indifference: only 15% of its betting hands
+prefer one size by 0.5% of pot or more, the blueprint agrees on 89% of those, and its play
+loses 0.02% of pot. The per-action EV errors are largest for the flop shove (11–33% of pot
+for IP), a line neither tree plays. More turn/river sizes did worse here: two sizes
+(0.33, 1.5) gave 4.4 / 5.7% EV error and three gave 4.7 / 6.1%, at 336 and 417 MiB. On the
+rainbow As Kh 7d, which has about 4.5 times the runouts, the same blueprint is estimated at
+1.2 GiB f32, 363 MiB with buckets at i16.
+
+A re-solved turn, over the 15 most-reached turn nodes, took about 12 s in Node on one
+thread and 5–40 MiB. Against it, an opponent playing a best response with the full tree's
+ranges gains, weighted by how often each turn is reached, 3.5–4% of the subgame's pot.
+
+`resolveSubgame` can also guard the re-solve with a safety gadget (`gadget: 'resolve'`,
+`'maxmargin'` or `'reach-maxmargin'`), which keeps each opponent hand from doing better
+than it did against the blueprint. Here they made things worse: 4.2–4.6% of the pot with
+`'resolve'` and 4.7–6.2% with either maxmargin gadget. Most of a re-solve's error is the refined player's own range at the
+node, which comes from the blueprint and which no gadget changes, and with more actions in
+the subgame than in the blueprint the guarantees often cannot all be met. So the default
+is `'unsafe'`. A re-solved subgame is a `Solution`, so a river below it can be re-solved
+from it in turn.
+
+CHROMIUM_TIMINGS
+
 ## In a browser
 
 The package also runs in a browser, for the small solves a page wants: river spots and
