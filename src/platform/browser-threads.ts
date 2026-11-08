@@ -113,6 +113,14 @@ function spawn(setup: EngineWorkerSetup, onError: (error: Error) => void): Worke
 			if (released) return;
 			released = true;
 			if (!pool().includes(thread)) return;
+			// A solve a thread failed: its error event is still queued, and
+			// would fail whichever solve borrowed the thread next. Which thread
+			// failed is not recorded, so every one of that solve's goes;
+			// `prepareThreads` starts replacements.
+			if (Atomics.load(control, ENGINE_CONTROL.failed) !== 0) {
+				drop(thread);
+				return;
+			}
 			// Whether this solve finished or gave up on starting, tell the
 			// thread its solve is over: it returns to waiting for the next
 			// setup, having started this one or not (serveEngine checks for

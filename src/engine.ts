@@ -21,7 +21,7 @@ import type { Tree } from './tree.ts';
 import { ENGINE_WASM } from './wasm/engine.ts';
 import { ENGINE_SHARED_WASM } from './wasm/engine-shared.ts';
 import type { ShardPlan } from './parallel.ts';
-import { WORKER_START_ERROR, WORKER_START_MS } from './parallel.ts';
+import { THREAD_FAILED_ERROR, WORKER_START_ERROR, WORKER_START_MS } from './parallel.ts';
 
 /** The parts of the WebAssembly API used here, typed locally: the project builds without DOM typings. */
 interface WasmApi {
@@ -112,8 +112,15 @@ export interface EngineWorkerSetup {
 /** How a pool starts its workers; the platform layer supplies it. */
 export type SpawnEngineWorker = (setup: EngineWorkerSetup, onError: (error: Error) => void) => { terminate(): void };
 
-/** Control slots shared with engine workers. */
-export const ENGINE_CONTROL = { generation: 0, done: 1, command: 2, mode: 3, traverser: 4, ready: 5, size: 8 } as const;
+/** The most memory the engine lays out: just under wasm32's 4 GB. */
+const MAX_MEMORY = 0xffff0000;
+
+/**
+ * Control slots shared with engine workers. `failed` is set, never cleared,
+ * once any thread's part of a step threw: the main thread waits in
+ * `Atomics.wait` and so never sees a worker's error event while a step runs.
+ */
+export const ENGINE_CONTROL = { generation: 0, done: 1, command: 2, mode: 3, traverser: 4, ready: 5, failed: 6, size: 8 } as const;
 
 /**
  * Lay a spot out in a fresh memory and instantiate the engine over it, or
@@ -129,6 +136,11 @@ export function createEngine(
 	const compiledModule = compiledEngine(shared ? 'shared' : 'plain');
 	if (!compiledModule || !wasm) return null;
 	const { tree, runouts, layout, active, hands } = input;
+	// Its two 32-bit accumulators alone would pass wasm32's 4 GB, so no
+	// engine; checked before anything is built. Such a layout is also the
+	// only kind that holds offsets as Float64, which the engine's 32-bit
+	// offset table could not take.
+	if (layout.totalSlots * 8 > MAX_MEMORY || !(layout.offset instanceof Int32Array)) return null;
 	const threads = pool ? pool.threads : 1;
 
 	const flatten = (parts: readonly Int32Array[]): [Int32Array, Int32Array] => {
@@ -205,7 +217,7 @@ export function createEngine(
 		offsets.push(total);
 		total += piece.bytes;
 	}
-	if (total > 0xffff0000) return null; // past wasm32's 4 GB
+	if (total > MAX_MEMORY) return null;
 	const pages = Math.ceil(total / 65536) + 1;
 	const memory = shared ? new wasm.Memory({ initial: pages, maximum: pages, shared: true }) : new wasm.Memory({ initial: pages });
 	const bytes = new Uint8Array(memory.buffer);
@@ -309,7 +321,17 @@ export function createEngine(
 		}
 	}
 
+	const failed = (): Error | null =>
+		failure ?? (control && Atomics.load(control, ENGINE_CONTROL.failed) ? new Error(THREAD_FAILED_ERROR) : null);
+
+	// The iteration a step is for, and its rule, which shared storage's threads need.
+	let iteration = 0;
+	let dcfrRule = 0;
 	const run = (asked: number, traverser: 0 | 1, iterWeight: number, dcfr: boolean): Float64Array => {
+		// Once any thread has failed, so does every step after, before it
+		// touches anything.
+		const dead = failed();
+		if (dead) throw dead;
 		// The engine knows three modes; the current profile is its Train
 		// with updates off.
 		const apply = asked === Mode.Current ? 0 : 1;
@@ -321,8 +343,9 @@ export function createEngine(
 			for (let i = 0; i < count; i++) into[i] = weights[active.list[from + i]];
 		}
 		const [positive, negative, sum, weight, clamp] = settingsFor(mode, iterWeight, dcfr);
-		const iteration = mode === Mode.Train ? iterWeight : 0;
-		if (plan || share) exports.setIteration(iteration, dcfr ? 1 : 0);
+		iteration = mode === Mode.Train ? iterWeight : 0;
+		dcfrRule = dcfr ? 1 : 0;
+		if (plan || share) exports.setIteration(iteration, dcfrRule);
 		let at: number;
 		if (!pool) {
 			if (apply === 0) exports.setPhase(0, 0);
@@ -332,49 +355,68 @@ export function createEngine(
 				if (apply === 0) exports.setPhase(0, 1);
 			}
 		} else {
-			const plan = pool.plan;
-			// Collect: walk above the split, recording what the workers need.
-			exports.setShard(plan.round, 0, 0);
-			exports.setPhase(1, 0);
-			exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
-			// Every thread walks its slice of the split round.
-			settings!.set([positive, negative, sum, weight, clamp, apply, iteration, dcfr ? 1 : 0]);
-			Atomics.store(control!, ENGINE_CONTROL.done, 0);
-			Atomics.store(control!, ENGINE_CONTROL.mode, mode);
-			Atomics.store(control!, ENGINE_CONTROL.traverser, traverser);
-			Atomics.store(control!, ENGINE_CONTROL.command, 0);
-			Atomics.add(control!, ENGINE_CONTROL.generation, 1);
-			Atomics.notify(control!, ENGINE_CONTROL.generation);
-			exports.setShard(plan.round, plan.bounds[0], plan.bounds[1]);
-			exports.setPhase(0, apply);
-			const valueView = new Float32Array(memory.buffer, offsets[values], entries * stride);
-			for (let entry = 0; entry < entries; entry++) {
-				const slot = offsets[reach] + entry * 2 * rowBytes;
-				const out = exports.runChance(mode, traverser, plan.entryNodes[entry], slot, slot + rowBytes, positive, negative, sum, weight, clamp);
-				valueView.set(new Float32Array(memory.buffer, out, stride), entry * stride);
+			try {
+				at = runThreaded(mode, traverser, apply, positive, negative, sum, weight, clamp);
+			} catch (error) {
+				// This thread's own part may have thrown with the workers still
+				// walking; no later step may run over them.
+				Atomics.store(control!, ENGINE_CONTROL.failed, 1);
+				throw error;
 			}
-			for (;;) {
-				const done = Atomics.load(control!, ENGINE_CONTROL.done);
-				if (done >= threads - 1 || failure) break;
-				Atomics.wait(control!, ENGINE_CONTROL.done, done, 50);
-			}
-			if (failure) throw failure;
-			const partialView = new Float32Array(memory.buffer, offsets[partials], (threads - 1) * entries * stride);
-			for (let w = 0; w < threads - 1; w++) {
-				for (let i = 0; i < entries * stride; i++) valueView[i] += partialView[w * entries * stride + i];
-			}
-			// Finish above the split from the totals, now applying updates
-			// unless this is a current-profile read.
-			exports.setShard(plan.round, 0, 0);
-			exports.setPhase(2, apply);
-			at = exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
-			exports.setPhase(0, 1);
-			exports.setShard(-1, 0, 0);
 		}
 		const [, count] = rootList(traverser);
 		const values32 = new Float32Array(memory.buffer, at, count);
 		for (let i = 0; i < count; i++) result[i] = values32[i];
 		return result;
+	};
+
+	/** One threaded traversal, returning where the root values are. */
+	const runThreaded = (
+		mode: number, traverser: 0 | 1, apply: number,
+		positive: number, negative: number, sum: number, weight: number, clamp: number,
+	): number => {
+		const plan = pool!.plan;
+		// Collect: walk above the split, recording what the workers need.
+		exports.setShard(plan.round, 0, 0);
+		exports.setPhase(1, 0);
+		exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
+		// Every thread walks its slice of the split round.
+		settings!.set([positive, negative, sum, weight, clamp, apply, iteration, dcfrRule]);
+		Atomics.store(control!, ENGINE_CONTROL.done, 0);
+		Atomics.store(control!, ENGINE_CONTROL.mode, mode);
+		Atomics.store(control!, ENGINE_CONTROL.traverser, traverser);
+		Atomics.store(control!, ENGINE_CONTROL.command, 0);
+		Atomics.add(control!, ENGINE_CONTROL.generation, 1);
+		Atomics.notify(control!, ENGINE_CONTROL.generation);
+		exports.setShard(plan.round, plan.bounds[0], plan.bounds[1]);
+		exports.setPhase(0, apply);
+		const valueView = new Float32Array(memory.buffer, offsets[values], entries * stride);
+		for (let entry = 0; entry < entries; entry++) {
+			const slot = offsets[reach] + entry * 2 * rowBytes;
+			const out = exports.runChance(mode, traverser, plan.entryNodes[entry], slot, slot + rowBytes, positive, negative, sum, weight, clamp);
+			valueView.set(new Float32Array(memory.buffer, out, stride), entry * stride);
+		}
+		// A thread whose walk throws says so in `failed` and counts itself
+		// done, as its error event cannot reach this thread while it waits.
+		for (;;) {
+			const done = Atomics.load(control!, ENGINE_CONTROL.done);
+			if (done >= threads - 1 || failure) break;
+			Atomics.wait(control!, ENGINE_CONTROL.done, done, 50);
+		}
+		const dead = failed();
+		if (dead) throw dead;
+		const partialView = new Float32Array(memory.buffer, offsets[partials], (threads - 1) * entries * stride);
+		for (let w = 0; w < threads - 1; w++) {
+			for (let i = 0; i < entries * stride; i++) valueView[i] += partialView[w * entries * stride + i];
+		}
+		// Finish above the split from the totals, now applying updates
+		// unless this is a current-profile read.
+		exports.setShard(plan.round, 0, 0);
+		exports.setPhase(2, apply);
+		const at = exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
+		exports.setPhase(0, 1);
+		exports.setShard(-1, 0, 0);
+		return at;
 	};
 
 	return {

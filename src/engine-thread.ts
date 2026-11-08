@@ -32,6 +32,7 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 	const MODE = 3;
 	const TRAVERSER = 4;
 	const READY = 5;
+	const FAILED = 6;
 	const EXIT = 1;
 
 	const api = (globalThis as unknown as {
@@ -92,18 +93,27 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 		const sum = settings[2];
 		const weight = settings[3];
 		const clamp = settings[4];
-		// Off for a current-profile read, which updates nothing.
-		engine.setPhase(0, settings[5]);
-		// Shared storage discounts by iteration, so the thread needs to know which.
-		if (shared) engine.setIteration(settings[6], settings[7]);
-		for (let entry = 0; entry < entries; entry++) {
-			const slot = reach + entry * 2 * rowBytes;
-			const out = engine.runChance(
-				mode, traverser, setup.entryNodes[entry], slot, slot + rowBytes, positive, negative, sum, weight, clamp,
-			);
-			partials.set(new Float32Array(memory.buffer, out, setup.stride), entry * setup.stride);
+		try {
+			// Off for a current-profile read, which updates nothing.
+			engine.setPhase(0, settings[5]);
+			// Shared storage discounts by iteration, so the thread needs to know which.
+			if (shared) engine.setIteration(settings[6], settings[7]);
+			for (let entry = 0; entry < entries; entry++) {
+				const slot = reach + entry * 2 * rowBytes;
+				const out = engine.runChance(
+					mode, traverser, setup.entryNodes[entry], slot, slot + rowBytes, positive, negative, sum, weight, clamp,
+				);
+				partials.set(new Float32Array(memory.buffer, out, setup.stride), entry * setup.stride);
+			}
+		} catch (error) {
+			// The main thread is blocked in Atomics.wait and cannot see this
+			// thread's error event, so say so in shared memory (and count as
+			// done, below). Then let the thread die: its engine is not to be trusted.
+			Atomics.store(control, FAILED, 1);
+			throw error;
+		} finally {
+			Atomics.add(control, DONE, 1);
+			Atomics.notify(control, DONE);
 		}
-		Atomics.add(control, DONE, 1);
-		Atomics.notify(control, DONE);
 	}
 }

@@ -68,15 +68,19 @@ export function orbitLeader(runouts: Runouts, round: number, board: number, comb
 	return true;
 }
 
+const INT32_MAX = 2 ** 31 - 1;
+
 /** Slot offsets for every decision node. */
 export interface Layout {
 	/**
 	 * Where each decision node's storage starts. Its block on a board is
 	 * `actions` rows of the owner's hands live there, in hand-list order —
 	 * entry `i` of their active list — so a row is as long as that list and
-	 * blocked hands take no room. See `blockBase`.
+	 * blocked hands take no room. See `blockBase`. Int32 while every slot
+	 * fits one, which keeps the traversal's indexing on integers; Float64,
+	 * exact to 2^53, for a tree past 2^31 slots, where Int32 would wrap.
 	 */
-	readonly offset: Int32Array;
+	readonly offset: Int32Array | Float64Array;
 	/** For each list slot `(roundBase[r] + board) * 2 + p`: rows before this board's. */
 	readonly rowStart: Int32Array;
 	/** First list index of each round, as `ActiveLists.roundBase`. */
@@ -148,7 +152,7 @@ export function buildLayout(
 		}
 	}
 
-	const offset = new Int32Array(tree.nodeCount).fill(-1);
+	const offset = new Float64Array(tree.nodeCount).fill(-1);
 	const blockOffset = new Int32Array(tree.nodeCount).fill(-1);
 	let total = 0;
 	let blocks = 0;
@@ -173,7 +177,7 @@ export function buildLayout(
 	}
 	const scales = bytesPerElement === 2 ? blocks * 8 * 2 : 0;
 	return {
-		offset, blockOffset, blocks, totalSlots: total, maxActions, rowStart, roundBase,
+		offset: total <= INT32_MAX ? Int32Array.from(offset) : offset, blockOffset, blocks, totalSlots: total, maxActions, rowStart, roundBase,
 		bytes: total * bytesPerElement * 2 + scales,
 		shared,
 		reachWeighted: shared && reachWeighted ? sharedNodes(tree, alias!) : null,
