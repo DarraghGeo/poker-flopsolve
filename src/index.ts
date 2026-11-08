@@ -47,6 +47,8 @@ export * from './eval7.ts';
 export { activeCombos, parseRange, rangeWeight } from './range.ts';
 export type { ResolvedBoard } from './runouts.ts';
 export type { WarmStartReport } from './warm.ts';
+export { resolveSubgame } from './resolve.ts';
+export type { Gadget, ResolvedSubgame, ResolveOptions } from './resolve.ts';
 export { simdAvailable } from './kernels.ts';
 export type { BetSize } from './tree.ts';
 export type { SamplingOptions, Solver } from './cfr.ts';
