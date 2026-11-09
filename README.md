@@ -602,7 +602,9 @@ board card, and no relabelling fixes that — so `exploitabilityPercent()` (and
 `targetPercent`) measure the bucketed game, and `run.trueExploitabilityPercent()` measures
 the strategy in the real one, every card dealt. How much it saves and costs depends on
 the ranges; suited connectors keep ranks apart, pocket pairs near the merged ranks cost
-accuracy. On AhKdQc, 4 threads, to 0.3% of pot in the bucketed game:
+accuracy. Ranges weighted hand by hand rarely allow any swap: on all 70 of napkinpoker's
+realistic spots it folds nothing, at any gap (see
+[Every option on napkinpoker's reference solves](#every-option-on-napkinpokers-reference-solves)). On AhKdQc, 4 threads, to 0.3% of pot in the bucketed game:
 
 | Ranges | Gap | Runouts | Time | True exploitability |
 |---|---|---|---|---|
@@ -652,6 +654,33 @@ shape whose stack-to-pot ratios fall in a log-bucket of width `w`. On the three-
 that is 1.5 times less storage at `w = 0.1` and 2 times at `w = 4`, but much lossier: a
 one-size tree was left 20% of pot exploitable at `w = 4`. A shared spot can warm-start
 only from another shared solve.
+
+**Keeping the busiest lines unshared.** A turn re-solved from a shared blueprint
+(`resolveSubgame`) inherits only the ranges the blueprint brings to it, and sharing
+distorts them. The flop play is stored unshared, but it learns from shared river values.
+`shareHistories: { keepLines }` gives the named lines (as `Solution.path` names their
+first turn decision, e.g. `"check check /"`) storage of their own. `linesWithin` picks the
+most-reached lines that a storage budget allows. Rank them on a cheap copy of the spot,
+with its river checked down, then solve the hybrid from cold:
+
+```ts
+import { createRun, defineSpot, linesWithin } from 'poker-flopsolve';
+import { wasmStorage } from 'poker-flopsolve/wasm-storage';
+
+const blueprint = { ...config, shareHistories: true };
+const pick = createRun(defineSpot({ ...blueprint, betSizes: [flopSizes, turnSizes, []] }), { workers: 4 });
+pick.step(80);
+const keepLines = linesWithin(pick.snapshot(), 150 * 2 ** 20, { config: blueprint, precision: 'i16' });
+pick.close();
+const run = createRun(defineSpot({ ...blueprint, shareHistories: { keepLines } }), { workers: 4, precision: 'i16', wasmStorage });
+```
+
+On issue #47's blueprint (one turn and river size, `runoutBuckets: 3`), turns re-solved
+from plain sharing gave a best response 3.0–4.2% of the subgame pot, against 0.4–0.7% from
+the unshared blueprint. With the budget, the gap was 0.1–0.8%. On As Kh 7d, the 150 MiB
+budget at 16 bits kept 3 lines and peaked at 392 MiB in Chromium on 4 threads, with a
+re-solve gain of 1.47 / 0.92% against 0.67 / 0.50% unshared. Figures are in
+`bench/blueprint-share/README.md`.
 
 ### Thinning bet sizes (approximate, for memory)
 
@@ -772,8 +801,12 @@ Stopped at 15 s, single-threaded in Chromium, it leaves 0.29% of pot on the firs
 where the exact solve leaves 0.69%, 0.11% for 0.20% on the wide flop and 0.17% for
 0.28% on pairs and broadway; the range-weighted error of per-hand root EVs against an
 exact 0.1% solve falls from 1.0–1.1% of pot to 0.12–0.16% on the first, and to about a
-third on the others. It runs on one thread only, in both engines; the baselines count against
-`maxBytes`. With `p: 1` it is the exact solve, bit for bit. `rounds: [2]` samples
+third on the others. It runs on `workers` threads wherever the engine threads (issue #99:
+the WebAssembly engine in Node and the browser, the JavaScript engine in Node). Each thread
+samples the deals of its own runouts, and whether a deal is walked on an iteration is a hash
+of its chance node, the deal and the iteration, so every thread count walks the same deals
+and a fixed count is bitwise repeatable. On 4 Chromium threads it ran 3.1–3.2× faster than on
+one (`bench/blueprint-share/README.md`). The baselines count against `maxBytes`. With `p: 1` it is the exact solve, bit for bit. `rounds: [2]` samples
 river deals only.
 
 ### Coarse start (approximate start, exact answer)
@@ -873,6 +906,85 @@ iteration compact, 8.1 s at 16 bits and 2.3 s at 32 bits on WebAssembly; T itsel
 an ArrayBuffer of 2 GiB or more. `bench/storage/` has the measurements and the variants
 that were left out: 4- and 6-bit regrets, a log scale, sparse regrets, and dropping sums on
 the later streets only.
+
+### Every option on napkinpoker's reference solves
+
+`bench/reference/` scores any solution against 70 full-hand solves by postflop-solver
+(every flop texture, realistic weighted ranges; see its `napkinpoker/README.md`). At each
+stored flop node, and the first turn decision after each stored turn card, it values our
+strategy at the stored per-action EVs. Those are exact action against action. The EV our
+play gives up against each hand's best stored action is the regret we leave in that game.
+It is reach-weighted by the stored range, in % of the node's pot. A flop node is scored
+when the opponent reaches it at least 3% of the time. A turn node is scored when both
+players play its flop line at least 3% of the time. The stored strategy's own loss at the same
+nodes is the floor these numbers can resolve: about 0.03% of pot on the flop and turn,
+0.06% at the root.
+
+**The exact solver against postflop-solver.** Seven spots, solved exactly to 0.3% of pot
+on four threads at 32 bits. Our regrets on the actions either solver plays differ from
+the stored ones by 0.014–0.050% of pot on average, and by 0.16% at the worst
+well-reached node. Our root play loses what the stored strategy does at its own values.
+Larger differences are confined to actions neither solver plays, chiefly shoves, whose
+values neither solve trains closely:
+
+| Spot | Board | Pot | Iterations, time | Played-action regret error, flop / turn (worst node) |
+|---|---|---|---|---|
+| f03 | 7c 6s Jc | 3-bet | 140, 61 s | 0.014 / 0.020% (0.064) |
+| f15 | As Kc 3d | 3-bet | 140, 92 s | 0.041 / 0.021% (0.153) |
+| f23 | 2d 3h 2c | 3-bet | 160, 79 s | 0.019 / 0.021% (0.062) |
+| f79 | 4s 7c 4c | 3-bet | 130, 59 s | 0.017 / 0.023% (0.096) |
+| f85 | 5s Js 6s | single-raised | 390, 249 s | 0.018 / 0.019% (0.055) |
+| f05 | 5s Ts Ac | single-raised | 410, 555 s | 0.021 / 0.050% (0.158) |
+| f01 | 7h 5c 7s | single-raised | 440, 698 s | 0.024 / 0.017% (0.059) |
+
+**Each option.** Measured on three 3-bet pots (f03 two-tone, f15 rainbow, f79 paired), on
+four threads, at the iterations the exact solve took to 0.3% of pot. That makes each row
+the option's cost at equal iterations. Losses are in % of the node's pot, means over the
+spots. Root is OOP at the flop root / IP after a check.
+
+| Option | Storage | Time | Root loss | Flop nodes | Turn nodes | True exploitability |
+|---|---|---|---|---|---|---|
+| exact | 1.00× | 1.00× | 0.059 / 0.054 | 0.030 | 0.031 | 0.27% |
+| `wasmStorage`, i16 | 0.52× | 1.16× | 0.059 / 0.067 | 0.033 | 0.035 | 0.37% |
+| `compactStorage` (with `wasmStorage`) | 0.37× | 1.37× | 0.063 / 0.080 | 0.045 | 0.039 | 0.63% |
+| `shareHistories` | 0.40× | 1.00× | 0.061 / 0.068 | 0.034 | 0.041 | 1.89% |
+| `shareHistories` + `compactStorage` | 0.15× | 1.40× | 0.067 / 0.083 | 0.041 | 0.047 | 2.08% |
+| `thinSizes` (15 of 61 nodes cut) | 0.74× | 0.66× | 0.067 / 0.294 | 0.084 | 0.048 | 0.22% in its own tree |
+| `thinSizes` + `shareHistories` | 0.35× | 0.72× | 0.071 / 0.288 | 0.084 | 0.049 | 2.07% in its own tree |
+| `lineRunouts: { aggressions: 2 }` | 0.73× | 1.65× | 0.097 / 0.072 | 0.251 | 0.234 | 5.94% |
+| `chanceSampling` | 1.00× | 0.21× | 0.171 / 0.172 | 0.130 | 0.397 | 8.64% |
+| the same, 2× the iterations | 1.00× | 0.38× | 0.086 / 0.086 | 0.052 | 0.093 | 2.26% |
+| the same, 4× the iterations | 1.00× | 0.69× | 0.057 / 0.056 | 0.030 | 0.033 | 0.60% |
+| `shareHistories` + `chanceSampling` | 0.40× | 0.21× | 0.128 / 0.122 | 0.090 | 0.274 | 8.30% |
+| blueprint + `resolveSubgame` | 0.59× | 0.68× with the re-solves | 0.062 / 0.073 | 0.057 | 0.107; re-solved 0.053 | — |
+| `runoutBuckets: 3`, `coarseStart`, and their pairs | as without them | | | | | |
+
+- **Storage options cost almost nothing at the root.** i16 stays within the noise. Compact
+  storage and sharing add a few hundredths of a percent of pot. Sharing's exploitability
+  plateau (1.9%) lies mostly in lines the stored nodes do not reach.
+- **`thinSizes`' cost is IP's bet after a check.** Away from the root it keeps one size. On
+  these spots IP's 33% bet after a check is its main play, so the IP root loses 0.29%
+  of pot. Its flop and turn means cover only the nodes its tree still holds. The 15 lines
+  it cut are left out, so those means understate its cost.
+- **`lineRunouts` costs on the flop.** Its coarse runouts on two-aggression lines move flop
+  play by 0.25% of pot.
+- **`chanceSampling` wins on time.** On four threads its iterations cost a fifth of exact
+  ones. At equal iterations it is far from settled, but at four times the iterations, in
+  0.69× the exact solve's time, its root, flop and turn play match the exact solve's, though
+  it is 0.60% of pot exploitable against 0.27%.
+- **`resolveSubgame`:** the blueprint here keeps the flop's betting and gives the turn and
+  river one 75% bet, with no raise or shove there. Re-solving each stored turn with the
+  full betting (200 iterations) halves the blueprint's turn loss, to 0.053% of pot
+  against 0.031% exact.
+- **`runoutBuckets` folds nothing on any of the 70 spots, at any gap.** Their weighted
+  ranges give no rank swap that maps both ranges onto themselves. So it, and
+  `coarseStart`, which buckets the same way, leave these solves exactly as they were.
+
+`bench/reference/results/` has every number, per spot and per node. `test/combinations.test.ts` solves
+every pair of the nine opt-ins on a small spot. Each pair either runs, repeatable
+on two threads, matching one thread and the JavaScript engine, or is refused with an
+error: `lineRunouts` with `shareHistories`, `compactStorage`, `chanceSampling` or
+`coarseStart`, and `chanceSampling` at 16 bits.
 
 ### Algorithm and benchmark
 
@@ -1019,6 +1131,11 @@ enumerated and can be canonicalised for a 12× win.
   runout count — invisible on a river board, where that factor is 1.
 - Zero-sum to 1e-9, exploitability non-negative and non-increasing, and every strategy a
   probability distribution.
+- **Against an independent solver.** On seven of napkinpoker's postflop-solver references,
+  every texture, exact solves agree with the stored regrets to 0.01–0.05% of pot on the
+  actions either plays (see [Every option on napkinpoker's reference solves](#every-option-on-napkinpokers-reference-solves)).
+- **Options in pairs.** Every pair of the nine opt-ins is solved, repeated, compared across
+  thread counts and engines, and checked to change nothing when one of them is off.
 
 ```bash
 npm test

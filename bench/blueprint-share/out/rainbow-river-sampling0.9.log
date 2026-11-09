@@ -1,0 +1,27 @@
+rainbow-river-sampling0.9: 306 nodes, 1396 runouts, 173 MiB f32
+  20 it, 15.862%, 28 s
+  40 it, 8.095%, 55 s
+  80 it, 4.182%, 110 s
+  120 it, 3.163%, 163 s
+  160 it, 2.798%, 217 s
+  200 it, 2.697%, 273 s
+  240 it, 2.688%, 326 s
+  280 it, 2.691%, 381 s
+  320 it, 2.700%, 434 s
+  360 it, 2.710%, 485 s
+  400 it, 2.722%, 536 s
+  440 it, 2.734%, 588 s
+  480 it, 2.757%, 640 s
+  520 it, 2.777%, 694 s
+  560 it, 2.791%, 746 s
+  600 it, 2.804%, 797 s
+  640 it, 2.818%, 848 s
+  680 it, 2.837%, 900 s
+  720 it, 2.857%, 951 s
+  760 it, 2.877%, 1004 s
+  800 it, 2.898%, 1054 s
+blueprint: 800 it, 2.898% (best 2.688%), 1054 s, engine wasm, peak RSS 397 MiB
+root EV error, % pot: OOP mean 0.443 max 7.200; IP mean 0.358 max 2.850
+  OOP at root: root play loses 0.0113% pot at reference values (max 0.102); the reference's own 0.0089%
+  IP after check: root play loses 0.0098% pot at reference values (max 0.052); the reference's own 0.0083%
+re-solve gain, weighted by line reach: OOP refined NaN%, IP refined NaN%

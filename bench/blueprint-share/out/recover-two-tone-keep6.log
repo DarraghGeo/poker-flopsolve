@@ -1,0 +1,14 @@
+picked 6 lines in 30 s: check check / 31.9%; bet 18.15 call / 20.1%; check bet 18.15 call / 6.8%; check bet 41.25 call / 3.8%; bet 18.15 raise 86.63 call / 3.5%; check bet 82.5 call / 2.6%
+two-tone-keep6: 282 MiB f32, keep 6 lines
+400 it (152 s solving): 1.965% of pot; root play loses 0.1158 / 0.0546%; root EV error 0.082 (1.02) / 0.058 (0.42)
+    bet_18.15_call_-2c: TV 0.011 / 0.008, mass ×0.988 / ×1.005; gain 0.59 / 0.51, ref OOP range 0.47 / 0.61, ref IP range 0.61 / 0.49
+    bet_18.15_call_-As: TV 0.011 / 0.007, mass ×0.989 / ×1.005; gain 0.42 / 0.39, ref OOP range 0.32 / 0.39, ref IP range 0.46 / 0.33
+    bet_18.15_call_-Qd: TV 0.011 / 0.008, mass ×0.988 / ×1.005; gain 0.36 / 0.39, ref OOP range 0.22 / 0.38, ref IP range 0.35 / 0.28
+    check_bet_41.25_call_-2c: TV 0.020 / 0.046, mass ×1.006 / ×0.963; gain 0.42 / 1.24, ref OOP range 0.19 / 1.22, ref IP range 0.42 / 0.16
+    check_bet_41.25_call_-As: TV 0.021 / 0.051, mass ×1.007 / ×0.969; gain 0.56 / 1.06, ref OOP range 0.23 / 1.17, ref IP range 0.68 / 0.27
+    check_bet_41.25_call_-Qd: TV 0.020 / 0.049, mass ×1.005 / ×0.969; gain 0.83 / 1.03, ref OOP range 0.23 / 0.59, ref IP range 0.69 / 0.54
+    check_check_-2c: TV 0.007 / 0.011, mass ×1.006 / ×0.998; gain 0.75 / 1.00, ref OOP range 0.67 / 0.97, ref IP range 0.82 / 0.83
+    check_check_-As: TV 0.006 / 0.011, mass ×1.005 / ×0.998; gain 0.74 / 0.75, ref OOP range 0.62 / 0.80, ref IP range 0.74 / 0.64
+    check_check_-Qd: TV 0.007 / 0.012, mass ×1.006 / ×0.997; gain 0.57 / 0.63, ref OOP range 0.46 / 0.61, ref IP range 0.55 / 0.60
+  400 it: re-solve gain 0.612 / 0.719; with the reference OOP range 0.476 / 0.714, IP range 0.627 / 0.559; range TV 0.009 / 0.014
+peak RSS 2194 MiB, 445 s in all

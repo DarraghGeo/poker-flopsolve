@@ -41,6 +41,7 @@ import {
 	buildPlayerIndex,
 	makeSampling,
 	planSampling,
+	sampledRounds,
 	samplingBytes,
 	makeSolver,
 	makeTerminalScratch,
@@ -57,6 +58,8 @@ export type { WarmStartReport } from './warm.ts';
 export { resolveSubgame } from './resolve.ts';
 export { rootPlay, rootPlayMovement, rootPlayNodes, trackSettle } from './settle.ts';
 export type { RootPlay, SettleOptions, SettleTracker } from './settle.ts';
+export { linesWithin, turnLineReach } from './hybrid.ts';
+export type { LineReach, LinesWithinOptions } from './hybrid.ts';
 export type { Gadget, ResolvedSubgame, ResolveOptions } from './resolve.ts';
 export { simdAvailable } from './kernels.ts';
 export type { BetSize } from './tree.ts';
@@ -261,10 +264,27 @@ export interface SpotConfig {
 	 * came out 0.4–0.6% of pot from the unshared ones (2–3% at worst), and
 	 * turns re-solved from it with T's betting gave the opponent 2.2–3.0% of
 	 * their pot under the unshared ranges, against 0.5–0.7% from the unshared
-	 * blueprint. `chanceSampling` composes, on one thread: 238 ms an
-	 * iteration, the root settled in 109 s, 453 MiB. `coarseStart` composes
+	 * blueprint. `chanceSampling` composes: on one thread 238 ms an iteration,
+	 * the root settled in 109 s, 453 MiB; on 4 threads (issue #99) 70 ms, the
+	 * root settled in 33 s at the same iteration, 452 MiB. `coarseStart` composes
 	 * but finds no coarser copy at a gap of 3. `bench/blueprint-share/` has
 	 * the scripts and figures.
+	 *
+	 * Where a shared solve stops depends on its first few iterations (issue
+	 * #105). A shared block plays one strategy for every history meeting in
+	 * it, so the game has many stable points, and which one the solve settles
+	 * on is decided early, when regret matching plays nearly pure. Any
+	 * randomness then picks another: chance sampling, 8-bit stochastic
+	 * rounding, even float rounding under CFR+. On #103's turn spot
+	 * (exploitability 5.8% of pot), sampling at p 0.9 ended at 0.3–1.6%
+	 * over six different sets of draws. On a second turn spot (0.7%) it
+	 * changed nothing. On the blueprint above, neither sampling at p 0.9
+	 * (2.9%) nor 8-bit stochastic storage (2.5%) moved the plateau beyond
+	 * that spread, against 2.6% shared alone. Do not count on noise to
+	 * lower it. Of the deterministic changes tried (other regret
+	 * weighting, discount start, uniform play mixed into the first
+	 * iterations), none was a reliable gain. `bench/share-noise/` has the
+	 * measurements.
 	 *
 	 * `true` shares the river. See `ShareHistories` for the turn and for
 	 * lossier buckets.
@@ -464,6 +484,59 @@ export interface ShareHistories {
 	 * into it; 'counterfactual' adds them as plain CFR would.
 	 */
 	readonly weighting?: 'reach' | 'counterfactual';
+	/**
+	 * Lines whose later streets keep storage of their own, each named as
+	 * `Solution.path` names a node (a flop line opening the turn reads like
+	 * `"check check /"`). Every node at or below a listed one is left out of
+	 * sharing, and so is any round root above one. The rest share as
+	 * before. Unset or empty, nothing is kept. A warm start into a spot that
+	 * differs only here, keeping at least the lines its source keeps,
+	 * carries the average strategy too, as for the same spot.
+	 *
+	 * What it is for (issue #101): a turn re-solved from a shared blueprint
+	 * (`resolveSubgame`) inherits only the ranges the blueprint brings to
+	 * it, and sharing distorts those. Its flop play is stored unshared, but
+	 * it learns from river values that several histories share. Keeping the
+	 * few most-reached flop lines unshared gives the flop exact values
+	 * where most of the play is, and that straightens the ranges on the
+	 * lines left shared too. Pick them with `linesWithin` (the most-reached
+	 * lines, `turnLineReach`, that a storage budget allows) from a short
+	 * solve, 80 iterations, of a cheap copy of the spot (below); close that
+	 * and solve the hybrid spot from cold. Continuing from the picking solve
+	 * instead is worse: its average lingers.
+	 *
+	 * Measured on issue #47's blueprint (`1size-b3`), 400 iterations, against
+	 * the unshared blueprint solved to 0.045% of pot. "Re-solve gain" is the
+	 * opponent's best response to an unsafe turn re-solve at the full
+	 * three-size betting, under the unshared blueprint's ranges, in % of the
+	 * subgame pot, weighted by line reach, refining OOP / IP; the unshared
+	 * blueprint's own re-solves give 0.67 / 0.50. On AsKh7d:
+	 *
+	 * | kept | storage, f32 | re-solve gain | root EV error, mean |
+	 * |---|---|---|---|
+	 * | none (plain sharing) | 173 MiB | 3.05 / 2.15 | 0.57 / 0.46 |
+	 * | top 1 | 201 MiB | 2.48 / 1.58 | 0.46 / 0.53 |
+	 * | top 3 | 285 MiB | 1.10 / 0.83 | 0.24 / 0.21 |
+	 * | top 6 | 383 MiB | 1.16 / 0.65 | 0.23 / 0.27 |
+	 * | all (unshared) | 707 MiB | 0.67 / 0.50 | 0 |
+	 *
+	 * On Ts9s4h and Ks9s4s plain sharing gives 4.10 / 3.69 and 4.23 /
+	 * 2.72 against 0.48 / 0.55 and 0.44 / 0.47 unshared. Kept by a 300 MiB
+	 * budget (`linesWithin`), two-tone keeps 6 lines in 282 MiB for 0.61 /
+	 * 0.72, and monotone all 19 in 187 MiB. The top 3 alone are not enough
+	 * on two-tone (1.82 / 1.96), so budget the storage, not the count.
+	 *
+	 * In Chromium the picking solve's WebAssembly memory stays resident
+	 * until it is collected, so it adds to the peak. Rank on a cheap copy
+	 * instead: the blueprint with its river checked down (57 MiB on AsKh7d)
+	 * ranked the same top 3 there. Within 512 MiB on AsKh7d, store the
+	 * hybrid at 16 bits (`precision: 'i16'` with `wasmStorage`) with a 150
+	 * MiB budget at that precision. It keeps the same 3 lines, re-solves at
+	 * 1.47 / 0.92, and peaked at 392 MiB on 4 threads, 592 ms an iteration
+	 * against 495 shared, its root play settled in 127 s. Two-tone the same
+	 * way: 0.88 / 0.85. `bench/blueprint-share/` has the scripts and figures.
+	 */
+	readonly keepLines?: readonly string[];
 }
 
 /** Projected cost of solving a spot. */
@@ -733,11 +806,51 @@ function shareHistories(
 	if (asked.weighting !== undefined && asked.weighting !== 'reach' && asked.weighting !== 'counterfactual') {
 		throw new Error(`shareHistories.weighting must be 'reach' or 'counterfactual', got ${String(asked.weighting)}`);
 	}
+	const keep = asked.keepLines && asked.keepLines.length > 0 ? keptNodes(tree, chipScale, asked.keepLines) : undefined;
 	return aliasHistories(
 		tree, runouts,
-		{ key: width === undefined ? { kind: 'exact' } : { kind: 'spr', width }, fromRound: from ?? runouts.rounds - 1 },
+		{ key: width === undefined ? { kind: 'exact' } : { kind: 'spr', width }, fromRound: from ?? runouts.rounds - 1, keep },
 		Math.round(config.stack * chipScale),
 	).alias;
+}
+
+/**
+ * `ShareHistories.keepLines` as node marks: each listed node, everything
+ * below it, and everything above it, so that no round root containing it
+ * is shared either.
+ */
+function keptNodes(tree: Tree, chipScale: number, lines: readonly string[]): Uint8Array {
+	const parent = new Int32Array(tree.nodeCount).fill(-1);
+	const paths: string[] = new Array(tree.nodeCount);
+	paths[0] = '(root)';
+	// Children come after their parents, so a parent's path is always ready.
+	for (let node = 0; node < tree.nodeCount; node++) {
+		for (let e = 0; e < tree.numEdges[node]; e++) {
+			const edge = tree.firstEdge[node] + e;
+			const child = tree.edgeChild[edge];
+			parent[child] = node;
+			const step = tree.kind[node] === NodeKind.Decision ? actionLabel(tree.edgeAction[edge], tree.edgeTarget[edge], chipScale) : '/';
+			paths[child] = node === 0 ? step : `${paths[node]} ${step}`;
+		}
+	}
+	const listed = new Set(lines);
+	const missing = new Set(lines);
+	const marks = new Uint8Array(tree.nodeCount);
+	// At or below a listed node: parents come first, so one sweep does.
+	for (let node = 0; node < tree.nodeCount; node++) {
+		if (listed.has(paths[node])) {
+			missing.delete(paths[node]);
+			marks[node] = 1;
+		} else if (parent[node] >= 0 && marks[parent[node]]) {
+			marks[node] = 1;
+		}
+	}
+	if (missing.size > 0) {
+		throw new Error(`shareHistories.keepLines: no node of this tree has the path ${[...missing].map((l) => `"${l}"`).join(', ')}`);
+	}
+	// Above one: every ancestor of a marked node.
+	for (let node = tree.nodeCount - 1; node > 0; node--) if (marks[node]) marks[parent[node]] = 1;
+	return marks;
 }
 
 /** Solver tuning. */
@@ -1411,6 +1524,29 @@ export interface Approximations {
 	 *   moved by under 0.15% of the subgame pot at 100 and 300 iterations
 	 *   with DCFR's count restarted, and doubled with the blueprint's count
 	 *   kept. One turn/river size says little about the full betting's.
+	 *
+	 * Recovering turn re-solves from a `shareHistories` blueprint (#101):
+	 * `ShareHistories.keepLines` is what is offered. Measured and left out,
+	 * on AsKh7d (`bench/blueprint-share/recover.ts`, numbers in % of the
+	 * subgame pot as `keepLines` gives them, plain sharing 3.05 / 2.15):
+	 *
+	 * - A re-solve with a cold river: that is what `resolveSubgame` already
+	 *   does at new betting. `subgameAt` hands over only the ranges, and the
+	 *   whole gap is the refined player's own range. Swapping in the
+	 *   unshared blueprint's range for that player alone gives 0.67 / 0.54.
+	 * - More blueprint iterations: 800 gave 2.48 / 2.36. The ranges' distance
+	 *   from the unshared ones went only from 0.086 to 0.081 (total
+	 *   variation, OOP), so the ranges do not settle later than the root.
+	 * - `weighting: 'counterfactual'`: 7.2 / 6.5, 15% of pot exploitable.
+	 * - Noise, which #105 found moves a shared solve's plateau: with
+	 *   `chanceSampling` at p 0.5, 0.7 and 0.9, 2.52 / 2.26, 2.78 / 1.99
+	 *   and 3.43 / 2.30; with 8-bit `compactStorage`, 2.38 / 1.89. The
+	 *   ranges stay 0.08–0.09 from the unshared ones (OOP).
+	 * - Refining the opened line: the shared solve continued 60 iterations
+	 *   with that line unshared, average included, then re-solved: 2.51 /
+	 *   1.89. The 400 shared iterations' average barely moves in 60.
+	 * - Keeping the top 3 lines but continuing from the picking solve
+	 *   rather than from cold: 1.66 / 0.89, against 1.10 / 0.83.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
@@ -1434,8 +1570,23 @@ export interface Approximations {
 	 *
 	 * Costs: one float per hand per stored deal per chance node, 6–31 MB on
 	 * those flops (about 12–20% beside their storage), counted against
-	 * `maxBytes`; always one thread (`workers` is ignored); 32- or 64-bit
-	 * storage, or `compactStorage` over either. With `targetPercent`, a sampled solve runs more
+	 * `maxBytes`; 32- or 64-bit storage, or `compactStorage` over either.
+	 *
+	 * Threads (issue #99): it runs on `workers` threads, in the JavaScript
+	 * pool and on the WebAssembly engine's threads alike. Threads split the
+	 * runouts as for an exact solve, and the state sampling keeps (baselines,
+	 * when each deal was last walked, when each block was last updated for
+	 * the catch-up) lives in shared memory, each thread's runouts' entries
+	 * its own. There is no per-thread random stream: whether a deal is walked
+	 * on an iteration is a hash of its chance node, the deal and the
+	 * iteration, in both engines, so every thread count walks the same deals
+	 * on the same iterations. A fixed count is then bitwise repeatable, and
+	 * different counts differ only as unsampled ones do (see `workers`). A
+	 * spot sampling a round above the threads' split, which no flop or turn
+	 * spot has, runs on one thread. Measured in Chromium on issue #47's
+	 * blueprint, 4 threads ran 3.1–3.2 times faster than 1 on three flops,
+	 * and the shared AsKh7d blueprint's root play settled in 33 s against
+	 * 105 s (`bench/blueprint-share/README.md`). With `targetPercent`, a sampled solve runs more
 	 * iterations, so it makes a few more exploitability checks.
 	 * Off, nothing changes; at `p: 1` it is the exact solve, bit for bit.
 	 */
@@ -1673,10 +1824,17 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const wantsEngine =
 		options.engine !== 'js' && !options.analysisOnly && options.simd !== false && !lines &&
 		((precision === 'f32' && !compact) || storageEngine);
-	// Sampling's state is one thread's; see `Approximations.chanceSampling`.
 	const samplingOptions = options.approximations?.chanceSampling;
-	const requested = samplingOptions ? 1 : resolveWorkers(options, wantsEngine);
-	const plan = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
+	const requested = resolveWorkers(options, wantsEngine);
+	const shards = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
+	// Threads sample the deals of their own runouts, below the split. A
+	// sampled round above it would be sampled by the main thread after the
+	// threads had walked it, so such a spot stays on one thread; the split
+	// sits at the first round with more than one board, so no flop or turn
+	// spot has one: this is a guard, not a case a real spot reaches.
+	const plan = shards && samplingOptions && sampledRounds(samplingOptions, spot.runouts.rounds).some((r) => r < shards.round)
+		? null
+		: shards;
 
 	// Workers need the accumulators in shared memory. Allocating shared for a
 	// single-threaded solve would cost nothing but buys nothing either.
@@ -1774,7 +1932,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		totalMass: matchupMass(spot.players[0].weights, spot.players[1].weights) * weights[0],
 		dcfr: (options.algorithm ?? 'dcfr') === 'dcfr',
 	};
-	if (samplingPlan) ctx.sampling = makeSampling(samplingPlan, engine?.sampling ?? undefined);
+	if (samplingPlan) ctx.sampling = makeSampling(samplingPlan, engine?.sampling ?? undefined, allocate);
 	if (layout.shared) ctx.discounted = engine?.discounted ?? new Int32Array(layout.blocks);
 	if (lines) {
 		const writable = ctx as { lineStarts?: Context['lineStarts']; lineScales?: Context['lineScales'] };
@@ -1942,19 +2100,10 @@ function planCoarseStart(spot: Spot, options: SolveOptions, precision: Precision
 
 	// A compact spot's coarse spot is compact too: its storage is its layout at
 	// that precision, beside the rest `estimate.compactBytes` counts at 32 bits.
-	const cost = (of: Spot, at: Precision): number => {
-		if (of.estimate.compactBytes === null) {
-			return at === 'i16' ? of.estimate.compressedBytes : of.estimate.bytes * (at === 'f64' ? 2 : 1);
-		}
-		const plan = compactPlan(of.source.compactStorage!, of.runouts.rounds);
-		const bytesAt = (width: number): number =>
-			buildLayout(of.tree, of.runouts, of.players, width, of.historyAlias, reachWeighted(of.source), plan).bytes;
-		return of.estimate.compactBytes + bytesAt(PRECISION_BYTES[at]) - bytesAt(4);
-	};
-	const used = cost(spot, precision);
+	const used = storageCost(spot, precision);
 	const left = maxBytes - used;
-	const coarsePrecision: Precision = options.precision ?? (cost(coarseSpot, 'f32') <= left ? 'f32' : 'i16');
-	const needs = cost(coarseSpot, coarsePrecision);
+	const coarsePrecision: Precision = options.precision ?? (storageCost(coarseSpot, 'f32') <= left ? 'f32' : 'i16');
+	const needs = storageCost(coarseSpot, coarsePrecision);
 	if (needs > left) {
 		throw new Error(
 			`coarseStart needs ~${formatBytes(needs)} beside this spot's ~${formatBytes(used)}, ` +
@@ -1987,6 +2136,17 @@ function solveCoarse(plan: CoarsePlan, options: SolveOptions): SolveRun {
 	return run;
 }
 
+/** Bytes `of` takes stored at `at`, compact storage included. */
+export function storageCost(of: Spot, at: Precision): number {
+	if (of.estimate.compactBytes === null) {
+		return at === 'i16' ? of.estimate.compressedBytes : of.estimate.bytes * (at === 'f64' ? 2 : 1);
+	}
+	const plan = compactPlan(of.source.compactStorage!, of.runouts.rounds);
+	const bytesAt = (width: number): number =>
+		buildLayout(of.tree, of.runouts, of.players, width, of.historyAlias, reachWeighted(of.source), plan).bytes;
+	return of.estimate.compactBytes + bytesAt(PRECISION_BYTES[at]) - bytesAt(4);
+}
+
 /**
  * Whether two configurations describe the very same game. Limits and how
  * runouts are stored do not change the game, so they are left out.
@@ -1994,7 +2154,25 @@ function solveCoarse(plan: CoarsePlan, options: SolveOptions): SolveRun {
 function sameSpot(a: SpotConfig, b: SpotConfig): boolean {
 	const plain = ({ maxBytes: _bytes, maxCombos: _combos, isomorphism: _iso, ...game }: SpotConfig): string =>
 		JSON.stringify(game, (_, value: unknown) => (value instanceof Float64Array ? Array.from(value) : value));
-	return plain(a) === plain(b);
+	const kept = (config: SpotConfig): readonly string[] | undefined =>
+		typeof config.shareHistories === 'object' ? config.shareHistories.keepLines : undefined;
+	if (kept(a) === undefined && kept(b) === undefined) return plain(a) === plain(b);
+	// `keepLines` only gives nodes their shared block's own copy, so a warm
+	// start into a spot keeping every line its source keeps copies each node
+	// exactly, average included; into one keeping fewer, several histories
+	// would write one block.
+	const mine = new Set(kept(a) ?? []);
+	if (!(kept(b) ?? []).every((line) => mine.has(line))) return false;
+	return plain(withoutKeptLines(a)) === plain(withoutKeptLines(b));
+}
+
+/** `config` with `keepLines` dropped and its sharing in one form: `true` and `{}` alike, unset keys gone. */
+function withoutKeptLines(config: SpotConfig): SpotConfig {
+	const asked = config.shareHistories;
+	if (!asked) return config;
+	const { keepLines: _kept, ...rest } = asked === true ? {} : asked;
+	const set = Object.entries(rest).filter(([, value]) => value !== undefined);
+	return { ...config, shareHistories: set.length > 0 ? Object.fromEntries(set) : true };
 }
 
 /** Largest rank distance within a runout bucket, for `runoutBuckets: true`. */
