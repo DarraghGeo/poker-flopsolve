@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.5.0
+## 0.5.0-beta.0
 
-A minor release. Every approximation below is opt-in and off by default. The README's
+The first beta of 0.5.0, published under npm's `beta` tag (`npm install poker-flopsolve@beta`); `latest` stays 0.4.1 until 0.5.0. A minor release. Every approximation below is opt-in and off by default. The README's
 [Choosing an approximation](README.md#choosing-an-approximation) maps goals to presets, and its
 [options inventory](README.md#options-inventory) gives each option's status and measured cost.
 
