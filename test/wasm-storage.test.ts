@@ -119,6 +119,26 @@ describe.runIf(engineAvailable())('16-bit and compact storage on the WebAssembly
 		}
 	}
 
+	it('salts the 16-bit dither with the history under shared storage, as JavaScript does', () => {
+		// Issue #94. With the same stream, the engines' sums agree on all but a
+		// few slots that float32 puts across a rounding boundary (0.01% here);
+		// with one engine unsalted, 3% of them differ after one iteration.
+		const config = { ...flop, shareHistories: true };
+		for (const workers of [1, 3]) {
+			const js = createRun(defineSpot(config), { workers: 1, precision: 'i16' });
+			const engine = createRun(defineSpot(config), { workers, precision: 'i16', wasmStorage });
+			try {
+				expect(engine.engine).toBe('wasm');
+				js.step(1);
+				engine.step(1);
+				expect(compareStorage(js, engine).get('strategySum')).toBeLessThanOrEqual(0.005);
+			} finally {
+				js.close();
+				engine.close();
+			}
+		}
+	});
+
 	it('floors a negative regret under CFR+ at 16 bits and compact, as JavaScript does', () => {
 		// Only a warm start from a DCFR solve brings negative regrets into a CFR+ one.
 		for (const [config, options] of [[flop, { precision: 'i16' }], [{ ...flop, compactStorage: {} }, {}]] as [SpotConfig, SolveOptions][]) {

@@ -1270,7 +1270,7 @@ export function traverse(
 		);
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.regretScale !== null) {
 		updateQuantised(
-			ctx, ctx.layout.blockOffset[node] + board, slotBase, actions, stride,
+			ctx, node, ctx.layout.blockOffset[node] + board, slotBase, actions, stride,
 			iterWeight, reachMe, strategy, actionValues, out,
 		);
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.dcfr) {
@@ -1398,7 +1398,12 @@ function sampledValue(
  * a hand whose sum is small beside its block's largest loses most of every
  * iteration's contribution, and measured, exploitability stalls near 0.04%
  * of pot where float32 keeps falling. The randomness is a hash of the slot and
- * the iteration, so a solve stays deterministic at any thread count.
+ * the iteration, so a solve stays deterministic at any thread count. With
+ * shared storage it is salted with the history's `node` (else 0): every
+ * history that reaches a shared block re-encodes it in an iteration, and with
+ * one stream for all of them their roundings would push the same way
+ * (issue #94). The node is fixed by the tree, so the salt does not depend on
+ * threads or on the order histories are visited in.
  *
  * `actionValues` and `strategy` are not needed once their values are used, so
  * the new regrets and sums are staged in them rather than in buffers of their
@@ -1406,6 +1411,7 @@ function sampledValue(
  */
 function updateQuantised(
 	ctx: Context,
+	node: number,
 	block: number,
 	slotBase: number,
 	actions: number,
@@ -1471,6 +1477,8 @@ function updateQuantised(
 	// reach 65536 and wrap to zero, hence the cap.
 	const regretStep = largestRegret > 0 ? REGRET_STEPS / largestRegret : 0;
 	const sumStep = largestSum > 0 ? SUM_STEPS / largestSum : 0;
+	// Which history is re-encoding a shared block; 0 keeps unshared streams as they were.
+	const salt = ctx.layout.shared ? node : 0;
 	for (let a = 0; a < actions; a++) {
 		const offset = a * count;
 		const slotRow = slotBase + a * count;
@@ -1478,7 +1486,7 @@ function updateQuantised(
 			const at = slotRow + i;
 			const r = actionValues[offset + i] * regretStep;
 			regret[at] = r < 0 ? r - 0.5 : r + 0.5;
-			const s = strategy[a * count + i] * sumStep + dither(at, iterWeight);
+			const s = strategy[a * count + i] * sumStep + dither(at, iterWeight, salt);
 			strategySum[at] = s < SUM_STEPS ? s : SUM_STEPS;
 		}
 	}
@@ -1725,9 +1733,13 @@ export function storedStrategy(
 	}
 }
 
-/** A deterministic uniform value in [0, 1) for a slot on an iteration. */
-function dither(slot: number, iteration: number): number {
-	let h = Math.imul(slot ^ Math.imul(iteration, 0x9e3779b1), 0x85ebca6b);
+/**
+ * A deterministic uniform value in [0, 1) for a slot on an iteration, from
+ * the stream `salt` picks; salt 0 is the stream unshared storage has always
+ * used. Distinct salts give a slot distinct hash inputs on every iteration.
+ */
+export function dither(slot: number, iteration: number, salt = 0): number {
+	let h = Math.imul(slot ^ Math.imul(iteration, 0x9e3779b1) ^ Math.imul(salt, 0x27d4eb2f), 0x85ebca6b);
 	h ^= h >>> 13;
 	h = Math.imul(h, 0xc2b2ae35);
 	h ^= h >>> 16;
