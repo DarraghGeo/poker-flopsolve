@@ -1,0 +1,33 @@
+f23 it 20 expl 12.472% 14 s
+f23 it 40 expl 3.564% 25 s
+f23 it 60 expl 1.748% 34 s
+f23 it 80 expl 0.962% 44 s
+f23 it 100 expl 0.692% 57 s
+f23 it 120 expl 0.506% 69 s
+f23 it 130 expl 0.429% 75 s
+f23 it 140 expl 0.371% 80 s
+f23 it 150 expl 0.318% 86 s
+f23 it 160 expl 0.278% 92 s
+f23     flop                  reach 1.00/1.00 err mean 1.450 played 0.020 max 4.325 self 0.024 | X 0.02 (0.66/0.66) B759 0.24 (0.01/0.00) B1725 0.06 (0.34/0.34) A8900 5.48 (0.00/0.00)
+f23     flop B1725            reach 1.00/0.34 err mean 0.279 played 0.014 max 0.592 self 0.021 | F 0.04 (0.30/0.29) C 0.04 (0.59/0.59) R5175 0.15 (0.11/0.11) A8900 0.89 (0.00/0.00)
+f23     flop X                reach 1.00/0.66 err mean 0.250 played 0.028 max 0.529 self 0.084 | X 0.02 (0.44/0.45) B759 0.06 (0.30/0.29) B1725 0.05 (0.26/0.27) A8900 0.88 (0.00/0.00)
+f23     flop B1725,R5175      reach 0.34/0.11 err mean 0.098 played 0.007 max 0.407 self 0.019 | F 0.14 (0.45/0.45) C 0.06 (0.55/0.55)
+f23     flop X,B1725          reach 0.66/0.27 err mean 0.101 played 0.027 max 0.262 self 0.029 | F 0.08 (0.46/0.46) C 0.08 (0.39/0.39) R5175 0.12 (0.14/0.14) A8900 0.13 (0.01/0.01)
+f23     flop X,B759           reach 0.66/0.29 err mean 0.139 played 0.042 max 0.560 self 0.040 | F 0.18 (0.21/0.20) C 0.08 (0.53/0.54) R2277 0.05 (0.25/0.24) A8900 0.25 (0.02/0.01)
+f23     flop X,B1725,R5175    reach 0.27/0.09 err mean 0.227 played 0.015 max 0.723 self 0.004 | F 0.34 (0.44/0.44) C 0.12 (0.56/0.56)
+f23     flop X,B759,R2277     reach 0.29/0.16 err mean 0.061 played 0.003 max 0.308 self 0.004 | F 0.11 (0.18/0.18) C 0.01 (0.82/0.82)
+f23-2h  turn B1725,C,d2h      reach 1.00/1.00 err mean 0.051 played 0.017 max 0.396 self 0.023 | X 0.05 (0.48/0.48) B4313 0.05 (0.24/0.24) A7175 0.05 (0.28/0.28)
+f23-2h  turn X,X,d2h          reach 1.00/1.00 err mean 0.891 played 0.049 max 3.067 self 0.043 | X 0.05 (0.73/0.73) B1725 0.17 (0.27/0.27) A8900 2.46 (0.00/0.00)
+f23-2h  turn B1725,R5175,C,d2h reach 1.00/1.00 err mean 0.036 played 0.004 max 0.108 self 0.004 | X 0.07 (0.04/0.04) A3725 0.01 (0.96/0.96)
+f23-2h  turn X,B1725,C,d2h    reach 1.00/1.00 err mean 0.774 played 0.000 max 1.715 self 0.001 | X 0.00 (1.00/1.00) B4313 1.33 (0.00/0.00) A7175 0.99 (0.00/0.00)
+f23-2h  turn X,B759,C,d2h     reach 1.00/1.00 err mean 4.736 played 0.000 max 6.687 self 0.001 | X 0.00 (1.00/1.00) B2864 4.22 (0.00/0.00) A8141 9.99 (0.00/0.00)
+f23-2h  turn X,B1725,R5175,C,d2h reach 1.00/1.00 err mean 0.006 played 0.002 max 0.066 self 0.001 | X 0.00 (0.74/0.62) A3725 0.01 (0.26/0.38)
+f23-2h  turn X,B759,R2277,C,d2h reach 1.00/1.00 err mean 0.087 played 0.016 max 0.368 self 0.021 | X 0.05 (0.78/0.78) B5141 0.10 (0.11/0.13) A6623 0.11 (0.10/0.09)
+f23-Ah  turn B1725,C,dAh      reach 1.00/1.00 err mean 0.316 played 0.011 max 1.006 self 0.010 | X 0.02 (0.74/0.73) B4313 0.14 (0.26/0.27) A7175 0.79 (0.00/0.00)
+f23-Ah  turn X,X,dAh          reach 1.00/1.00 err mean 0.477 played 0.020 max 1.427 self 0.029 | X 0.03 (0.71/0.71) B1725 0.19 (0.29/0.29) A8900 1.21 (0.00/0.00)
+f23-Ah  turn B1725,R5175,C,dAh reach 1.00/1.00 err mean 0.061 played 0.009 max 0.219 self 0.032 | X 0.11 (0.10/0.09) A3725 0.01 (0.90/0.91)
+f23-Ah  turn X,B1725,C,dAh    reach 1.00/1.00 err mean 0.635 played 0.024 max 0.979 self 0.032 | X 1.40 (0.02/0.02) B4313 0.02 (0.98/0.98) A7175 0.48 (0.01/0.00)
+f23-Ah  turn X,B759,C,dAh     reach 1.00/1.00 err mean 0.540 played 0.058 max 1.104 self 0.119 | X 0.11 (0.39/0.41) B2864 0.15 (0.61/0.59) A8141 1.36 (0.00/0.00)
+f23-Ah  turn X,B1725,R5175,C,dAh reach 1.00/1.00 err mean 0.132 played 0.048 max 0.879 self 0.005 | X 0.23 (0.09/0.13) A3725 0.04 (0.91/0.87)
+f23-Ah  turn X,B759,R2277,C,dAh reach 1.00/1.00 err mean 0.119 played 0.025 max 0.727 self 0.043 | X 0.08 (0.35/0.34) B5141 0.11 (0.60/0.62) A6623 0.17 (0.05/0.04)
+{"id":"f23","name":"SB vs BU 3bet · 2d3h2c · flop","board":"2d 3h 2c","potType":"3BP","precision":"f32","bytes":608631912,"iterations":160,"exploitability":0.2776414748159667,"seconds":92.284816475,"reached":true,"summary":{"flopMeanError":0.32554620042820226,"flopPlayedError":0.01939452166218347,"flopWorstPlayed":0.04223613860371942,"turnPlayedError":0.02023294155880467,"turnWorstPlayed":0.05814196066708508,"flopMaxError":4.3252464317265185,"turnMeanError":0.6330524697468649,"turnMaxError":6.686667980806572,"rootOop":{"id":"f23","path":"","street":"flop","reach":[1,1],"meanError":1.4495741413210534,"maxError":4.3252464317265185,"playedError":0.019868102331326926,"selfLoss":0.02440134439009966,"byAction":[{"action":"X","meanError":0.021507957514502327,"ours":0.6560598230435183,"stored":0.6582101628640392},{"action":"B759","meanError":0.23641431112974504,"ours":0.005065822682841006,"stored":0.000460091914556835},{"action":"B1725","meanError":0.056751626588141174,"ours":0.33885566977402387,"stored":0.34128181184996237},{"action":"A8900","meanError":5.483622670051828,"ours":0.000018684499615206654,"stored":0}]},"rootIp":{"id":"f23","path":"X","street":"flop","reach":[1,0.6582],"meanError":0.24954939008932464,"maxError":0.5289222372780801,"playedError":0.027640112317625972,"selfLoss":0.08422011267463081,"byAction":[{"action":"X","meanError":0.015745281502940564,"ours":0.44267527129708395,"stored":0.44537266019509525},{"action":"B759","meanError":0.0595867449759513,"ours":0.29853574670817334,"stored":0.2893010831273313},{"action":"B1725","meanError":0.045232765841527675,"ours":0.2587776075721373,"stored":0.2653375392950928},{"action":"A8900","meanError":0.8776327680368783,"ours":0.000011374422604850526,"stored":0}]},"rootLossOop":0.023908287551956217,"rootLossIp":0.08569018698145528,"rootRefLossOop":0.026469620412874817,"rootRefLossIp":0.08300183242913384}}
