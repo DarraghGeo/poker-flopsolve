@@ -1,0 +1,5 @@
+{"spot":"T","combination":"thin+i16","sampling":false,"engine":"wasm","workers":4,"storageMiB":1506,"rendererPeakMiB":1689,"secondsPerIteration":1.484}
+{"spot":"T","combination":"thin+i16","sampling":true,"engine":"wasm","workers":4,"storageBytes":1578877440,"msPerIteration":229.86366666667163,"storageMiB":1506,"rendererPeakMiB":1910,"secondsPerIteration":0.23}
+{"spot":"T","combination":"thin+compact","sampling":true,"engine":"wasm","workers":4,"storageBytes":1094176182,"msPerIteration":268.9225833333097,"storageMiB":1043,"rendererPeakMiB":1451,"secondsPerIteration":0.269}
+{"spot":"T","combination":"thin+b3+i16","sampling":true,"engine":"wasm","workers":4,"storageBytes":927464288,"msPerIteration":143.82366666666542,"storageMiB":884,"rendererPeakMiB":1170,"secondsPerIteration":0.144}
+{"spot":"T","combination":"thin+compact","sampling":false,"engine":"wasm","workers":4,"storageBytes":1094176182,"msPerIteration":1890.125250000041,"storageMiB":1043,"rendererPeakMiB":1229,"secondsPerIteration":1.89}

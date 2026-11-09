@@ -1,0 +1,116 @@
+{
+ "spot": "T",
+ "combination": "thin",
+ "engine": "wasm",
+ "workers": 4,
+ "estimate": {
+  "f32": 3146535360,
+  "i16": 1597594656,
+  "compact": null
+ },
+ "storageGiB": 2.913,
+ "setupSeconds": 0.5,
+ "peakRssGiB": 3.18,
+ "settled": {
+  "within002": null,
+  "within005": null
+ },
+ "reference": null,
+ "rows": [
+  {
+   "iterations": 10,
+   "seconds": 20.9,
+   "perIteration": 2.094,
+   "exploitability": 102.265,
+   "peakRssGiB": 3.18
+  },
+  {
+   "iterations": 20,
+   "seconds": 34.9,
+   "perIteration": 1.744,
+   "exploitability": 32.918,
+   "drift": 0.1555,
+   "peakRssGiB": 3.18
+  },
+  {
+   "iterations": 40,
+   "seconds": 63.2,
+   "perIteration": 1.581,
+   "exploitability": 12.592,
+   "drift": 0.1366,
+   "peakRssGiB": 3.18
+  },
+  {
+   "iterations": 80,
+   "seconds": 115.2,
+   "perIteration": 1.44,
+   "exploitability": 3.098,
+   "drift": 0.1722,
+   "peakRssGiB": 3.18
+  },
+  {
+   "iterations": 120,
+   "seconds": 166.6,
+   "perIteration": 1.388,
+   "exploitability": 1.528,
+   "drift": 0.084,
+   "peakRssGiB": 3.18
+  },
+  {
+   "iterations": 160,
+   "seconds": 220.3,
+   "perIteration": 1.377,
+   "exploitability": 0.935,
+   "drift": 0.0456,
+   "peakRssGiB": 3.18
+  },
+  {
+   "iterations": 200,
+   "seconds": 273.3,
+   "perIteration": 1.366,
+   "exploitability": 0.664,
+   "drift": 0.0404,
+   "peakRssGiB": 3.18
+  },
+  {
+   "iterations": 250,
+   "seconds": 339.9,
+   "perIteration": 1.36,
+   "exploitability": 0.563,
+   "drift": 0.0314,
+   "peakRssGiB": 3.18
+  },
+  {
+   "iterations": 300,
+   "seconds": 404.7,
+   "perIteration": 1.349,
+   "exploitability": 0.439,
+   "drift": 0.0197,
+   "peakRssGiB": 3.18
+  },
+  {
+   "iterations": 400,
+   "seconds": 538.1,
+   "perIteration": 1.345,
+   "exploitability": 0.283,
+   "drift": 0.0248,
+   "peakRssGiB": 3.18
+  },
+  {
+   "iterations": 500,
+   "seconds": 679,
+   "perIteration": 1.358,
+   "exploitability": 0.187,
+   "drift": 0.0147,
+   "peakRssGiB": 3.18
+  },
+  {
+   "iterations": 600,
+   "seconds": 812.1,
+   "perIteration": 1.353,
+   "exploitability": 0.154,
+   "drift": 0.0091,
+   "peakRssGiB": 3.18
+  }
+ ]
+}
