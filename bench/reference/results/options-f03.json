@@ -830,5 +830,35 @@
 			"handDiff": 0.22863332778922557
 		},
 		"missing": 0
+	},
+	"chanceSampling, 2× iterations": {
+		"iterations": 280,
+		"workers": 1,
+		"engine": "wasm",
+		"bytes": 547986814,
+		"solveSeconds": 57.031825863,
+		"exploitability": 1.9519744469421056,
+		"trueExploitability": 1.9519744469421056,
+		"rootOop": {
+			"loss": 0.07929241833033204,
+			"ref": 0.06917274072068436
+		},
+		"rootIp": {
+			"loss": 0.06627871923595516,
+			"ref": 0.06083148857371167
+		},
+		"flop": {
+			"nodes": 8,
+			"loss": 0.030546840579420927,
+			"refLoss": 0.02182482482736865,
+			"handDiff": 0.016190948383696658
+		},
+		"turn": {
+			"nodes": 10,
+			"loss": 0.10436299939315612,
+			"refLoss": 0.027171673590499535,
+			"handDiff": 0.08288399559428498
+		},
+		"missing": 0
 	}
 }

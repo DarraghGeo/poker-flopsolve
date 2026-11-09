@@ -29,6 +29,8 @@ interface Variant {
 	readonly solve?: SolveOptions;
 	/** Solve a blueprint with one turn/river bet, no raise or shove there, and re-solve each stored turn. */
 	readonly resolve?: boolean;
+	/** Iterations as a multiple of the exact solve's, for an option whose iterations are cheaper. */
+	readonly scale?: number;
 }
 
 const sampling: SolveOptions = { approximations: { chanceSampling: {} } };
@@ -40,6 +42,8 @@ export const VARIANTS: Record<string, Variant> = {
 	thinSizes: { config: { thinSizes: true } },
 	runoutBuckets: { config: { runoutBuckets: 3 } },
 	chanceSampling: { solve: sampling },
+	// Its iterations take about half the time of 4 exact threads: twice as many is about equal time.
+	'chanceSampling, 2× iterations': { solve: sampling, scale: 2 },
 	coarseStart: { solve: { approximations: { coarseStart: { iterations: 40 } } } },
 	lineRunouts: { config: { lineRunouts: { aggressions: 2 } } },
 	i16: { solve: { precision: 'i16', wasmStorage } },
@@ -86,7 +90,7 @@ function main(): void {
 		const start = performance.now();
 		const spot = defineSpot(config);
 		const run = createRun(spot, { workers: 4, ...variant.solve });
-		run.step(iterations);
+		run.step(Math.round(iterations * (variant.scale ?? 1)));
 		const solveSeconds = (performance.now() - start) / 1000;
 		const exploitability = run.exploitabilityPercent();
 		const trueExploitability = variant.resolve ? Number.NaN : run.trueExploitabilityPercent();
@@ -94,7 +98,7 @@ function main(): void {
 		run.close();
 		const score = scoreSolution(sol, id);
 		const result: Record<string, unknown> = {
-			iterations,
+			iterations: run.completed,
 			workers: run.workers,
 			engine: run.engine,
 			bytes: spot.estimate.compactBytes ?? (variant.solve?.precision === 'i16' ? spot.estimate.compressedBytes : spot.estimate.bytes),

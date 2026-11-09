@@ -22,7 +22,7 @@ const cross = files.filter((n) => /^cross-check-.*\.json$/.test(n)).sort().map(r
 console.log('## Cross-check: exact solves against the stored regrets\n');
 console.log('Regret error = |(EV(a) − EV(best)) ours − stored| per hand, reach-weighted, % of the node pot. "Played" weights each action by the larger of the two solvers\' probability of it; "all actions" includes actions neither plays (off-path values).\n');
 console.log('| Spot | Board | Texture | Pot | f32 GiB | Iterations | Exploitability | Time | Flop played: mean / worst node | Turn played: mean / worst node | All actions: flop / turn mean | Root loss at stored EVs, OOP / IP (stored strategy\'s own) |');
-console.log('|---|---|---|---|---|---|---|---|---|---|---|---|');
+console.log('|---|---|---|---|---|---|---|---|---|---|---|---|---|');
 for (const c of cross) {
 	const s = c.summary;
 	console.log(
@@ -37,18 +37,18 @@ if (options.length) {
 	const all = options.map((n) => [n.slice(8, -5), read(n)] as const);
 	const variants = [...new Set(all.flatMap(([, r]) => Object.keys(r)))];
 	console.log('\n## Each option on the napkinpoker sample\n');
-	console.log('EV lost at the stored per-action EVs, % of the node pot, at as many iterations as the exact solve took to 0.3%. Root: OOP at the flop root / IP after a check. Flop and turn: mean over the scored nodes. Means over the spots.\n');
-	console.log('| Option | Spots | Storage vs exact | Time vs exact | Root loss OOP / IP | Flop nodes | Turn nodes | Re-solved turns | True exploitability |');
-	console.log('|---|---|---|---|---|---|---|---|---|');
+	console.log('EV lost at the stored per-action EVs, % of the node pot, at as many iterations as the exact solve took to 0.3% (times the Iterations column). Root: OOP at the flop root / IP after a check. Flop and turn: mean over the scored nodes. Means over the spots.\n');
+	console.log('| Option | Spots | Iterations | Storage vs exact | Time vs exact | Root loss OOP / IP | Flop nodes | Turn nodes | Re-solved turns | True exploitability, % of pot |');
+	console.log('|---|---|---|---|---|---|---|---|---|---|');
 	for (const v of variants) {
 		const rows = all.filter(([, r]) => r[v] && r.exact);
 		if (!rows.length) continue;
-		const avg = (pick: (r: any, e: any) => number): number => rows.reduce((s, [, r]) => s + pick(r[v], r.exact), 0) / rows.length;
+		const avg = (pick: (r: any, e: any) => number | null): number => rows.reduce((s, [, r]) => s + (pick(r[v], r.exact) ?? Number.NaN), 0) / rows.length;
 		const resolved = rows.every(([, r]) => r[v].resolved);
 		console.log(
-			`| ${v} | ${rows.length} | ${f(avg((r, e) => r.bytes / e.bytes), 2)}× | ${f(avg((r, e) => r.solveSeconds / e.solveSeconds), 2)}× | ` +
+			`| ${v} | ${rows.length} | ${f(avg((r, e) => r.iterations / e.iterations), 1)}× | ${f(avg((r, e) => r.bytes / e.bytes), 2)}× | ${f(avg((r, e) => r.solveSeconds / e.solveSeconds), 2)}× | ` +
 				`${f(avg((r) => r.rootOop?.loss ?? NaN))} / ${f(avg((r) => r.rootIp?.loss ?? NaN))} | ${f(avg((r) => r.flop.loss))} | ${f(avg((r) => r.turn.loss))} | ` +
-				`${resolved ? f(avg((r) => r.resolved.summary.loss)) : '—'} | ${f(avg((r) => r.trueExploitability), 2)}% |`,
+				`${resolved ? f(avg((r) => r.resolved.summary.loss)) : '—'} | ${f(avg((r) => r.trueExploitability), 2)} |`,
 		);
 	}
 	console.log('\nThe stored strategy\'s own loss at the same nodes (noise floor): ' +
