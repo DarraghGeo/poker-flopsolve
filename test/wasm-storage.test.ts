@@ -328,6 +328,17 @@ describe('compactStorage combined with what it used to refuse (issue #84)', () =
 		}
 	});
 
+	it('counts compact storage, not 32-bit, beside chance sampling\'s baselines', () => {
+		const { bytes, compactBytes } = defineSpot(compactFlop).estimate;
+		const maxBytes = Math.floor(bytes * 0.8);
+		expect(compactBytes!).toBeLessThan(maxBytes);
+		const run = createRun(defineSpot({ ...compactFlop, maxBytes }), {
+			workers: 1, approximations: { chanceSampling: { p: 0.5 } },
+		});
+		run.step(2);
+		run.close();
+	});
+
 	it('still refuses analysisOnly, which loads float32 sums', () => {
 		expect(() => createRun(defineSpot(compactFlop), { workers: 1, analysisOnly: true })).toThrow(/compactStorage/);
 	});

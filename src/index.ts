@@ -788,9 +788,11 @@ export interface SolveOptions {
 	 * `wasmStorage` from `poker-flopsolve/wasm-storage`. With it, a solve at
 	 * `precision: 'i16'` or of a `compactStorage` spot runs on the engine,
 	 * threads included, rather than on JavaScript. Its updates are the
-	 * JavaScript ones, step for step, worked from the engine's 32-bit vectors
-	 * rather than 64-bit ones, so the two agree to float precision and the
-	 * random rounding draws from the same stream. Unset, those solves run on
+	 * JavaScript ones, step for step, worked in 32-bit floats rather than
+	 * 64-bit ones, so a stored value differs only where it lies within float32
+	 * precision of a rounding boundary; the random rounding hashes the same
+	 * slot and iteration, read to 24 bits rather than 32. Compact scales
+	 * below 2^-126 (regrets under 10^-35) are taken as 0. Unset, those solves run on
 	 * JavaScript as before; 32-bit solves run on the default engine either
 	 * way, and `precision: 'f64'` on JavaScript.
 	 */
@@ -1530,8 +1532,9 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const hands = buildHandSpace(spot.runouts, spot.players, active);
 	if (samplingOptions && quantised) throw new Error('chanceSampling needs 32- or 64-bit storage');
 	const samplingPlan = samplingOptions ? planSampling(spot.tree, spot.runouts, active, layout, samplingOptions) : undefined;
-	// Measured as the precision choice above measures storage: by the estimate.
-	const storageBytes = Math.max(bytes, layout.bytes);
+	// Measured as the precision choice above measures storage: by the estimate;
+	// with compact storage, which that estimate does not know, by the layout.
+	const storageBytes = compact ? layout.bytes : Math.max(bytes, layout.bytes);
 	if (samplingPlan && storageBytes + samplingBytes(samplingPlan) > maxBytes) {
 		throw new Error(
 			`chanceSampling needs ${Math.ceil(samplingBytes(samplingPlan) / 2 ** 20)} MiB of baselines beside ` +
@@ -1775,10 +1778,17 @@ function planCoarseStart(spot: Spot, options: SolveOptions, precision: Precision
 	const coarseSpot = defineSpot({ ...spot.source, runoutBuckets });
 	if (coarseSpot.runouts.counts.at(-1)! >= spot.runouts.counts.at(-1)!) return null;
 
-	// A compact spot's coarse spot is compact too; its estimate is the one `maxBytes` met.
-	const cost = (of: Spot, at: Precision): number =>
-		of.estimate.compactBytes ??
-		(at === 'i16' ? of.estimate.compressedBytes : of.estimate.bytes * (at === 'f64' ? 2 : 1));
+	// A compact spot's coarse spot is compact too: its storage is its layout at
+	// that precision, beside the rest `estimate.compactBytes` counts at 32 bits.
+	const cost = (of: Spot, at: Precision): number => {
+		if (of.estimate.compactBytes === null) {
+			return at === 'i16' ? of.estimate.compressedBytes : of.estimate.bytes * (at === 'f64' ? 2 : 1);
+		}
+		const plan = compactPlan(of.source.compactStorage!, of.runouts.rounds);
+		const bytesAt = (width: number): number =>
+			buildLayout(of.tree, of.runouts, of.players, width, of.historyAlias, reachWeighted(of.source), plan).bytes;
+		return of.estimate.compactBytes + bytesAt(PRECISION_BYTES[at]) - bytesAt(4);
+	};
 	const used = cost(spot, precision);
 	const left = maxBytes - used;
 	const coarsePrecision: Precision = options.precision ?? (cost(coarseSpot, 'f32') <= left ? 'f32' : 'i16');

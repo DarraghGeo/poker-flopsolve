@@ -44,18 +44,22 @@ const modules: Record<'plain' | 'shared', object | null | undefined> = { plain: 
 
 /** The compiled engine, over plain or shared memory; null where unavailable. */
 export function compiledEngine(kind: 'plain' | 'shared'): object | null {
-	if (modules[kind] !== undefined) return modules[kind]!;
-	modules[kind] = null;
+	return compileInto(modules, kind, kind === 'plain' ? ENGINE_WASM : ENGINE_SHARED_WASM);
+}
+
+/** Compile base64 WebAssembly into `cache[kind]` once; null there where unavailable. */
+function compileInto(cache: Record<'plain' | 'shared', object | null | undefined>, kind: 'plain' | 'shared', text: string): object | null {
+	if (cache[kind] !== undefined) return cache[kind]!;
+	cache[kind] = null;
 	try {
 		if (!wasm) return null;
-		const text = kind === 'plain' ? ENGINE_WASM : ENGINE_SHARED_WASM;
 		const bytes = Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
 		if (!wasm.validate(bytes)) return null;
-		modules[kind] = new wasm.Module(bytes);
+		cache[kind] = new wasm.Module(bytes);
 	} catch {
-		modules[kind] = null;
+		cache[kind] = null;
 	}
-	return modules[kind]!;
+	return cache[kind]!;
 }
 
 /**
@@ -75,17 +79,7 @@ const storageModules = new WeakMap<WasmStorage, Record<'plain' | 'shared', objec
 function compiledStorage(source: WasmStorage, kind: 'plain' | 'shared'): object | null {
 	let cache = storageModules.get(source);
 	if (!cache) storageModules.set(source, (cache = { plain: undefined, shared: undefined }));
-	if (cache[kind] !== undefined) return cache[kind]!;
-	cache[kind] = null;
-	try {
-		if (!wasm) return null;
-		const bytes = Uint8Array.from(atob(source[kind]), (c) => c.charCodeAt(0));
-		if (!wasm.validate(bytes)) return null;
-		cache[kind] = new wasm.Module(bytes);
-	} catch {
-		cache[kind] = null;
-	}
-	return cache[kind]!;
+	return compileInto(cache, kind, source[kind]);
 }
 
 function compiled(): object | null {
@@ -215,7 +209,12 @@ export function createEngine(
 	// holds offsets as Float64, which the engine's 32-bit offset table could
 	// not take.
 	const width = quantised ? 2 : 4;
-	if (layout.totalSlots * width * 2 + layout.compactSlots * 2 > MAX_MEMORY || !(layout.offset instanceof Int32Array)) return null;
+	const compactBytes = !compact
+		? 0
+		: compact.float
+			? layout.compactSlots * 4
+			: (layout.compactSlots + (compact.perHand ? layout.compactHands : 0)) * (compact.sums ? 2 : 1);
+	if (layout.totalSlots * width * 2 + compactBytes > MAX_MEMORY || !(layout.offset instanceof Int32Array)) return null;
 	const threads = pool ? pool.threads : 1;
 
 	const flatten = (parts: readonly Int32Array[]): [Int32Array, Int32Array] => {
@@ -303,7 +302,6 @@ export function createEngine(
 				compactScale: compact && !compact.perHand && !compact.float ? add(null, layout.blocks * 8) : -1,
 			}
 		: null;
-	if (compact && layout.chunkHands.some((count) => count > 0x7fffffff)) return null;
 
 	const offsets: number[] = [];
 	let total = 64 + Math.ceil(Math.max(input.lowBytes ?? 0, 0) / 16) * 16;
