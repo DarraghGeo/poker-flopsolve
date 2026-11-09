@@ -45,4 +45,4 @@
 {"url":"https://claude.ai/code/session_014RSNFip9CXNWrttDgGYYAn","title":"Lite mode: pick keepLines within a memory budget, to recover turn re-solves","issue":113,"state":"active","updated":"2026-11-09T11:00:26.116Z"}
 {"url":"https://claude.ai/code/session_014RSNFjB1ZQcAUXHgGKEe1j","title":"Consolidate the approximation API around presets, document it in one place, and prepare 0.5.0","issue":115,"state":"active","updated":"2026-11-09T11:26:43.860Z"}
 {"url":"https://claude.ai/code/session_014RSNFghgT58wxtwtbwUQ6h","title":"Exactly tied actions make 1- and 2-thread solves diverge by percents, not rounding","issue":117,"state":"active","updated":"2026-11-09T11:31:26.128Z"}
-{"url":null,"title":"Refactor and Code Clean","issue":125,"state":"active","updated":"2026-11-09T12:46:37.217Z"}
+{"url":"https://claude.ai/code/session_014RSNFiUt5CpwBR2XRN59v8","title":"Refactor and Code Clean","issue":125,"state":"active","updated":"2026-11-09T12:49:38.725Z"}
