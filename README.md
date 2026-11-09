@@ -265,6 +265,78 @@ This is *unsafe* re-solving. The subgame is solved for the ranges that arrive, s
 strategy can be exploitable in ways the original allowed for. It also does not make the
 earlier streets any more accurate than their coarse model of the future.
 
+### Full flop betting, re-solved turns
+
+For a flop whose full tree does not fit, keep the flop's betting as it is and give the turn
+and river one size, then re-solve each turn you look at with the full betting.
+`resolveSubgame` does the re-solve; it is opt-in and tree-shaken away when unused.
+
+```ts
+import { defineSpot, resolveSubgame, solve } from 'poker-flopsolve';
+
+const full = { ...spot, betSizes: [[0.33, 0.75, 1.5]], raiseSizes: [[0.75]], maxRaises: 3, allowAllIn: true };
+const blueprint = solve(
+	defineSpot({
+		...full,
+		betSizes: [[0.33, 0.75, 1.5], [0.75], [0.75]],
+		raiseSizes: [[0.75], [0.75], [0.75]],
+		maxRaises: [3, 1, 1],
+		allowAllIn: [true, false, false],
+		runoutBuckets: 3,
+	}),
+	{ targetPercent: 0.3, precision: 'i16' }, // in a browser, leave f32 (see below)
+);
+const turn = resolveSubgame(blueprint, node, board, {
+	player: 0, // whose strategy to refine
+	betting: { betSizes: full.betSizes, raiseSizes: full.raiseSizes, maxRaises: 3, allowAllIn: true },
+	iterations: 300,
+});
+turn.solution.strategyAt(0, 0);
+```
+
+Measured on Ks 9s 4s (pot 55, stacks 975, the bench ranges) against the full tree solved
+to 0.093% of pot (99 minutes, 2.3 GB at i16 on four threads):
+
+| | blueprint, 1 turn/river size | + 3 runout buckets, i16 |
+|---|---|---|
+| storage | 264 MiB | 97 MiB |
+| solve to 0.3%, Node, 4 threads | 27 s | 55 s |
+| root EV error per hand, OOP / IP | 2.3 / 2.2% of pot (max 10.6 / 20.2) | 2.3 / 2.2% (max 10.1 / 19.5) |
+| root size agreement, OOP / IP after a check | 98.6% / 65.4% | 100% / 62.0% |
+| EV the root play loses at the full tree's values, OOP / IP | 0.027 / 0.022% of pot | 0.028 / 0.020% |
+
+Size agreement compares which bet size each hand's EVs rank best in the blueprint and in
+the full tree. It is fragile where sizes are near-tied. With the current solver, whose
+average strategy changed while these runs were going, OOP's agreement reads 75%, and the
+root EV error 2.0 / 1.9% of pot. The EV the root play loses held: 0.019 / 0.014% of pot.
+That is the number to go by. IP's low size agreement after a check is near-indifference: only 15% of its betting hands
+prefer one size by 0.5% of pot or more, the blueprint agrees on 89% of those, and its play
+loses 0.02% of pot. The per-action EV errors are largest for the flop shove (11–33% of pot
+for IP), a line neither tree plays. More turn/river sizes did worse here: two sizes
+(0.33, 1.5) gave 4.4 / 5.7% EV error and three gave 4.7 / 6.1%, at 336 and 417 MiB. On the
+rainbow As Kh 7d, which has about 4.5 times the runouts, the same blueprint is estimated at
+1.2 GiB f32, 363 MiB with buckets at i16.
+
+A re-solved turn, over the 15 most-reached turn nodes, took about 12 s in Node on one
+thread and 5–40 MiB. Against it, an opponent playing a best response with the full tree's
+ranges gains, weighted by how often each turn is reached, 3.5–4% of the subgame's pot.
+
+`resolveSubgame` can also guard the re-solve with a safety gadget (`gadget: 'resolve'`,
+`'maxmargin'` or `'reach-maxmargin'`), which keeps each opponent hand from doing better
+than it did against the blueprint. Here they made things worse: 4.2–4.6% of the pot with
+`'resolve'` and 4.7–6.2% with either maxmargin gadget. Most of a re-solve's error is the refined player's own range at the
+node, which comes from the blueprint and which no gadget changes, and with more actions in
+the subgame than in the blueprint the guarantees often cannot all be met. So the default
+is `'unsafe'`. A re-solved subgame is a `Solution`, so a river below it can be re-solved
+from it in turn.
+
+In headless Chromium (`poker-flopsolve/threads`, Ks 9s 4s), the blueprint with buckets at
+f32 solved to 0.3% in 84 s on one thread and 25 s on four, and each re-solved turn took
+21 s and 6.6 s with 40 MiB. Use f32 there: only f32 runs on the WebAssembly engine, so
+the i16 blueprint ran on the JavaScript engine in about 190 s however many threads it had.
+A run holds its engine threads until `close()` (which `solve` calls for you), and
+snapshots stay usable after it, so close the blueprint's run before re-solving.
+
 ## In a browser
 
 The package also runs in a browser, for the small solves a page wants: river spots and
@@ -585,6 +657,57 @@ block. Strategy sums round up or down at random, weighted by the remainder: roun
 nearest, small sums lose most of each iteration's contribution and exploitability stalls
 near 0.04% of pot. The randomness is a hash of the slot and iteration, so solves stay
 deterministic at any thread count.
+
+### Compact storage (opt-in)
+
+`compactStorage: {}` in the spot's config stores regrets and strategy sums as 8-bit
+integers, each hand on each board scaled by its own power of two. Regret matching and the
+average strategy divide each hand's values by their own total, so the scale cancels
+wherever a strategy is read, and costs a byte per hand. Values round up or down at random,
+weighted by the remainder, as 16-bit sums do. It is set on the spot rather than the solve,
+because `maxBytes` is checked against it when the spot is defined
+(`estimate.compactBytes`).
+
+`compactStorage: { sums: false }` keeps no strategy sums. Each node then plays the current
+profile, the regret-matched strategy the next iteration would play. It is cheaper again but
+much more exploitable on deep trees. `blockScale: true` takes the per-hand byte away too.
+
+Storage and peak memory on issue #20's target spots (AsKh7d and Ks9s4s, pot 55, stack 975,
+three bet sizes, a 75% raise, three aggressions), measured on four threads in Node:
+
+| Storage | Bytes per slot | T | Monotone T |
+|---|---|---|---|
+| 32-bit | 8.0 | 17.2 GiB | 3.75 GiB |
+| 16-bit | 4.0 | 8.7 GiB | 1.90 GiB |
+| compact | 2.75 | 5.9 GiB (peak 6.4 GB), 35 s an iteration | 1.29 GiB (peak 1.7 GB) |
+| compact, `sums: false, blockScale: true` | 1.03 | 2.2 GiB (peak 2.7 GB), 24 s an iteration | 0.48 GiB (peak 0.8 GB) |
+
+Accuracy at 320 iterations, against reference solves to 0.17% of pot (T₀: AsKh7d, three
+sizes, all-in as the only raise) and 0.22% (the same tree on Ks9s4s). Exploitability is
+true, in the full tree; EV error is per combination at the root, range-weighted, in % of pot;
+"same size" is the share of OOP's hands, among those whose best root bet size beats the
+next by 0.5% of pot in the reference, that still prefer it:
+
+| Storage | T₀: exploitability, EV error, same size | Monotone T₀ |
+|---|---|---|
+| 32-bit | 0.69% (the reference run itself) | 0.71%, 1.19%, 100% |
+| compact | 0.81%, 0.23%, 100% | 0.83%, 1.09%, 100% |
+| compact, `sums: false, blockScale: true`, CFR+ | 4.76%, 0.17%, 78% | 4.08%, 1.28%, 62% |
+
+It combines with `shareHistories` (one set of storage for betting lines that reach the same
+pot), and the pair is what brings T under 2 GiB: 0.99 GiB with sums, peaking at 1.5 GB on four
+threads, and 0.37 GiB with `sums: false, blockScale: true`. Sharing is lossy on its own; on
+T₀ at 160 iterations it was 9.5% of pot exploitable in 1.06 GiB at 32 bits, with root EVs
+0.66% of pot off and 97% of clear bet-size choices kept; with compact storage added, 10.5%,
+0.86% and 84%, in 0.36 GiB.
+
+It runs on the JavaScript engine, like 16-bit storage, on Node worker threads but on one
+thread in the browser. In headless Chromium on one thread, monotone T₀ took 10.1 s an
+iteration compact, 8.1 s at 16 bits and 2.3 s at 32 bits on WebAssembly; T itself, at
+`sums: false, blockScale: true`, allocated its 2.2 GiB and ran at 95 s an iteration. Storage is split into buffers under 1 GiB, because Chromium refuses
+an ArrayBuffer of 2 GiB or more. `bench/storage/` has the measurements and the variants
+that were left out: 4- and 6-bit regrets, a log scale, sparse regrets, and dropping sums on
+the later streets only.
 
 ### Algorithm and benchmark
 
