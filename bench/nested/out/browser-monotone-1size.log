@@ -1,0 +1,12 @@
+monotone 1size in Chromium (4 threads available)
+  blueprint, 1 thread(s), wasm: 94.6 s, 160 it, 0.270%
+  blueprint, 4 thread(s), wasm: 27.3 s, 160 it, 0.218%
+  re-solve unsafe          1 thread(s): 19.8 s, 40.2 MiB
+  re-solve unsafe          4 thread(s): 20.1 s, 40.2 MiB
+  re-solve resolve         1 thread(s): 20.9 s, 40.2 MiB
+  re-solve resolve         4 thread(s): 20.9 s, 40.2 MiB
+  re-solve maxmargin       1 thread(s): 20.9 s, 40.2 MiB
+  re-solve maxmargin       4 thread(s): 20.5 s, 40.2 MiB
+  re-solve reach-maxmargin 1 thread(s): 22.1 s, 40.2 MiB
+  re-solve reach-maxmargin 4 thread(s): 22.0 s, 40.2 MiB
+{"threads":4,"solves":[{"workers":1,"ms":94641.83000000194,"iterations":160,"exploitability":0.27005768481894155,"engine":"wasm","heap":null},{"workers":4,"ms":27263.355000000447,"iterations":160,"exploitability":0.2184210005371517,"engine":"wasm","heap":null}],"resolves":[{"gadget":"unsafe","workers":1,"ms":19773.070000000298,"bytes":42101402},{"gadget":"unsafe","workers":4,"ms":20117.245000001043,"bytes":42101402},{"gadget":"resolve","workers":1,"ms":20917.445000000298,"bytes":42101402},{"gadget":"resolve","workers":4,"ms":20931.81500000134,"bytes":42101402},{"gadget":"maxmargin","workers":1,"ms":20901.504999998957,"bytes":42101402},{"gadget":"maxmargin","workers":4,"ms":20517.304999999702,"bytes":42101402},{"gadget":"reach-maxmargin","workers":1,"ms":22051.414999999106,"bytes":42101402},{"gadget":"reach-maxmargin","workers":4,"ms":21962.779999997467,"bytes":42101402}]}

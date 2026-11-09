@@ -142,6 +142,11 @@ async function readJson(stream: NodeJS.ReadableStream): Promise<Record<string, u
 
 const server = createServer((request, response) => {
 	const url = new URL(request.url ?? '/', `http://localhost:${PORT}`);
+	// Cross-origin isolation, which threads in the browser build need
+	// (`poker-flopsolve/threads`). The UI solves in Node and loads nothing
+	// from other origins, so these cost it nothing.
+	response.setHeader('cross-origin-opener-policy', 'same-origin');
+	response.setHeader('cross-origin-embedder-policy', 'require-corp');
 	const json = (status: number, body: unknown): void => {
 		const text = JSON.stringify(body);
 		response.writeHead(status, {

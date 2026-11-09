@@ -1,0 +1,22 @@
+two-tone-unshared+nosample-4t: 187 nodes, 1021 runouts, 292 MiB f32
+  50 it, 12.9 s, 1.426%, loss 0.1790 / 0.1079
+  100 it, 24.4 s, 0.495%, loss 0.1218 / 0.0692
+  150 it, 35.3 s, 0.250%, loss 0.1041 / 0.0552
+  200 it, 46.7 s, 0.625%, loss 0.1009 / 0.0648
+  250 it, 58.0 s, 0.392%, loss 0.1043 / 0.0653
+  300 it, 69.2 s, 0.253%, loss 0.0948 / 0.0581
+  350 it, 80.7 s, 0.183%, loss 0.0888 / 0.0539
+  400 it, 91.0 s, 0.139%, loss 0.0850 / 0.0516
+blueprint: settled at 400 it, 91.0 s solving (227 ms/it), 0.139%, engine wasm, 4 thread(s), peak RSS 513 MiB
+root EV error, % pot: OOP mean 1.324 max 6.501; IP mean 2.768 max 13.857
+root play loss at reference values, % pot: 0.0850 / 0.0516 (reference's own 0.1163 / 0.0521)
+  re-solve bet_18.15_call_-2c (reached 18.5%), 300 it: opponent gains 25.556 / 28.875% of its pot, 10.3 / 10.2 s
+  re-solve bet_18.15_call_-As (reached 18.5%), 300 it: opponent gains 20.799 / 24.934% of its pot, 6.5 / 6.2 s
+  re-solve bet_18.15_call_-Qd (reached 18.5%), 300 it: opponent gains 21.187 / 13.674% of its pot, 9.2 / 9.5 s
+  re-solve check_bet_41.25_call_-2c (reached 6.2%), 300 it: opponent gains 3.295 / 5.401% of its pot, 7.0 / 7.0 s
+  re-solve check_bet_41.25_call_-As (reached 6.2%), 300 it: opponent gains 4.235 / 8.696% of its pot, 4.6 / 4.6 s
+  re-solve check_bet_41.25_call_-Qd (reached 6.2%), 300 it: opponent gains 3.756 / 5.711% of its pot, 6.9 / 7.6 s
+  re-solve check_check_-2c (reached 38.9%), 300 it: opponent gains 10.038 / 16.773% of its pot, 12.3 / 13.1 s
+  re-solve check_check_-As (reached 38.9%), 300 it: opponent gains 10.316 / 5.352% of its pot, 9.2 / 7.6 s
+  re-solve check_check_-Qd (reached 38.9%), 300 it: opponent gains 17.261 / 8.858% of its pot, 11.9 / 11.4 s
+re-solve 300 it: gain weighted by line reach OOP 14.585% / IP 13.507%, mean 8.6 s each

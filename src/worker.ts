@@ -16,28 +16,32 @@
 
 import { parentPort, workerData } from 'node:worker_threads';
 import { COMBOS } from './cards.ts';
-import type { Context, Mode } from './cfr.ts';
+import type { CompactPlan, Context, Mode } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
+	makeSampling,
 	makeSolver,
 	makeTerminalScratch,
 	matchupMass,
+	planSampling,
 	runoutWeights,
 } from './cfr.ts';
 import { defineSpot, makeRegretStore, makeSumStore, PRECISION_BYTES } from './index.ts';
-import type { Precision, SpotConfig } from './index.ts';
+import type { Approximations, Precision, SpotConfig } from './index.ts';
 import { buildShowdownTable } from './showdown.ts';
 import { buildHandSpace } from './hands.ts';
 import type { WorkerSetup } from './parallel.ts';
 import { COMMAND, CONTROL } from './parallel.ts';
 
 const setup = workerData as WorkerSetup;
-const { config, dcfr, precision, simd } = setup.payload as {
+const { config, dcfr, precision, simd, compact, approximations } = setup.payload as {
 	config: SpotConfig;
 	dcfr: boolean;
 	precision: Precision;
 	simd: boolean;
+	compact: CompactPlan | null;
+	approximations?: Approximations;
 };
 
 const spot = defineSpot(config);
@@ -46,10 +50,13 @@ for (const combo of spot.players[0].combos) relevant[combo] = 1;
 for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 const weights = runoutWeights(spot.runouts);
-const layout = buildLayout(spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision]);
+const layout = buildLayout(
+	spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], spot.historyAlias, compact ?? undefined,
+);
 
 const showdown = buildShowdownTable(spot.runouts, relevant);
 const active = buildActiveLists(spot.runouts, spot.players, showdown);
+const hands = buildHandSpace(spot.runouts, spot.players, active);
 const ctx: Context = {
 	tree: spot.tree,
 	runouts: spot.runouts,
@@ -60,10 +67,17 @@ const ctx: Context = {
 	strategySum: makeSumStore(precision, setup.strategySum),
 	regretScale: setup.regretScale ? new Float64Array(setup.regretScale) : null,
 	sumScale: setup.sumScale ? new Float64Array(setup.sumScale) : null,
+	compact,
+	compactRegret:
+		setup.compactRegret?.map((chunk) => (compact?.float ? new Float32Array(chunk) : new Int8Array(chunk))) ?? null,
+	handShift: setup.handShift?.map((chunk) => new Uint8Array(chunk)) ?? null,
+	compactSum: setup.compactSum?.map((chunk) => new Uint8Array(chunk)) ?? null,
+	sumShift: setup.sumShift?.map((chunk) => new Uint8Array(chunk)) ?? null,
+	compactScale: setup.compactScale ? new Float64Array(setup.compactScale) : null,
 	scratch: makeTerminalScratch(),
 	chipScale: spot.chipScale,
 	active,
-	hands: buildHandSpace(spot.runouts, spot.players, active),
+	hands,
 	runoutWeight: weights,
 	totalMass: matchupMass(spot.players[0].weights, spot.players[1].weights) * weights[0],
 	dcfr,
@@ -76,7 +90,21 @@ const ctx: Context = {
 	entryIndexOf: null,
 	expandOrbits: false,
 	simd,
+	// This worker's runouts are its own, so are their blocks and the marks on them.
+	discounted: layout.shared ? new Int32Array(layout.blocks) : null,
 };
+
+// Chance sampling's state lives in shared memory; this worker's runouts own
+// their baselines and marks there, as they own their storage.
+const samplingOptions = approximations?.chanceSampling;
+if (samplingOptions && setup.sampling) {
+	const [baseline, lastWalk, lastUpdate] = setup.sampling;
+	ctx.sampling = makeSampling(planSampling(spot.tree, spot.runouts, active, layout, samplingOptions), {
+		baseline: new Float32Array(baseline),
+		lastWalk: new Int32Array(lastWalk),
+		lastUpdate: new Int32Array(lastUpdate),
+	});
+}
 
 const solver = makeSolver(ctx);
 const control = new Int32Array(setup.control);
@@ -102,18 +130,26 @@ for (;;) {
 	const traverser = Atomics.load(control, CONTROL.traverser) as 0 | 1;
 	const iterWeight = Atomics.load(control, CONTROL.iterWeight);
 
-	for (let entry = 0; entry < setup.plan.entryNodes.length; entry++) {
-		const node = setup.plan.entryNodes[entry];
-		for (let i = 0; i < COMBOS; i++) {
-			reachMe[i] = exchange[entry * 2 * COMBOS + i];
-			reachOpp[i] = exchange[entry * 2 * COMBOS + COMBOS + i];
+	try {
+		for (let entry = 0; entry < setup.plan.entryNodes.length; entry++) {
+			const node = setup.plan.entryNodes[entry];
+			for (let i = 0; i < COMBOS; i++) {
+				reachMe[i] = exchange[entry * 2 * COMBOS + i];
+				reachOpp[i] = exchange[entry * 2 * COMBOS + COMBOS + i];
+			}
+			const value = solver.traverseChance(mode, traverser, iterWeight, node, reachMe, reachOpp);
+			for (let i = 0; i < COMBOS; i++) exchange[partialBase + entry * COMBOS + i] = value[i];
 		}
-		const value = solver.traverseChance(mode, traverser, iterWeight, node, reachMe, reachOpp);
-		for (let i = 0; i < COMBOS; i++) exchange[partialBase + entry * COMBOS + i] = value[i];
+	} catch (error) {
+		// The main thread is blocked in Atomics.wait and cannot see this
+		// thread's error event, so say so in shared memory (and count as
+		// done, below).
+		Atomics.store(control, CONTROL.failed, 1);
+		throw error;
+	} finally {
+		Atomics.add(control, CONTROL.done, 1);
+		Atomics.notify(control, CONTROL.done);
 	}
-
-	Atomics.add(control, CONTROL.done, 1);
-	Atomics.notify(control, CONTROL.done);
 }
 
 parentPort?.close();

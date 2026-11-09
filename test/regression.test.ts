@@ -27,16 +27,25 @@ import { SPOTS } from './regression-spots.ts';
  * The 16-bit spots again when storage moved to hand order: their stochastic
  * rounding is seeded by storage address. The turn spots when a raise short
  * of a full one became all-in for less instead of being dropped: their tree
- * gained the 12 shoves it had been missing.
+ * gained the 12 shoves it had been missing. All of them when strategy sums
+ * stopped weighting each iteration by the hand's own reach (issue #8): a
+ * deliberate change of algorithm. Exploitability at these short solves rose
+ * by 3–17% (river 0.0454 → 0.0533, turn 1.407 → 1.535, flop 1.303 → 1.424,
+ * two-tone flop 1.259 → 1.298); EVs moved by at most 0.026 chips. All of
+ * them when an action value tied with the hand's node value to within
+ * rounding started adding exactly zero regret (issue #117): tied actions now
+ * stay uniform instead of following the sign of an ulp. The turn moved most
+ * (exploitability 1.5352 → 1.5332, EV by 7e-5 chips), the rest by at most
+ * one part in ten million; the river at 16 bits not at all.
  */
 const GOLDEN: Record<string, [number, number, number]> = {
-	'river f64': [1.6108255310577881, -1.610825531057795, 0.04537223276200597],
-	'river i16': [1.6106738835010792, -1.6106738835010943, 0.04492205205962071],
-	'turn f64': [2.3371103491632255, -2.3371103491632286, 1.4067251086848285],
-	'turn i16': [2.338716165222372, -2.3387161652223734, 1.404517896951247],
-	'flop f64': [24.35116758043512, -24.351167580435117, 1.30310737854814],
-	'flop i16': [24.351099300264092, -24.351099300264103, 1.3051918847809054],
-	'two-tone flop f64': [-10.602679146562574, 10.602679146562577, 1.2593765618876374],
+	'river f64': [1.6109510195378143, -1.6109510195378187, 0.05329503992249407],
+	'river i16': [1.610798446450356, -1.610798446450357, 0.05312512256457661],
+	'turn f64': [2.3116874333104054, -2.3116874333104036, 1.533202095645],
+	'turn i16': [2.3149551077264516, -2.314955107726452, 1.545473876866811],
+	'flop f64': [24.369126125447007, -24.369126125447014, 1.4235276737232136],
+	'flop i16': [24.369116773280165, -24.36911677328016, 1.4260328244859188],
+	'two-tone flop f64': [-10.621339796354809, 10.621339796354812, 1.297617128867238],
 };
 
 describe('regression', () => {

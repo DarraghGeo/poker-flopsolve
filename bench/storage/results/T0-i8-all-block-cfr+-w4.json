@@ -1,0 +1,46 @@
+{
+ "spot": "T0",
+ "variant": "i8-all-block-cfr+",
+ "workers": 4,
+ "engine": "js",
+ "storageMiB": 665.7,
+ "estimateMiB": 683.5,
+ "peakRssMiB": 1253,
+ "setupSeconds": 1.2,
+ "rows": [
+  {
+   "iterations": 80,
+   "trainSeconds": 610.8,
+   "exploitability": 19.3745,
+   "positiveShare": 0.5849,
+   "mae": 3.1225,
+   "max": 18.1362
+  },
+  {
+   "iterations": 160,
+   "trainSeconds": 1222.1,
+   "exploitability": 7.9737,
+   "positiveShare": 0.5637,
+   "mae": 0.8622,
+   "max": 3.1761
+  },
+  {
+   "iterations": 320,
+   "trainSeconds": 2393.8,
+   "exploitability": 4.7552,
+   "positiveShare": 0.5558,
+   "mae": 0.1749,
+   "max": 0.9746
+  }
+ ],
+ "sizeChoice": {
+  "actionMae": 0.501,
+  "actionMax": 6.122,
+  "playedActionMae": 0.2114,
+  "playedActionMax": 1.5355,
+  "sameBestAction": 0.3434,
+  "sameBestSize": 0.4444,
+  "sameBestSizeWhereClear": 0.7813,
+  "clearShare": 0.1616
+ }
+}

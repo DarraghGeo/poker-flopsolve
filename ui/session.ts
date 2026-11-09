@@ -75,7 +75,8 @@ port.on('message', (message: Record<string, unknown>) => {
 	const request = message as unknown as { id: number; node: number; board: number };
 	try {
 		const spot = run.spot;
-		const { node, board } = request;
+		const { node } = request;
+		const board = request.board;
 		const view = run.snapshot().strategyAt(node, board);
 		const reach = reachAt(node, board, view.player);
 		const round = spot.tree.round[node];
@@ -105,7 +106,7 @@ port.on('message', (message: Record<string, unknown>) => {
 			type: 'strategy',
 			id: request.id,
 			node,
-			board,
+			board: request.board,
 			player: view.player,
 			actions: view.actions,
 			boardLabel: formatCards(cards.subarray(board * width, board * width + width)),
@@ -170,7 +171,7 @@ async function main(): Promise<void> {
 				player: tree.player[node],
 				round: tree.round[node],
 				pot: tree.pot[node] / spot.chipScale,
-				boards: spot.runouts.counts[tree.round[node]],
+				boards: spot.runouts.counts[spot.tree.round[node]],
 			};
 		}),
 		// Every combination either player holds, so the page can lay out a grid.

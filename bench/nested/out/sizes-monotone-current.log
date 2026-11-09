@@ -1,0 +1,14 @@
+monotone 1size (blueprint 174 it, 0.298%)
+  OOP at root: size agreement 100.0% of betting hands; clear (gap ≥ 0.5% pot) 88.8% of them, agreement there 100.0%
+    EV loss of the blueprint's play at reference values: mean 0.018% pot, max 0.14% (the reference's own: 0.010%); size part, per betting hand: mean 0.013%, max 0.25% (bets 27.2% of the range)
+    shove within 1% pot of best: 0.92% of range; shoved by reference 0.000%, by blueprint 0.001%
+  IP after check: size agreement 69.5% of betting hands; clear (gap ≥ 0.5% pot) 10.8% of them, agreement there 83.3%
+    EV loss of the blueprint's play at reference values: mean 0.015% pot, max 0.06% (the reference's own: 0.008%); size part, per betting hand: mean 0.036%, max 1.63% (bets 25.4% of the range)
+    shove within 1% pot of best: 0.00% of range; shoved by reference 0.000%, by blueprint 0.000%
+monotone 1size-b3-i16 (blueprint 169 it, 0.259%)
+  OOP at root: size agreement 100.0% of betting hands; clear (gap ≥ 0.5% pot) 88.8% of them, agreement there 100.0%
+    EV loss of the blueprint's play at reference values: mean 0.019% pot, max 0.16% (the reference's own: 0.010%); size part, per betting hand: mean 0.022%, max 0.55% (bets 26.1% of the range)
+    shove within 1% pot of best: 0.92% of range; shoved by reference 0.000%, by blueprint 0.001%
+  IP after check: size agreement 71.0% of betting hands; clear (gap ≥ 0.5% pot) 15.3% of them, agreement there 88.9%
+    EV loss of the blueprint's play at reference values: mean 0.014% pot, max 0.05% (the reference's own: 0.008%); size part, per betting hand: mean 0.033%, max 1.64% (bets 24.8% of the range)
+    shove within 1% pot of best: 0.00% of range; shoved by reference 0.000%, by blueprint 0.000%

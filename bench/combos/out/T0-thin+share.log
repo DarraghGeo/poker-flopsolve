@@ -1,0 +1,15 @@
+== T0 thin+share 10,20,40,60,80,120,160,200,250,300,400
+T0-thin+share: 207 nodes, 2352 runouts; estimate f32 0.59 GiB, i16 0.31, compact -
+  engine wasm, 4 threads, storage 0.572 GiB, setup 0.5 s
+  {"iterations":10,"seconds":7.5,"perIteration":0.752,"exploitability":75.809,"evError":[{"mean":22.9211,"max":151.759},{"mean":14.7968,"max":192.453}],"loss":[{"mean":2.9271,"max":11.512}],"peakRssGiB":0.85}
+  {"iterations":20,"seconds":13.8,"perIteration":0.689,"exploitability":38.757,"evError":[{"mean":9.5871,"max":46.54},{"mean":8.343,"max":101.174}],"loss":[{"mean":0.9035,"max":5.146}],"drift":0.1767,"peakRssGiB":0.85}
+  {"iterations":40,"seconds":26.9,"perIteration":0.673,"exploitability":17.126,"evError":[{"mean":4.2863,"max":20.031},{"mean":5.2715,"max":37.137}],"loss":[{"mean":0.6569,"max":2.806}],"drift":0.1237,"peakRssGiB":0.85}
+  {"iterations":60,"seconds":40.7,"perIteration":0.678,"exploitability":11.319,"evError":[{"mean":3.9168,"max":24.077},{"mean":4.3326,"max":29.69}],"loss":[{"mean":0.5217,"max":1.652}],"drift":0.097,"peakRssGiB":0.85}
+  {"iterations":80,"seconds":52.9,"perIteration":0.662,"exploitability":8.602,"evError":[{"mean":3.1651,"max":23.21},{"mean":3.7682,"max":22.448}],"loss":[{"mean":0.3938,"max":1.23}],"drift":0.0889,"peakRssGiB":0.85}
+  {"iterations":120,"seconds":78.1,"perIteration":0.651,"exploitability":5.955,"evError":[{"mean":2.1051,"max":16.262},{"mean":3.3389,"max":10.71}],"loss":[{"mean":0.2112,"max":0.611}],"drift":0.1353,"peakRssGiB":0.85}
+  {"iterations":160,"seconds":105.7,"perIteration":0.661,"exploitability":5.047,"evError":[{"mean":1.7403,"max":11.62},{"mean":3.1012,"max":5.946}],"loss":[{"mean":0.1177,"max":0.346}],"drift":0.0823,"peakRssGiB":0.85}
+  {"iterations":200,"seconds":132.8,"perIteration":0.664,"exploitability":4.711,"evError":[{"mean":1.6282,"max":9.807},{"mean":2.882,"max":6.482}],"loss":[{"mean":0.0824,"max":0.238}],"drift":0.0458,"peakRssGiB":0.85}
+  {"iterations":250,"seconds":165.6,"perIteration":0.663,"exploitability":4.509,"evError":[{"mean":1.5941,"max":8.954},{"mean":2.6787,"max":6.87}],"loss":[{"mean":0.0651,"max":0.211}],"drift":0.0352,"peakRssGiB":0.85}
+  {"iterations":300,"seconds":202.2,"perIteration":0.674,"exploitability":4.446,"evError":[{"mean":1.578,"max":8.395},{"mean":2.5154,"max":7.088}],"loss":[{"mean":0.0568,"max":0.192}],"drift":0.0249,"peakRssGiB":0.85}
+  {"iterations":400,"seconds":264.2,"perIteration":0.661,"exploitability":4.396,"evError":[{"mean":1.4694,"max":7.539},{"mean":2.2327,"max":7.161}],"loss":[{"mean":0.0522,"max":0.192}],"drift":0.0343,"peakRssGiB":0.85}
+{"spot":"T0","combination":"thin+share","engine":"wasm","workers":4,"estimate":{"f32":632545728,"i16":328439936,"compact":null},"storageGiB":0.572,"setupSeconds":0.5,"peakRssGiB":0.85,"settled":{"within002":{"iterations":250,"seconds":165.6},"within005":{"iterations":200,"seconds":132.8}},"reference":"bench/adaptive/results/rainbow-T0.json"}

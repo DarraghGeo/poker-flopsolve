@@ -3,7 +3,14 @@ import { browserPlatform } from './scripts/browser-platform.ts';
 
 export default defineConfig([
 	{
-		entry: { index: 'src/index.ts', worker: 'src/worker.ts', 'engine-worker': 'src/engine-worker.ts' },
+		entry: {
+			index: 'src/index.ts',
+			threads: 'src/threads.ts',
+			worker: 'src/worker.ts',
+			'engine-worker': 'src/engine-worker.ts',
+			// Platform-free, so the browser build uses it as it is.
+			'wasm-storage': 'src/wasm-storage.ts',
+		},
 		format: ['esm'],
 		dts: true,
 		target: 'es2022',
@@ -12,8 +19,9 @@ export default defineConfig([
 		sourcemap: true,
 	},
 	{
-		// Single-threaded, no Node imports; see src/platform/browser.ts.
-		entry: { browser: 'src/index.ts' },
+		// No Node imports; see src/platform/browser.ts. Single-threaded unless
+		// the separate threads entry is imported and called.
+		entry: { browser: 'src/index.ts', 'browser-threads': 'src/threads.ts' },
 		format: ['esm'],
 		target: 'es2022',
 		platform: 'browser',

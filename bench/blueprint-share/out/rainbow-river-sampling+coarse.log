@@ -1,0 +1,26 @@
+rainbow-river-sampling+coarse: 306 nodes, 1396 runouts, 173 MiB f32
+  20 it, 57.291%, 8 s
+  40 it, 27.399%, 14 s
+  80 it, 12.887%, 24 s
+  120 it, 8.312%, 34 s
+  160 it, 6.246%, 44 s
+  200 it, 5.064%, 54 s
+  240 it, 4.330%, 65 s
+  280 it, 3.883%, 75 s
+  320 it, 3.572%, 86 s
+  360 it, 3.320%, 96 s
+  400 it, 3.156%, 106 s
+blueprint: 400 it, 3.156% (best 3.156%), 106 s, engine wasm, peak RSS 407 MiB
+root EV error, % pot: OOP mean 0.750 max 2.808; IP mean 0.854 max 3.671
+  OOP at root: root play loses 0.0228% pot at reference values (max 0.294); the reference's own 0.0089%
+  IP after check: root play loses 0.0139% pot at reference values (max 0.096); the reference's own 0.0083%
+  re-solve bet_82.5_call_-2c (line reached 12.5%): opponent gains 2.593 / 0.972% of its pot
+  re-solve bet_82.5_call_-7c (line reached 12.5%): opponent gains 2.026 / 0.554% of its pot
+  re-solve bet_82.5_call_-Qs (line reached 12.5%): opponent gains 4.138 / 0.715% of its pot
+  re-solve check_bet_41.25_call_-2c (line reached 5.4%): opponent gains 3.671 / 4.155% of its pot
+  re-solve check_bet_41.25_call_-7c (line reached 5.4%): opponent gains 5.166 / 5.203% of its pot
+  re-solve check_bet_41.25_call_-Qs (line reached 5.4%): opponent gains 4.369 / 8.007% of its pot
+  re-solve check_check_-2c (line reached 47.7%): opponent gains 3.435 / 2.915% of its pot
+  re-solve check_check_-7c (line reached 47.7%): opponent gains 2.736 / 1.768% of its pot
+  re-solve check_check_-Qs (line reached 47.7%): opponent gains 2.669 / 3.983% of its pot
+re-solve gain, weighted by line reach: OOP refined 3.062%, IP refined 2.720%

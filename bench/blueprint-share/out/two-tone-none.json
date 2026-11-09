@@ -1,0 +1,121 @@
+{
+ "tag": "two-tone-none",
+ "storageBytes": 524824830,
+ "peakRss": 733487104,
+ "engine": "wasm",
+ "seconds": 188.46539674200002,
+ "iterations": 520,
+ "exploitability": 0.04923356458148555,
+ "best": 0.04923356458148555,
+ "history": [
+  {
+   "iterations": 20,
+   "seconds": 9.126596669000001,
+   "exploitability": 15.312054260266478
+  },
+  {
+   "iterations": 40,
+   "seconds": 16.40798849,
+   "exploitability": 3.367136076875916
+  },
+  {
+   "iterations": 80,
+   "seconds": 30.899872839,
+   "exploitability": 0.7088333290862289
+  },
+  {
+   "iterations": 120,
+   "seconds": 45.172728201,
+   "exploitability": 0.35254867452251826
+  },
+  {
+   "iterations": 160,
+   "seconds": 59.792474545,
+   "exploitability": 0.22016330008648693
+  },
+  {
+   "iterations": 200,
+   "seconds": 74.163125805,
+   "exploitability": 0.14492072136175901
+  },
+  {
+   "iterations": 240,
+   "seconds": 88.26085325900002,
+   "exploitability": 0.25594435444880587
+  },
+  {
+   "iterations": 280,
+   "seconds": 102.21073993400002,
+   "exploitability": 0.3337117003249679
+  },
+  {
+   "iterations": 320,
+   "seconds": 116.72790661,
+   "exploitability": 0.21858099299081446
+  },
+  {
+   "iterations": 360,
+   "seconds": 131.508314618,
+   "exploitability": 0.15252560157244957
+  },
+  {
+   "iterations": 400,
+   "seconds": 145.496029086,
+   "exploitability": 0.11065013210623376
+  },
+  {
+   "iterations": 440,
+   "seconds": 159.87765628,
+   "exploitability": 0.08329664746025306
+  },
+  {
+   "iterations": 480,
+   "seconds": 174.435850433,
+   "exploitability": 0.06363711911627373
+  },
+  {
+   "iterations": 520,
+   "seconds": 188.465257778,
+   "exploitability": 0.04923356458148555
+  }
+ ],
+ "rootError": [
+  {
+   "mae": 0,
+   "max": 0
+  },
+  {
+   "mae": 0,
+   "max": 0
+  }
+ ],
+ "loss": [
+  {
+   "decision": "OOP at root",
+   "blueprint": {
+    "mean": 0.11633928613058066,
+    "max": 0.7854702485866909
+   },
+   "reference": {
+    "mean": 0.11633928613058066,
+    "max": 0.7854702485866909
+   }
+  },
+  {
+   "decision": "IP after check",
+   "blueprint": {
+    "mean": 0.05205971572284774,
+    "max": 0.3194783625284501
+   },
+   "reference": {
+    "mean": 0.05205971572284774,
+    "max": 0.3194783625284501
+   }
+  }
+ ],
+ "resolves": [],
+ "resolveGain": [
+  null,
+  null
+ ]
+}

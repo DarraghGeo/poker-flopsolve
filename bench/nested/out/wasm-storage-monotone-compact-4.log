@@ -1,0 +1,5 @@
+monotone compact in Chromium (4 threads), storage 73 MiB, tab peak RSS 223 MiB
+  4 thread(s), wasm: 35.1 s to 0.246% in 200 it (0.175 s/it with checks; checks 0.8 s)
+  turn re-solve, 1 thread(s): 30.0 s, 14 MiB
+  turn re-solve, 4 thread(s): 8.6 s, 14 MiB
+{"board":"monotone","storage":"compact","peak":233709568,"threads":4,"solves":[{"workers":4,"ms":35070.84999999963,"iterations":200,"exploitability":0.24602632888828013,"engine":"wasm","checkMs":805.5499999998137}],"resolves":[{"workers":1,"ms":30003.39500000002,"bytes":14248702},{"workers":4,"ms":8607.43499999959,"bytes":14248702}],"storageBytes":76082768}

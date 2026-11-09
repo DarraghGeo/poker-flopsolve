@@ -1,0 +1,4 @@
+monotone i16 in Chromium (1 threads), storage 97 MiB, tab peak RSS 236 MiB
+  1 thread(s), wasm: 118.5 s to 0.202% in 240 it (0.494 s/it with checks; checks 3.0 s)
+  turn re-solve, 1 thread(s): 24.8 s, 20 MiB
+{"board":"monotone","storage":"i16","peak":247877632,"threads":1,"solves":[{"workers":1,"ms":118509.17499999981,"iterations":240,"exploitability":0.20212987106355168,"engine":"wasm","checkMs":3046.429999999702}],"resolves":[{"workers":1,"ms":24772.66000000015,"bytes":21395470}],"storageBytes":101701172}

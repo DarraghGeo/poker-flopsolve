@@ -1,0 +1,229 @@
+{
+ "tag": "rainbow-river-sampling-800it",
+ "storageBytes": 181089712,
+ "peakRss": 422039552,
+ "engine": "wasm",
+ "seconds": 216.304466276,
+ "iterations": 800,
+ "exploitability": 2.9131967780157297,
+ "best": 2.888699060865632,
+ "history": [
+  {
+   "iterations": 20,
+   "seconds": 8.10638574,
+   "exploitability": 57.29148713431368
+  },
+  {
+   "iterations": 40,
+   "seconds": 14.393751753999998,
+   "exploitability": 27.399484265568507
+  },
+  {
+   "iterations": 80,
+   "seconds": 24.613128676,
+   "exploitability": 12.887434300313274
+  },
+  {
+   "iterations": 120,
+   "seconds": 34.883136322,
+   "exploitability": 8.312080885160858
+  },
+  {
+   "iterations": 160,
+   "seconds": 45.773174152,
+   "exploitability": 6.246357579986662
+  },
+  {
+   "iterations": 200,
+   "seconds": 56.924168245000004,
+   "exploitability": 5.064272148999222
+  },
+  {
+   "iterations": 240,
+   "seconds": 67.59817855300001,
+   "exploitability": 4.330085446390803
+  },
+  {
+   "iterations": 280,
+   "seconds": 78.545141528,
+   "exploitability": 3.8833709152571947
+  },
+  {
+   "iterations": 320,
+   "seconds": 89.03690721299999,
+   "exploitability": 3.5719608735020794
+  },
+  {
+   "iterations": 360,
+   "seconds": 99.73885950900001,
+   "exploitability": 3.3202786186309248
+  },
+  {
+   "iterations": 400,
+   "seconds": 110.411333528,
+   "exploitability": 3.1561027773946257
+  },
+  {
+   "iterations": 440,
+   "seconds": 121.278809547,
+   "exploitability": 3.0449108411793078
+  },
+  {
+   "iterations": 480,
+   "seconds": 132.171437137,
+   "exploitability": 2.9674951378769903
+  },
+  {
+   "iterations": 520,
+   "seconds": 142.860485003,
+   "exploitability": 2.929444192507794
+  },
+  {
+   "iterations": 560,
+   "seconds": 153.95966125900003,
+   "exploitability": 2.912363149801048
+  },
+  {
+   "iterations": 600,
+   "seconds": 164.253054869,
+   "exploitability": 2.8978551435135294
+  },
+  {
+   "iterations": 640,
+   "seconds": 175.028543547,
+   "exploitability": 2.8891970082394547
+  },
+  {
+   "iterations": 680,
+   "seconds": 185.551388283,
+   "exploitability": 2.888699060865632
+  },
+  {
+   "iterations": 720,
+   "seconds": 195.78006416800002,
+   "exploitability": 2.8977767579555915
+  },
+  {
+   "iterations": 760,
+   "seconds": 205.94918518400002,
+   "exploitability": 2.9022127421051738
+  },
+  {
+   "iterations": 800,
+   "seconds": 216.304329081,
+   "exploitability": 2.9131967780157297
+  }
+ ],
+ "rootError": [
+  {
+   "mae": 0.4170909306280564,
+   "max": 2.118462909392406
+  },
+  {
+   "mae": 0.46049190350022917,
+   "max": 3.1250697382398585
+  }
+ ],
+ "loss": [
+  {
+   "decision": "OOP at root",
+   "blueprint": {
+    "mean": 0.01098771226823925,
+    "max": 0.08296014901488036
+   },
+   "reference": {
+    "mean": 0.008871218779525755,
+    "max": 0.04991630740054376
+   }
+  },
+  {
+   "decision": "IP after check",
+   "blueprint": {
+    "mean": 0.010434039250648706,
+    "max": 0.0410963221105618
+   },
+   "reference": {
+    "mean": 0.00831599431394231,
+    "max": 0.039456157042288
+   }
+  }
+ ],
+ "resolves": [
+  {
+   "key": "bet_82.5_call_-2c",
+   "lineReach": 0.1249610020966374,
+   "gain": [
+    2.700344313464929,
+    0.6720373225129127
+   ]
+  },
+  {
+   "key": "bet_82.5_call_-7c",
+   "lineReach": 0.1249610020966374,
+   "gain": [
+    2.6062992010898856,
+    0.4229002597437675
+   ]
+  },
+  {
+   "key": "bet_82.5_call_-Qs",
+   "lineReach": 0.1249610020966374,
+   "gain": [
+    3.7777893253045254,
+    0.5266593875130177
+   ]
+  },
+  {
+   "key": "check_bet_41.25_call_-2c",
+   "lineReach": 0.05418120349237849,
+   "gain": [
+    3.835937627733311,
+    6.156339829493567
+   ]
+  },
+  {
+   "key": "check_bet_41.25_call_-7c",
+   "lineReach": 0.05418120349237849,
+   "gain": [
+    1.69847695905381,
+    8.602531445207504
+   ]
+  },
+  {
+   "key": "check_bet_41.25_call_-Qs",
+   "lineReach": 0.05418120349237849,
+   "gain": [
+    3.6518552330531917,
+    5.581452493165609
+   ]
+  },
+  {
+   "key": "check_check_-2c",
+   "lineReach": 0.476598546648886,
+   "gain": [
+    1.5886972369579342,
+    2.916255449349089
+   ]
+  },
+  {
+   "key": "check_check_-7c",
+   "lineReach": 0.476598546648886,
+   "gain": [
+    1.751606219421422,
+    1.4733871134236163
+   ]
+  },
+  {
+   "key": "check_check_-Qs",
+   "lineReach": 0.476598546648886,
+   "gain": [
+    2.4895735049428924,
+    2.4545146619603444
+   ]
+  }
+ ],
+ "resolveGain": [
+  2.24246846407203,
+  2.3213518321411373
+ ]
+}

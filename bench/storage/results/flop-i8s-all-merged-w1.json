@@ -1,0 +1,46 @@
+{
+ "spot": "flop",
+ "variant": "i8s-all",
+ "workers": 1,
+ "engine": "js",
+ "storageMiB": 81.4,
+ "estimateMiB": 99.3,
+ "peakRssMiB": 209,
+ "setupSeconds": 0.4,
+ "rows": [
+  {
+   "iterations": 40,
+   "trainSeconds": 65.7,
+   "exploitability": 1.0174,
+   "positiveShare": 0.6383,
+   "mae": 1.7712,
+   "max": 4.2206
+  },
+  {
+   "iterations": 80,
+   "trainSeconds": 129.4,
+   "exploitability": 0.2086,
+   "positiveShare": 0.6049,
+   "mae": 0.1865,
+   "max": 0.8568
+  },
+  {
+   "iterations": 160,
+   "trainSeconds": 253.7,
+   "exploitability": 0.0609,
+   "positiveShare": 0.5828,
+   "mae": 0.0466,
+   "max": 0.2606
+  }
+ ],
+ "sizeChoice": {
+  "actionMae": 0.4104,
+  "actionMax": 8.3187,
+  "playedActionMae": null,
+  "playedActionMax": 0,
+  "sameBestAction": 0.8737,
+  "sameBestSize": 1,
+  "sameBestSizeWhereClear": 1,
+  "clearShare": 0
+ }
+}

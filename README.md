@@ -155,10 +155,29 @@ Each takes a value per round too. On a turn spot with four sizes, two raises and
 Raise caps per round (`maxRaises: [1, 2, 1]`) and a checked-down river (an empty
 `betSizes` row) were already available and trim the same way.
 
+`removeActions` cuts single lines: each a bet, raise or shove named by the path of the node
+it leads to, as `Solution.path` writes it (`'check bet 18.15'`, `'bet 41.25 call / allin
+975'`), with everything below it. Only the line named goes; the same size elsewhere stays.
+Use it to keep three sizes where they matter and one elsewhere; `thinSizes` (below) is a
+ready-made shape of that kind.
+
 `minWeight: 0.05` trims the ranges the same way: combinations weighted under 5% are
 dropped from both, which suits imported ranges full of hands at a percent or two.
 
 ## Reading a solved spot
+
+`solution.handEvs(player)` gives each combination's root EV in chips, indexed like
+`COMBO_CARDS` (0 outside the range, on the board, or with no opponent hand to face). Weighted by range weight times the
+opponent mass each hand can face, it averages to `solution.ev(player)`, and one pass serves
+both.
+
+Both read the average strategy by default. With `approximations: { currentProfileEv: true }`
+they read the current (regret-matched) profile instead: the strategy the next iteration would
+play. Its per-hand EVs settle sooner. After 15 s single-threaded in a browser, their mean error
+against a 0.045%-of-pot reference was 1.23% of pot against the average's 2.18% on As Kh 7d,
+0.11% against 0.37% on Ks 9s 4s, and 1.40% against 2.02% on a wide Qs Jh 2c. The cost is the
+same. `strategyAt` and `reachAt` still show the average, so the EVs then belong to a
+different profile from the strategy you read.
 
 `createRun` returns the solver itself as `run.solver`, for analysis after (or between)
 iterations, without changing anything:
@@ -203,6 +222,21 @@ resumes a solve exactly. Measured on a river spot to 0.1% of pot:
 | Stack 120 → 100 | 125 | 75 |
 | Pot 60 → 72 | 125 | 100 |
 
+A solve of a nearby flop can seed one too, through a card relabelling that takes its board
+onto this one. A rank swap keeps every hand's role, so a solve of AsKh6d read through
+`rankSwap` of the 6 and the 7 plays 66 as 77:
+
+```ts
+import { rankSwap } from 'poker-flopsolve';
+const six = solve(defineSpot({ ...config, board: 'As Kh 6d' }), { targetPercent: 0.1 });
+const seven = solve(defineSpot({ ...config, board: 'As Kh 7d' }), {
+  targetPercent: 0.5, warmStart: six, warmCards: rankSwap(4, 5),   // ranks 0 = deuce … 12 = ace
+});
+```
+
+On the bench flop that reaches 0.5% of pot in 8 iterations instead of 52 (from AsQh7d,
+20). It needs the whole old solve: seeding only the flop's decisions saved at most 15%.
+
 ## Re-solving from a node
 
 Solve the whole spot with a coarse tree, then re-solve the street you are looking at
@@ -231,11 +265,87 @@ This is *unsafe* re-solving. The subgame is solved for the ranges that arrive, s
 strategy can be exploitable in ways the original allowed for. It also does not make the
 earlier streets any more accurate than their coarse model of the future.
 
+### Full flop betting, re-solved turns
+
+For a flop whose full tree does not fit, keep the flop's betting as it is and give the turn
+and river one size, then re-solve each turn you look at with the full betting.
+`resolveSubgame` does the re-solve; it is opt-in and tree-shaken away when unused.
+
+```ts
+import { defineSpot, resolveSubgame, solve } from 'poker-flopsolve';
+
+const full = { ...spot, betSizes: [[0.33, 0.75, 1.5]], raiseSizes: [[0.75]], maxRaises: 3, allowAllIn: true };
+const blueprint = solve(
+	defineSpot({
+		...full,
+		betSizes: [[0.33, 0.75, 1.5], [0.75], [0.75]],
+		raiseSizes: [[0.75], [0.75], [0.75]],
+		maxRaises: [3, 1, 1],
+		allowAllIn: [true, false, false],
+		runoutBuckets: 3,
+	}),
+	{ targetPercent: 0.3, precision: 'i16' }, // in a browser, add `wasmStorage` (see below)
+);
+const turn = resolveSubgame(blueprint, node, board, {
+	player: 0, // whose strategy to refine
+	betting: { betSizes: full.betSizes, raiseSizes: full.raiseSizes, maxRaises: 3, allowAllIn: true },
+	iterations: 300,
+});
+turn.solution.strategyAt(0, 0);
+```
+
+Measured on Ks 9s 4s (pot 55, stacks 975, the bench ranges) against the full tree solved
+to 0.093% of pot (99 minutes, 2.3 GB at i16 on four threads):
+
+| | blueprint, 1 turn/river size | + 3 runout buckets, i16 |
+|---|---|---|
+| storage | 264 MiB | 97 MiB |
+| solve to 0.3%, Node, 4 threads | 27 s | 55 s |
+| root EV error per hand, OOP / IP | 2.3 / 2.2% of pot (max 10.6 / 20.2) | 2.3 / 2.2% (max 10.1 / 19.5) |
+| root size agreement, OOP / IP after a check | 98.6% / 65.4% | 100% / 62.0% |
+| EV the root play loses at the full tree's values, OOP / IP | 0.027 / 0.022% of pot | 0.028 / 0.020% |
+
+Size agreement compares which bet size each hand's EVs rank best in the blueprint and in
+the full tree. It is fragile where sizes are near-tied. With the current solver, whose
+average strategy changed while these runs were going, OOP's agreement reads 75%, and the
+root EV error 2.0 / 1.9% of pot. The EV the root play loses held: 0.019 / 0.014% of pot.
+That is the number to go by. IP's low size agreement after a check is near-indifference: only 15% of its betting hands
+prefer one size by 0.5% of pot or more, the blueprint agrees on 89% of those, and its play
+loses 0.02% of pot. The per-action EV errors are largest for the flop shove (11–33% of pot
+for IP), a line neither tree plays. More turn/river sizes did worse here: two sizes
+(0.33, 1.5) gave 4.4 / 5.7% EV error and three gave 4.7 / 6.1%, at 336 and 417 MiB. On the
+rainbow As Kh 7d, which has about 4.5 times the runouts, the same blueprint is estimated at
+1.2 GiB f32, 363 MiB with buckets at i16.
+
+A re-solved turn, over the 15 most-reached turn nodes, took about 12 s in Node on one
+thread and 5–40 MiB. Against it, an opponent playing a best response with the full tree's
+ranges gains, weighted by how often each turn is reached, 3.5–4% of the subgame's pot.
+
+`resolveSubgame` re-solves without a safety gadget. Safe gadgets, which keep each opponent
+hand from doing better than it did against the blueprint, were measured and made things
+worse (4.2–6.2% of the pot); see [docs/APPROXIMATIONS.md](docs/APPROXIMATIONS.md). With
+`measure: true` it reports each opponent hand's best-response value against the blueprint
+(`alternative`) and against the re-solve (`entered`). A re-solved subgame is a `Solution`, so
+a river below it can be re-solved from it in turn.
+
+In headless Chromium (`poker-flopsolve/threads`, Ks 9s 4s), the blueprint with buckets at
+f32 solved to 0.3% in 84 s on one thread and 25 s on four, and each re-solved turn took
+21 s and 6.6 s with 40 MiB. At i16 without `wasmStorage` it runs on the JavaScript engine,
+about 190 s however many threads it has; with `wasmStorage` from
+`poker-flopsolve/wasm-storage` it runs on the WebAssembly engine, threads included, which
+is what brings the rainbow blueprint into a tab: see
+[16-bit and compact storage on the WebAssembly engine](#16-bit-and-compact-storage-on-the-webassembly-engine).
+A run holds its engine threads until `close()` (which `solve` calls for you), and
+snapshots stay usable after it, so close the blueprint's run before re-solving.
+
+`solveLite` packages this recipe, with sharing, sampling and a stop on the root play: see
+[Lite mode](#lite-mode-solvelite) and [Choosing an approximation](#choosing-an-approximation).
+
 ## In a browser
 
 The package also runs in a browser, for the small solves a page wants: river spots and
 narrow turn spots. Bundlers pick the browser build (`dist/browser.js`) automatically
-through the `browser` export condition. It is the same solver, single-threaded:
+through the `browser` export condition. It is the same solver, single-threaded by default:
 
 - no worker threads, so `workers` resolves to 1 (asking for more logs one warning);
 - no `SharedArrayBuffer`, so the page needs no cross-origin isolation headers;
@@ -245,12 +355,177 @@ through the `browser` export condition. It is the same solver, single-threaded:
 A solve blocks the thread it runs on, so host it in a Web Worker and step it in chunks;
 [`examples/browser-worker.ts`](examples/browser-worker.ts) does that with progress and a
 stop message in about sixty lines. Flop spots and wide turn spots belong in Node, where
-`workers` splits the runouts across cores.
+`workers` splits the runouts across cores, or in a browser with threads turned on.
 
-`npm test` checks the browser build in headless Chromium against Node (skipped where
-Playwright is not installed), and `npm run bench:browser` times it beside Node.
+### Threads in the browser (opt-in)
 
-## Performance
+A page can split a solve across cores as Node does, with no approximation. Import
+`enableThreads` from `poker-flopsolve/threads` and await it once, in the Web Worker that
+solves, before solving:
+
+```ts
+import { createRun, defineSpot } from 'poker-flopsolve';
+import { enableThreads } from 'poker-flopsolve/threads';
+
+const threads = await enableThreads();   // navigator.hardwareConcurrency, or 1 if unavailable
+const run = createRun(defineSpot(config), { workers: threads });
+```
+
+It starts `threads − 1` engine workers that share the WebAssembly engine's memory, exactly
+as Node's threads do, so a fixed thread count gives the same answer as Node at that count
+(bit for bit where the browser's V8 agrees with Node's on `Math.pow`, as it did in every
+measurement here). They stay started between solves; a solve borrows them and gives them back on
+`close()`. `enableThreads(1)` stops every thread no open run holds. Only the WebAssembly engine (the default) is
+threaded; `engine: 'js'` or `precision: 'f64'` solve on one thread, and so do
+`precision: 'i16'` and `compactStorage` unless the solve passes `wasmStorage` (below).
+
+Threads need:
+
+- a **cross-origin isolated** page, which gives `SharedArrayBuffer`. Serve the page
+  with these headers, and every script it loads from the same origin or with CORS:
+
+  ```
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  ```
+
+- the solve to run in a **Web Worker**, since a page's main thread may not block on
+  `Atomics.wait`;
+- `blob:` workers allowed, if the page sets a Content Security Policy (`worker-src blob:`).
+
+Where any of these is missing, `enableThreads` resolves to 1 and solves stay on one
+thread; `threadsUnavailable()` says why. Without the import nothing changes: the main
+bundle carries only a lookup for the threads, and a solve gives the same results as
+before. The UI's dev server (`npm run ui`) sends the two headers.
+
+On a 4-core container, headless Chromium, a flop solve to 0.3% of pot took 24.0 s on one
+thread and 8.7 s on four (`npm run bench:browser:threads`).
+
+`npm test` checks the browser build in headless Chromium against Node, single-threaded and
+threaded (skipped where Playwright is not installed). `npm run bench:browser` times it
+beside Node, and `npm run bench:browser:threads` times flop solves at each thread count.
+
+## Performance and approximations
+
+A plain `solve` is exact: `exploitabilityPercent()` measures the real game and
+`targetPercent` stops there. Everything that trades accuracy for time or memory is opt-in.
+Pick a goal below, not a dozen options.
+
+### Choosing an approximation
+
+| Goal | Use | Rainbow, As Kh 7d | Two-tone, Ts 9s 4h | Monotone, Ks 9s 4s |
+|---|---|---|---|---|
+| Fastest flop answer in a browser | [`solveLite`](#lite-mode-solvelite) | 35 s, 511 MiB; root loss 0.023 / 0.014 | 21 s, 426 MiB; 0.118 / 0.076 | 12 s, 253 MiB; 0.059 / 0.037 |
+| Fits a phone, 512 MiB or less | `solveLite` on a spot with `compactStorage: {}`, solved with `wasmStorage` | 300 MiB, 27% slower (Node) | not measured | not measured |
+| Better turn re-solves, in a tab | `solveLite` with `keepBudget: 150 * 2 ** 20`, `precision: 'i16'`, `wasmStorage` | 35 s, 534 MiB; re-solve gain 2.5 / 1.7 (1.3 / 1.1 at 800 it, 59 s) | 22 s, 469 MiB; 1.9 / 1.3 | 11 s, 317 MiB; 2.6 / 1.9 |
+| The whole tree, in 2 GiB or less | [`largeTree`](#fitting-a-large-tree-largetree) | T: 155 s, 1.97 GiB (1.87 in Chromium); root loss 0.031 / 0.020 | not measured | `thinSizes` alone: 0.64 GiB at 32 bits |
+| Exact | `solve(spot, { targetPercent })` | 9.2 s, 708 MiB (0.2%, Chromium) | 10.3 s (Node) | 5.6 s (Node) |
+
+How each row was measured, all on 4 threads:
+- **`solveLite`**: issue #47's betting (0.33 / 0.75 / 1.5 pot, a 0.75 raise, all-in, three aggressions;
+  pot 55, stack 975, the bench ranges), headless Chromium. Time is until the root play settles. Peak
+  memory includes a turn re-solve. Root loss is what OOP's root play / IP's play after a check give up
+  at the unshared blueprint's per-action values, % of pot. The phone row's 300 MiB is Node's peak on
+  rainbow. The re-solve row is issue #113's: the same blueprint at 16 bits, keeping the most-reached
+  flop lines that 150 MiB holds, the pick included in the time. Its gain is an opponent's best response
+  to a re-solved turn, % of the subgame pot: plain lite gives 3.1 / 2.7, 4.0 / 3.3 and 3.6 / 3.6, an
+  unshared blueprint 0.4–0.7.
+- **`largeTree`**: T, which is As Kh 7d with issue #47's betting on every street (17.2 GiB at 32 bits), in Node. Time is until
+  OOP's root loss comes within 0.02% of pot of its final value. Root loss is measured at the per-action values of
+  `thinSizes` alone at 32 bits, solved for 600 iterations, whose own play loses the same: the floor.
+- **Exact**: the bench ranges and betting to 0.3% of pot (two-tone and monotone, Node), and the bench
+  `flop` spot to 0.2% in Chromium.
+
+Every napkinpoker figure on this page (the goal table's notes and the inventory's costs) is an
+aggregate score against napkinpoker's reference solves, whose fixtures are private (issue #119; see
+[Every option on napkinpoker's reference solves](#every-option-on-napkinpokers-reference-solves)).
+
+What the numbers mean:
+- **`solveLite`**: decisions near-exact against an equilibrium opponent. Root play loses 0.072% of pot
+  at an exact full-game solve's values (issue #51's T₀, rainbow). On eight napkinpoker spots it lost
+  0.034 / 0.135%, where the stored solves' own play loses 0.027 / 0.131. Per-hand root EVs are 0.5–1.9%
+  of pot off the unshared blueprint's and 2.9–3.9% off the full game's (T₀). In its own game,
+  exploitability plateaus a few % of pot, because the river is shared. Full-game exploitability is not
+  measured. A turn re-solved at your full betting gives a best-responding opponent 2.7–4.0% of the
+  subgame pot.
+- **`largeTree`**: decisions near-exact against an equilibrium opponent, except where `thinSizes` cuts
+  a size the opponent plays. Against an exact full-tree solve, root play loses 0.04% of pot (T₀). On
+  seven napkinpoker spots OOP's root lost 0.04%, as an exact solve's does. IP's play after a check lost
+  0.34% against 0.16%, because its 0.33 flop bet is cut there. Per-hand root EVs are 0.05% of pot off
+  the thinned tree's and about 1.5% (5.5% at worst) off the full tree's (T₀). In its own, thinned game,
+  exploitability is 0.35% of pot after 1,600 iterations. Full-game exploitability is not measured.
+- **Exact**: exploitability is measured in the full game, every card dealt.
+
+#### The presets
+
+Both presets take any betting of yours and return what they changed, so nothing is silent:
+
+```ts
+import { createRun, defineSpot, solveLite } from 'poker-flopsolve';
+import { largeTree } from 'poker-flopsolve/wasm-storage';
+
+const lite = solveLite(spot, { workers: 4 });
+lite.changes.roundsSimplified; // ['turn', 'river']
+lite.changes.notes;            // ['turn: OOP loses the bet sizes 0.33, 1.5, all-in at 17 of the 19 such decisions the preset keeps', ...]
+
+const { config, options, changes } = largeTree({ ...spot, maxBytes: 2.5 * 2 ** 30 }, { options: { workers: 4 } });
+changes.sizesCut;              // [{ street: 'flop', player: 'ip', facing: 'bet', sizes: [0.33, 1.5, 'allin'], ... }, ...]
+const run = createRun(defineSpot(config), options);
+```
+
+`changes.sizesCut` lists every bet, raise and shove size your tree offers and the preset's does not, by
+street, player and whether it opens the betting or answers a bet. It also counts the decisions that lost
+them. `changes.settings` lists every other setting the preset set or dropped, with your value and its
+own. `changes.notes` says each in a sentence. `litePreset(spot)` returns what `solveLite` would solve
+(`config`, `options` and `changes`) without solving it, for a page that steps its own run.
+
+`largeTree` stays in `poker-flopsolve/wasm-storage`, beside the storage engine it needs. It returns
+that engine in its `options`, so moving it to the main entry would mean either carrying the engine's
+36 KB in every build or loading it with a dynamic `import()`. The first breaks the promise that a build
+without the import is unchanged. The second would make `largeTree` asynchronous, which is a breaking
+change, and the build does not split chunks. `solveLite` needs no second engine and is in the main
+entry.
+
+### Options inventory
+
+Every opt-in, by status:
+- **Preset-internal**: a preset sets it for you. Reach for it directly only to tune a preset.
+- **Advanced**: measured and supported, for a caller who knows the trade.
+
+Dead ends are removed rather than deprecated; [docs/APPROXIMATIONS.md](docs/APPROXIMATIONS.md) keeps
+their numbers.
+
+Costs are from napkinpoker's three 3-bet spots (issue #103) unless a section is named: storage and time
+against the exact solve at equal iterations, root loss OOP / IP in % of pot (the exact solve's is
+0.059 / 0.054), and true exploitability.
+
+| Option | Status | Engines | Refuses | Measured cost |
+|---|---|---|---|---|
+| `solveLite` / `litePreset` | preset | both | — | settled at 2.6× the iterations: 0.22× storage, 0.30× time, root 0.052 / 0.068, turn nodes 0.127, 1.89% exploitable ([Lite mode](#lite-mode-solvelite)) |
+| `largeTree` | preset | WebAssembly | — | at 4× the iterations: 0.38× storage, 0.58× time, root 0.057 / 0.289 (IP's cut 0.33 bet), 0.39% exploitable in its own tree ([Fitting a large tree](#fitting-a-large-tree-largetree)) |
+| `shareHistories` | preset-internal (lite) | both | — | 0.40× storage, 1.00× time, root 0.061 / 0.068, 1.89% exploitable |
+| `keepBudget` (`solveLite`), `shareHistories.keepLines`, `linesWithin` | advanced (a lite option) | both | — | turn re-solve gain within 0.1–0.8% of the subgame pot of an unshared blueprint's, against 3.0–4.2% from plain sharing ([History sharing](#history-sharing)) |
+| `runoutBuckets` | preset-internal (lite) | both | — | folds nothing on napkinpoker's weighted ranges. Bench ranges, gap 3: 0.61× time, true exploitability 0.302 against 0.271 ([Runout buckets](#runout-buckets-and-coarse-start)) |
+| `approximations.chanceSampling` | preset-internal (both) | both, threaded | — | at 4× the iterations: 0.69× time, root 0.057 / 0.056, 0.60% exploitable |
+| `settle` | preset-internal (lite) | both | — | two strategy reads per check, no best-response pass |
+| `thinSizes` | preset-internal (`largeTree`) | both | — | 0.74× storage, 0.66× time, root 0.067 / 0.294 (IP's cut 0.33 bet), 0.22% in its own tree |
+| `precision: 'i16'` with `wasmStorage` | preset-internal (`largeTree`) | WebAssembly with `wasmStorage`, else JavaScript | — | 0.52× storage, 1.16× time, root 0.059 / 0.067, 0.37% exploitable |
+| `compactStorage` | advanced (`largeTree`'s `storage: 'compact'`) | WebAssembly with `wasmStorage`, else JavaScript | `analysisOnly` | 0.37× storage, 1.37× time, root 0.063 / 0.080, 0.63% exploitable |
+| `resolveSubgame` | preset-internal (`LiteSolution.resolve`) | both | — | blueprint plus re-solves: 0.68× time, turn loss 0.053 against 0.031 exact |
+| `approximations.coarseStart` | advanced | both | `warmStart` | does nothing where buckets fold nothing (all of napkinpoker's spots), or beside `runoutBuckets` at its own gap or wider. Bench flops in Chromium at 15 s: root EV error 1.51 → 0.19% of pot ([Runout buckets and coarse start](#runout-buckets-and-coarse-start)) |
+| `approximations.currentProfileEv` | advanced | both | `analysisOnly` | no more than reading EVs; per-hand EVs often 2–4× closer at equal iterations |
+| `analysisOnly` | advanced | both, at 32 bits | `compactStorage`, `currentProfileEv` | loads a saved strategy; keeps no regrets |
+| `warmStart`, `warmCards` | advanced | both | — | see [Warm starts](#warm-starts) |
+| `minWeight` | advanced | both | — | edits the ranges: 2–5% less storage, up to 15% less time on napkinpoker's spots |
+| `engine: 'js'` | advanced | JavaScript | — | the reference engine, about 2.4× slower; `precision: 'f64'` runs on it |
+| `isomorphism: false`, `simd: false`, `algorithm: 'cfr+'` | advanced | both | — | exact; off switches for comparison |
+
+`test/combinations.test.ts` solves every pair of `shareHistories`, `compactStorage`, `thinSizes`,
+`runoutBuckets`, `chanceSampling`, `coarseStart`, 16-bit `wasmStorage`, `resolveSubgame`,
+`litePreset` and `largeTree` (45 pairs); none is refused. Every approximation
+tried and left out, with its numbers and issue, is in [docs/APPROXIMATIONS.md](docs/APPROXIMATIONS.md).
+
+### Exact speed
 
 Measured on an Apple M2, single threaded:
 
@@ -273,8 +548,10 @@ warm start and analysis works unchanged. With threads (Node), all of them share 
 WebAssembly memory and split the runouts as below. It runs wherever it can — 32-bit
 storage, the default, and WebAssembly SIMD, which current Node and browsers have —
 and `run.engine` says which ran. `engine: 'js'` forces the JavaScript traversal;
-`precision: 'f64'` or `'i16'` use it too. Against the JavaScript traversal it is about
-2.4× faster per iteration, and about 3× in Chromium.
+`precision: 'f64'` uses it too, and so do `'i16'` and `compactStorage` unless the solve
+passes `wasmStorage` (see
+[16-bit and compact storage on the WebAssembly engine](#16-bit-and-compact-storage-on-the-webassembly-engine)). Against the JavaScript traversal it is about 2.4× faster per
+iteration, and about 3× in Chromium.
 
 ### SIMD kernels
 
@@ -293,8 +570,21 @@ Chromium, exploitability checks ~8%.
 When swapping suits leaves the board and both ranges unchanged, a deal in one of those
 suits is the mirror image of a deal in another, and only one is solved. On a two-tone flop
 the two absent suits are interchangeable; on a monotone flop, all three. This is exact —
-the solver keeps mirrored hands' strategies tied together, so a stored runout stands for
-its mirrors with nothing lost — and it is on by default (`isomorphism: false` turns it off).
+mirrored hands play alike, so a stored runout stands for its mirrors with nothing lost —
+and it is on by default (`isomorphism: false` turns it off).
+
+The same symmetry is used a second time inside each stored board: hands that mirror each
+other there (on Ks9s4s, AhAd, AhAc and AdAc) are stored once, and every vector, regret and
+strategy sum on that board shrinks with them. Card removal stays exact, because the fold and
+showdown kernels still count each opposing hand's own cards. Measured single-threaded, ms
+per iteration with the same iterations to every target:
+
+| Flop | Hands stored on the river | ms per iteration | Memory |
+|---|---|---|---|
+| Ks9s4s, monotone, bench ranges | 245,916 → 171,442 | 78 → 62 | 38 → 27 MB |
+| Ks9s4s, pairs and broadway | 264,184 → 177,944 | 80 → 59 | 41 → 28 MB |
+| Ts9s4h, two-tone | 522,944 → 458,484 | 154 → 143 | 81 → 71 MB |
+| AsKh7d, rainbow | 784,806 → 784,806 | unchanged | unchanged |
 
 | Flop, 4 threads | Runouts stored | To 0.3% of pot |
 |---|---|---|
@@ -306,92 +596,6 @@ Board indices (`strategyAt`, `reachAt`, `subgameAt`, the UI's runout picker) cou
 runouts. To read a mirrored one, `spot.resolveBoard('Ts9s4h 7c')` gives the stored board
 and how hands relabel onto it. Ranges that differ between suits anywhere — an exact combo,
 or a partial weight on one suit — have no symmetry to use, and solve as before.
-
-### Runout buckets (approximate)
-
-`runoutBuckets: true` solves one turn or river card for several that play alike: two cards
-of one suit, neither pairing the board, equally connected to its straights, whose rank
-swap maps both ranges onto themselves. The stored card stands for the others with hands
-relabelled by the swap. A number instead of `true` is the widest rank gap allowed in a
-bucket (`true` is 1, the most cautious).
-
-It is an approximation — 55 on a 6 river and 66 on a 5 river sit on opposite sides of the
-board card, and no relabelling fixes that — so `exploitabilityPercent()` (and
-`targetPercent`) measure the bucketed game, and `run.trueExploitabilityPercent()` measures
-the strategy in the real one, every card dealt. How much it saves and costs depends on
-the ranges; suited connectors keep ranks apart, pocket pairs near the merged ranks cost
-accuracy. On AhKdQc, 4 threads, to 0.3% of pot in the bucketed game:
-
-| Ranges | Gap | Runouts | Time | True exploitability |
-|---|---|---|---|---|
-| Bench (wide, connectors) | exact | 2,352 | 13.2 s | 0.271% |
-| | 1 | 1,672 | 10.5 s | 0.278% |
-| | 3 | 1,348 | 8.0 s | 0.302% |
-| Pairs and broadway | exact | 2,352 | 9.3 s | 0.228% |
-| | 1 | 1,396 | 4.9 s | 0.482% |
-| | 3 | 1,088 | 4.2 s | 0.542% |
-
-### 16-bit storage
-
-A spot too big for 32-bit storage under `maxBytes` is solved at 16 bits instead
-(`precision: 'i16'` forces it). Regrets and strategy sums are stored as 16-bit integers with
-one scale per node and board, about halving memory. `estimate.compressedBytes` reports
-that size, and a spot is refused only if even that exceeds `maxBytes`. Measured on AsKh7d:
-
-| Flop | Ranges | 32-bit | 16-bit |
-|---|---|---|---|
-| 1 size, 1 raise | 198 vs 165 | 150 MB | 85 MB |
-| 2 sizes, 1 raise | 198 vs 165 | 824 MB | 425 MB |
-| 2 sizes, 1 raise | 309 vs 424 | 1,645 MB | 836 MB |
-| 2 sizes, 2 raises | 309 vs 424 | 3,344 MB | 1,689 MB |
-
-The 309 vs 424, two-size flop solved with two threads at a peak RSS of about 1.1 GB, so it
-fits a 2 GB machine. It reaches each accuracy target in the same number of iterations as
-32-bit, but each iteration costs about 15–20% more, because every update re-encodes its
-block. Strategy sums round up or down at random, weighted by the remainder: rounded to
-nearest, small sums lose most of each iteration's contribution and exploitability stalls
-near 0.04% of pot. The randomness is a hash of the slot and iteration, so solves stay
-deterministic at any thread count.
-
-### Algorithm and benchmark
-
-The default update rule is Discounted CFR (`algorithm: 'dcfr'`, α 1.5, β 0, γ 3, with
-positive regret counted from the second iteration so the uniform first iteration is
-forgotten). CFR+ is still available as `algorithm: 'cfr+'`. The table below predates the
-0.2.0 schedule, which needs 10–15% fewer iterations on flop and turn spots. `npm run bench` times a fixed river, turn, flop
-and two-tone flop. Measured in a 4-core cloud container, seconds of solving to reach each
-target (exploitability checks excluded):
-
-| Spot | Threads | CFR+ to 1% | DCFR to 1% | CFR+ to 0.3% | DCFR to 0.3% |
-|---|---|---|---|---|---|
-| Turn, 12 MB | 1 | 7.1 s (82 it) | 4.5 s (53 it) | 14.1 s (170 it) | 7.9 s (95 it) |
-| Flop, 150 MB | 1 | 49 s (46 it) | 36 s (34 it) | 101 s (95 it) | 64 s (61 it) |
-| Flop, 150 MB | 3 | 23 s | 17 s | 45 s | 29 s |
-| Two-tone flop, 162 MB | 3 | 19 s (34 it) | 16 s (29 it) | 38 s (71 it) | 28 s (53 it) |
-
-The solver is compute-bound rather than memory-bound — a 150 MB flop streams its
-accumulators at about 0.25 GB/s — so the cost of an iteration tracks the work in it, not
-its bytes.
-
-### Compared with postflop-solver
-
-`npm run bench:compare` runs the same spots through this solver and
-[b-inary/postflop-solver](https://github.com/b-inary/postflop-solver) (Rust, built
-natively for the machine) at the same 32-bit precision, thread count and checking
-schedule. It needs a Rust toolchain; postflop-solver is fetched at build time and never
-bundled. Measured in a 4-core cloud container, time to 0.3% of pot:
-
-| Spot | Threads | poker-flopsolve | postflop-solver | Ratio |
-|---|---|---|---|---|
-| Turn | 1 | 1.4 s | 0.9 s | 1.7× |
-| Flop | 1 | 29.4 s | 18.5 s | 1.6× |
-| Monotone flop | 1 | 9.5 s | 5.2 s | 1.8× |
-| Turn | 4 | 0.5 s | 0.3 s | 2.0× |
-| Flop | 4 | 9.1 s | 5.1 s | 1.8× |
-| Monotone flop | 4 | 2.9 s | 1.4 s | 2.1× |
-
-0.2.0, still in JavaScript, was 4–6× behind; the WebAssembly engine below is most of
-the difference.
 
 ### Accuracy targets
 
@@ -423,6 +627,60 @@ and 23% for a fixed cadence of 10.
 target was *not* reached and the answer is looser than asked for, which the CLI and the UI
 both say out loud.
 
+### Algorithm and benchmark
+
+The default update rule is Discounted CFR (`algorithm: 'dcfr'`, α 1.5, β 0, γ 3, with
+positive regret counted from the second iteration so the uniform first iteration is
+forgotten). CFR+ is still available as `algorithm: 'cfr+'`.
+
+Under DCFR, each iteration adds its strategy to the average without weighting it by the
+hand's own reach, as postflop-solver does. With own-reach weighting, a hand that equilibrium
+play stops sending to a node averaged out to its near-uniform first iterations there, so
+continuing it off the path (browsing the hand, comparing an engine against the solve) played
+close to random. On a turn spot after 300 iterations, near-uniform play among hands reaching
+a node with under 0.1% of their starting weight fell from 8% to 0.6%. The cost, single-threaded
+on the regression spots: exploitability at a fixed iteration count is up to about 50% higher
+once it is small (turn, 400 iterations: 0.016% → 0.024% of pot), which is 0–14% more
+iterations to 0.3% or 0.1% of pot (turn 79 → 88 and 143 → 163; flop 62 → 69 and 112 → 115)
+and about the same to 1%. CFR+ keeps the own-reach weighting: its iterates oscillate, and
+unweighted they averaged to 2–3× the exploitability.
+
+The table below predates both this change and the 0.2.0 schedule, which needs 10–15% fewer
+iterations on flop and turn spots. `npm run bench` times a fixed river, turn, flop
+and two-tone flop. Measured in a 4-core cloud container, seconds of solving to reach each
+target (exploitability checks excluded):
+
+| Spot | Threads | CFR+ to 1% | DCFR to 1% | CFR+ to 0.3% | DCFR to 0.3% |
+|---|---|---|---|---|---|
+| Turn, 12 MB | 1 | 7.1 s (82 it) | 4.5 s (53 it) | 14.1 s (170 it) | 7.9 s (95 it) |
+| Flop, 150 MB | 1 | 49 s (46 it) | 36 s (34 it) | 101 s (95 it) | 64 s (61 it) |
+| Flop, 150 MB | 3 | 23 s | 17 s | 45 s | 29 s |
+| Two-tone flop, 162 MB | 3 | 19 s (34 it) | 16 s (29 it) | 38 s (71 it) | 28 s (53 it) |
+
+The solver is compute-bound rather than memory-bound — a 150 MB flop streams its
+accumulators at about 0.25 GB/s — so the cost of an iteration tracks the work in it, not
+its bytes.
+
+### Compared with postflop-solver
+
+`npm run bench:compare` runs the same spots through this solver and
+[b-inary/postflop-solver](https://github.com/b-inary/postflop-solver) (Rust, built
+natively for the machine) at the same 32-bit precision, thread count and checking
+schedule. It needs a Rust toolchain; postflop-solver is fetched at build time and never
+bundled. Measured in a 4-core cloud container, time to 0.3% of pot:
+
+| Spot | Threads | poker-flopsolve | postflop-solver | Ratio |
+|---|---|---|---|---|
+| Turn | 1 | 1.4 s | 0.9 s | 1.7× |
+| Flop | 1 | 29.4 s | 18.5 s | 1.6× |
+| Monotone flop | 1 | 9.5 s | 5.2 s | 1.8× |
+| Turn | 4 | 0.5 s | 0.3 s | 2.0× |
+| Flop | 4 | 9.1 s | 5.1 s | 1.8× |
+| Monotone flop | 4 | 2.9 s | 1.4 s | 2.1× |
+
+0.2.0, still in JavaScript, was 4–6× behind; the WebAssembly engine above is most of
+the difference.
+
 ### Workers
 
 `solve(spot, { workers })` splits the runouts across threads, the calling thread included:
@@ -445,11 +703,31 @@ Measured on a 133 vs 145 combo spot, 8 cores:
 a 2-core machine still splits; `workers: 1` stays on one thread. A river spot has a single runout and silently stays single-threaded whatever is
 asked for.
 
+A thread that fails mid-iteration fails the solve instead of hanging it: the step throws, as
+does every step after, and the run must be closed and solved again. A thread killed without
+any chance to report it (a Node worker out of heap, a worker the browser kills) is caught by
+a backstop instead: the main thread waits for the others at most 20× its own share of the
+step, and never less than a minute, before it gives up on them.
+
 Results are bitwise deterministic at a fixed worker count, but agree with a different count
 only to floating point: a worker sums its own slice before the totals are summed across
-workers, which associates the same addition differently, and the non-linear CFR+ clamp
-compounds that rounding. Measured, the gap sits at 1e-15 through 300 iterations and reaches
-1e-7 by 2,000 — always orders of magnitude below the exploitability at that point.
+workers, which associates the same addition differently. Regret matching then amplifies
+that rounding, as it does any small change: an action's share follows its regret's sign,
+and where hands are close to indifferent the 32-bit gap grows from iteration to iteration.
+Measured on a small turn (`Ah Kd Qc 8s`, half- and full-pot bets, two raises), 1 and 2
+threads agree on the root strategy to 2e-6 after 12 iterations, differ by up to 6e-2 after
+50 and by about 1e-2 after 300, by which point each is as exploitable as the other (0.02%
+of pot): where the equilibrium is not unique, the two solves settle on different
+strategies that are equally good. The two engines differ from each other the same way.
+
+Exact ties are kept out of this (issue #117). Where a hand's actions are worth the same,
+its regrets are analytically zero, but the node value they are measured against is a
+strategy-weighted sum and comes out an ulp off, by a sign that depends on the summation
+order — and one positive ulp plays an action purely where none plays uniformly. So an
+action value within 2^-20 of the hand's node value, relative to the larger of the two,
+adds exactly zero regret, in both engines: tied actions stay uniform whatever the thread
+count. Without it, a tree with many ties (one river size and no all-in) put 1 and 2 threads
+3% apart after 12 iterations.
 
 The single largest cost is the number of runouts: a river board has one, a turn 48, a flop
 2,352. Tree width matters nearly as much — a second bet size roughly quadruples the work.
@@ -459,6 +737,566 @@ symmetry: measured, a rainbow flop's stabiliser is trivial and gains **1.00×**,
 **1.65×**, monotone **3.48×**. It is not worth the complexity here, which is the opposite
 of the conclusion in the parameterised solver alongside this one, where the flop itself is
 enumerated and can be canonicalised for a 12× win.
+
+## Appendix: approximations in detail
+
+Each option's own measurements, grouped where options overlap. The
+[goal table](#choosing-an-approximation) and the [options inventory](#options-inventory) summarise
+them, and [docs/APPROXIMATIONS.md](docs/APPROXIMATIONS.md) records what was tried and left out.
+
+### Lite mode (`solveLite`)
+
+`solveLite` packages that recipe for a phone or laptop. Give it your own betting. It keeps
+the flop's and reduces the turn and river to one bet (your size nearest 0.75 pot, no raise,
+no shove). It shares river storage between lines that meet (`shareHistories`), buckets
+runouts (`runoutBuckets: 3`) and samples deals (`chanceSampling`), and it stops once the
+root play stops moving. It then re-solves any turn or river at your full betting on demand:
+
+```ts
+import { solveLite } from 'poker-flopsolve';
+
+const spot = { board: 'As Kh 7d', pot: 55, stack: 975, oop, ip,
+	betSizes: [[0.33, 0.75, 1.5]], raiseSizes: [[0.75]], maxRaises: 3, allowAllIn: true };
+const lite = solveLite(spot, { workers: 4 }); // after enableThreads(4) in a browser
+lite.solution.strategyAt(0, 0);               // the flop root
+const turn = lite.resolve(node, board, { player: 0, iterations: 300 });
+```
+
+`lite.changes` says what the blueprint cut from your betting and what it switched on (see
+[The presets](#the-presets)). `litePreset(spot)` returns the blueprint spot, the solve settings and
+that report without solving, for a page that steps its own run; `liteConfig(spot)` returns the spot
+alone. `trackSettle()` gives the same stop for such a loop. Lite is a shared blueprint, so it
+never reaches an exploitability target: it plateaus a few percent of the pot from
+equilibrium while its first decisions go on settling (issue #85). `SolveOptions.settle`
+is the stop. Every 20 iterations it reads the average strategy at the root and at in
+position's decision after a check. It stops once both have moved less than 1% of the
+range, by total variation weighted by range, twice in a row. That is two strategy reads,
+with no best-response pass. It works on any solve: `solve(spot, { settle: {} })`.
+
+Measured on that spot's betting, in headless Chromium. The time counts solving and the settle
+checks. Root play loss is what OOP's root mix and IP's mix after a check lose at the
+unshared blueprint's per-action values (solved to 0.05% of pot), with that blueprint's
+own loss as the floor. It measures what sharing, sampling and the early stop cost.
+Re-solve gain is an opponent's best response to a turn re-solved at the full betting
+(300 iterations), under the unshared blueprint's ranges, % of the subgame pot, weighted
+by how often each turn is reached:
+
+| flop | settled, 1 / 2 / 4 threads | peak memory | root play loss, % pot (floor) | re-solve gain, % (unshared) | a re-solve, 1 / 2 / 4 threads |
+|---|---|---|---|---|---|
+| As Kh 7d | 103 / 59 / 35 s | 511 MiB | 0.023 / 0.014 (0.009 / 0.008) | 3.1 / 2.7 (0.67 / 0.50) | 38 / 22 / 14 s |
+| Ts 9s 4h | 64 / 38 / 21 s | 426 MiB | 0.118 / 0.076 (0.116 / 0.052) | 4.0 / 3.3 (0.48 / 0.55) | 42 / 23 / 13 s |
+| Ks 9s 4s | 31 / 19 / 12 s | 253 MiB | 0.059 / 0.037 (0.047 / 0.025) | 3.6 / 3.6 (0.44 / 0.47) | 28 / 17 / 10 s |
+
+Peak memory includes a re-solve. Against exact solves of the full game:
+- **Issue #51's T₀ on As Kh 7d** (three sizes and a shove on every street): OOP's root
+  play lost 0.072% of pot at T₀'s values. The same simplified tree, unshared and
+  converged, lost 0.057, so most of the cost is the simplification.
+- **Eight of napkinpoker's postflop-solver spots** (real weighted ranges, SRP and 3-bet
+  pots): root play lost 0.034 / 0.135% of pot on average, against 0.027 / 0.131 for the
+  stored solves' own play, settling in 38–176 s on one thread. Wide single-raised ranges
+  needed up to 452 MiB of storage, near a browser's default `maxBytes` of 512. For more
+  headroom add `compactStorage` and `wasmStorage`: 300 MiB on rainbow, 27% slower.
+
+`laterRaise: true` keeps a turn and river raise: 1.74 times the time and 546 MiB.
+`noDonk` and `flopMaxRaises: 2` save 44% an iteration together, but on Ts 9s 4h they
+quadrupled the re-solve gain. So they are off unless asked for.
+
+**Better turn re-solves: `keepBudget`.** It keeps the most-reached flop lines unshared, as
+many as a storage budget allows (issue #113; see [History sharing](#history-sharing)).
+The lines are ranked on a short solve of the blueprint with its river checked down
+(`checkedDown`), and the blueprint is solved with them kept. `litePreset` runs that
+ranking too, and `keepWithin` does it alone:
+
+```ts
+import { wasmStorage } from 'poker-flopsolve/wasm-storage';
+
+const lite = solveLite(spot, { workers: 4, keepBudget: 150 * 2 ** 20, precision: 'i16', wasmStorage });
+lite.kept; // ['check check /', 'bet 18.15 call /', 'bet 82.5 call /'] on As Kh 7d
+```
+
+Measured the same way, the ranking included in the time:
+
+| flop | kept | settled, 1 / 2 / 4 threads | peak memory, 1 / 2 / 4 | root play loss, % pot | re-solve gain, % |
+|---|---|---|---|---|---|
+| As Kh 7d | 3 lines | 123 / 61 / 35 s | 489 / 509 / 534 MiB | 0.026 / 0.011 | 2.5 / 1.7 |
+| Ts 9s 4h | 6 lines | 69 / 37 / 22 s | 437 / 463 / 469 MiB | 0.115 / 0.063 | 1.9 / 1.3 |
+| Ks 9s 4s | all 19 | 32 / 19 / 11 s | 290 / 301 / 317 MiB | 0.056 / 0.036 | 2.6 / 1.9 |
+
+The root play is unchanged, and the re-solve gain falls by a third to a half. The rest is
+the early stop: the root settles before the ranges reaching the turn do. With every line
+kept, monotone still re-solved at 2.6 / 1.9 when it settled, but at 1.0 / 0.6 after 800
+iterations. Run longer with `settle: false, iterations: 800`: As Kh 7d then re-solves at
+1.3 / 1.1 in 59 s on 4 threads (533 MiB), where plain sharing gives 2.2 / 2.4.
+`bench/lite/` has the scripts and logs.
+
+### Fitting a large tree (`largeTree`)
+
+`largeTree` from `poker-flopsolve/wasm-storage` returns the combination of memory levers
+that measured best on the round's target T (As Kh 7d, three sizes, a 0.75 raise and all-in,
+three aggressions, every street; 17.2 GiB at 32 bits): `thinSizes`, 16-bit storage on the
+WebAssembly engine and chance sampling.
+
+```ts
+import { createRun, defineSpot } from 'poker-flopsolve';
+import { largeTree } from 'poker-flopsolve/wasm-storage';
+
+const { config, options } = largeTree(
+	{ ...myConfig, maxBytes: 2.5 * 2 ** 30 }, // the browser build's default, 512 MiB, is too little
+	{ options: { workers: 4 } }, // solve options of your own, merged; storage: 'compact' for less memory
+);
+const run = createRun(defineSpot(config), options);
+```
+
+Issue #102 measured each combination on T, Node, 4 threads, against `thinSizes` alone at
+32 bits solved for 600 iterations (0.154% of pot). Loss is what the root play gives up at the
+reference's per-action EVs, OOP at the root / IP after a check, % of pot. The reference's
+own unconverged mix loses 0.032 / 0.019 at its own values, so that is the floor. "Settled"
+is when OOP's loss comes within 0.02% of pot of its final value. EV error is per hand at the
+root, mean.
+
+| Combination | Storage | Peak, Node / Chromium | s/iteration, Node / Chromium | Settled | Loss at the end | EV error |
+|---|---|---|---|---|---|---|
+| `thinSizes`, 16-bit | 1.47 GiB | 1.75 / 1.65 GiB | 1.56 / 1.48 | 317 s | 0.031 / 0.020 | 0.04 / 0.02 |
+| `thinSizes`, compact | 1.02 GiB | 1.28 / 1.20 GiB | 1.95 / 1.89 | 396 s | 0.033 / 0.020 | 0.03 / 0.06 |
+| **`thinSizes`, 16-bit, sampling (`largeTree`)** | 1.47 GiB | 1.97 / 1.87 GiB | 0.25 / 0.23 | **155 s** | 0.031 / 0.020 | 0.05 / 0.05 |
+| `thinSizes`, compact, sampling (`storage: 'compact'`) | 1.02 GiB | 1.48 / 1.42 GiB | 0.28 / 0.27 | 168 s | 0.031 / 0.020 | 0.05 / 0.09 |
+| `thinSizes`, 16-bit, sampling, `runoutBuckets: 3` | 0.86 GiB | 1.25 / 1.14 GiB | 0.14 / 0.14 | 87 s | 0.031 / 0.020 | 0.20 / 0.17 |
+| `thinSizes`, 16-bit, `shareHistories` | 0.42 GiB | 0.69 GiB | 1.70 | 525 s | 0.048 / 0.019 | 0.51 / 0.48 |
+
+So 16-bit or compact storage and sampling cost the root nothing over the thinned tree, and
+sampling makes it 2.5 times faster. Buckets halve the time again for a per-hand error of
+0.2% of pot on average and 2.3% at worst. Sharing on top saves memory but loses more and is
+no faster. What `thinSizes` itself costs, against the full tree, was measured on T₀ against
+an exact solve: 0.04% of pot of root play and 1.5% of pot of per-hand EV. On seven of
+napkinpoker's spots (#87), against postflop-solver's EVs, the preset's root play lost as
+little as an exact solve's at OOP's root (0.04% of pot) but 0.34% against 0.16% for IP after
+a check, where `thinSizes` cuts the 0.33 bet. `bench/combos/` has the scripts and every run.
+
+#### Thinning bet sizes (`thinSizes`)
+
+`thinSizes: true` keeps the configured sizes only where they earn their memory. The root
+keeps every size. Every other decision keeps the one bet, raise or shove nearest 0.75 of
+the pot, or a shove where that size would be one. A river opening bet after an earlier
+street saw a bet also keeps sizes above the pot and the shove. A tree's memory is almost
+all on the river, and each flop or turn size multiplies the river subtrees below it. This
+rule cuts most of them. It is the shape that growing sizes one at a time by value per
+byte arrived at (issue #51), applied as a fixed rule. It costs nothing to build, and
+unset, the tree is unchanged.
+
+It changes the game. A thinned tree is a smaller game, solved exactly within itself, and
+its strategy has no answer to the sizes that were cut. Measured on bench ranges, pot 55,
+stack 975, sizes 0.33 / 0.75 / 1.5 with a shove. The reference is the full tree with
+shove-only raises and 2 aggressions (T₀), solved exactly to 0.23% of pot. Root EVs per
+combination, % of pot, OOP / IP:
+
+| Tree | Storage, f32 | Root EV error, mean / max | Root size agrees |
+|---|---|---|---|
+| As Kh 7d, T₀ exact | 5.78 GiB | — | — |
+| `thinSizes` | 1.30 GiB | 1.45 / 1.74, max 5.6 / 6.3 | 83% |
+| The issue's rule: 3 sizes on flop and turn opening bets, 1 elsewhere | 1.97 GiB | 1.59 / 1.34, max 13.5 / 5.1 | 76% |
+| One size everywhere (0.75, shove facing a bet) | 0.39 GiB | 4.41 / 6.58, max 29 / 65 | — |
+| Ks 9s 4s, T₀ exact | 1.26 GiB | — | — |
+| `thinSizes` | 0.29 GiB | 2.10 / 1.90, max 6.2 / 5.9 | 96% |
+| 3 sizes on flop opening bets, 1 elsewhere | 0.19 GiB | 1.47 / 1.64, max 4.2 / 5.8 | 70% |
+| The issue's rule | 0.43 GiB | 1.33 / 1.15, max 3.3 / 6.7 | 89% |
+| Ks 9s 4s, T exact (0.75 raise, 3 aggressions) | 3.75 GiB | — | — |
+| `thinSizes` | 0.64 GiB | 1.26 / 1.01, max 4.4 / 2.1 | 100% |
+
+"Root size agrees" is the share of OOP's range whose best root bet size by EV is the same
+as in the exact solve. The max is over combinations weighing at least 1%. On As Kh 7d the
+rule is the most accurate per byte measured: two thirds of the issue's rule's memory, and
+less than half its worst error. On Ks 9s 4s, where the flop's in-position sizes matter
+more, three flop sizes alone did better for less. Peak memory in Node is the tree's: 1.41
+GiB for the first, 0.76 GiB for Ks 9s 4s T.
+
+In headless Chromium (WebAssembly engine), an iteration of the thinned As Kh 7d T₀ takes
+1.9 s on one thread and 0.89 s on four; Ks 9s 4s T₀ 0.66 s and 0.30 s; Ks 9s 4s T 1.44 s
+and 0.64 s. Each reached about 0.2% of pot in 331 iterations, so a solve takes about 11, 4
+and 8 minutes on one thread, and 5, 2 and 3.5 on four.
+
+The growth itself is not offered. It found the shape, and grown trees were more accurate
+again (1.0 / 1.2% mean, 3.9% max, 90% agreement in 1.7 GiB on As Kh 7d). But each round
+probes candidate sizes in a second tree beside the current one, which took 4.8 to 8.7 GiB
+and 30 to 40 minutes. On Ks 9s 4s, starting from one size, it never added the flop sizes
+it needed and ended worse than the fixed rule.
+
+It combines with `shareHistories`, which shares the river storage of lines that meet:
+the target tree of issue #51, As Kh 7d with a 0.75 raise and 3 aggressions (T), is 17.2 GiB
+at 32 bits, 2.9 GiB thinned, and 0.85 GiB thinned and shared (Ks 9s 4s: 3.75, 0.64, 0.19).
+Issue #102 measured the pair. Thinned and shared, As Kh 7d T₀ stalls at about 4.4% of pot
+exploitability, against 0.2% thinned alone; that is sharing's own floor (shared alone, T₀
+sits at 8%), not a bug. The root play barely notices: it loses 0.052% of pot at the exact
+solve's values against 0.038% thinned alone. But once thinned T fits at 16 bits, sharing
+on top buys memory only, at more loss and no speed; see the preset below.
+
+### History sharing
+
+`shareHistories: true` keeps one set of river regrets and strategy sums for every betting
+line that reaches the river with the same pot. With pot-fraction sizes many lines meet:
+check, bet, call and bet, call, and every raise line taken in either order. Their river
+subtrees are identical, so their nodes can share storage. Each line is still walked with
+its own reach, so an iteration costs what it did; only storage shrinks. Off by default.
+
+It is lossy. A player plays one river strategy for every line that met, though each line
+brings different ranges. The strategy is still one for the whole game, so
+`exploitabilityPercent()` measures it exactly. Each line's regret is weighted by how often
+the hand plays into it, which cost four times less than plain CFR's sum. Bench ranges, As Kh 7d, pot 55, stack 975, 4 threads, root EVs
+against the exact solve:
+
+| Tree | Storage, f32 | Exploitability | Root EV error, mean / max | Iterations |
+|---|---|---|---|---|
+| 3 sizes, all-in raise, 2 aggressions (exact: 0.28%) | 5.8 GiB → 1.22 GiB | 8.0% of pot | 0.72% / 2.5% of pot | 400 |
+| 2 sizes, all-in raise, 2 aggressions (exact: 0.25%) | 1.93 GiB → 0.48 GiB | 5.8% of pot | 0.94% / 2.4% of pot | 400 |
+| 1 size, all-in raise, 2 aggressions (exact: 0.25%) | 0.39 GiB → 0.14 GiB | 4.0% of pot | 0.67% / 6.8% of pot | 300 |
+
+On the two-size tree, out of position's EV at each root action was off by 1.7% of pot on
+average, and 85% of the range still picked the same bet size as the exact solve (70%
+with plain CFR's sum, which was left 24% of pot exploitable).
+
+On the three-size tree with a 75% raise and three aggressions, which does not fit
+otherwise, 173 river starts collapse to 23: 17.2 GiB becomes 2.9 GiB at 32 bits, and
+8.7 GiB becomes 1.5 GiB at 16. In Node at 16 bits the whole process peaked at 1.6 GiB
+on one thread (about 100 s an iteration) and 2.0 GiB on four (30 s an iteration), and the
+strategy was 27% of pot exploitable after 50 iterations, 15% after 100 and 12% after 150. At 32 bits it runs on the
+WebAssembly engine in 10.4 s an iteration on four threads, peaking at 3.2 GiB. An
+iteration costs what the unshared tree's would, so this makes the spot fit, not fast.
+Expect a strategy several percent of the pot from equilibrium, with EVs about 1% off on
+average, in a spot that would not otherwise fit. Sharing the turn too, and merging subtrees
+by stack-to-pot ratio, were measured and dropped (see [docs/APPROXIMATIONS.md](docs/APPROXIMATIONS.md)).
+A shared spot can warm-start only from another shared solve.
+
+**Keeping the busiest lines unshared.** A turn re-solved from a shared blueprint
+(`resolveSubgame`) inherits only the ranges the blueprint brings to it, and sharing
+distorts them. The flop play is stored unshared, but it learns from shared river values.
+`shareHistories: { keepLines }` gives the named lines (as `Solution.path` names their
+first turn decision, e.g. `"check check /"`) storage of their own. `linesWithin` picks the
+most-reached lines that a storage budget allows. Rank them on a cheap copy of the spot,
+with its river checked down, then solve the hybrid from cold:
+
+```ts
+import { createRun, defineSpot, linesWithin } from 'poker-flopsolve';
+import { wasmStorage } from 'poker-flopsolve/wasm-storage';
+
+const blueprint = { ...config, shareHistories: true };
+const pick = createRun(defineSpot({ ...blueprint, betSizes: [flopSizes, turnSizes, []] }), { workers: 4 });
+pick.step(80);
+const keepLines = linesWithin(pick.snapshot(), 150 * 2 ** 20, { config: blueprint, precision: 'i16' });
+pick.close();
+const run = createRun(defineSpot({ ...blueprint, shareHistories: { keepLines } }), { workers: 4, precision: 'i16', wasmStorage });
+```
+
+On issue #47's blueprint (one turn and river size, `runoutBuckets: 3`), turns re-solved
+from plain sharing gave a best response 3.0–4.2% of the subgame pot, against 0.4–0.7% from
+the unshared blueprint. With the budget, the gap was 0.1–0.8%. On As Kh 7d, the 150 MiB
+budget at 16 bits kept 3 lines and peaked at 392 MiB in Chromium on 4 threads, with a
+re-solve gain of 1.47 / 0.92% against 0.67 / 0.50% unshared. Figures are in
+`bench/blueprint-share/README.md`.
+
+### Chance sampling
+
+`approximations: { chanceSampling: {} }` walks each turn and river deal on only some
+training iterations, with probability `p` (default 0.35). A deal left out stands in with
+the per-hand values it returned the last time it was walked. A walked deal adds
+`b + (v − b) / p`, its baseline corrected by how far its values moved (VR-MCCFR,
+Schmid et al. 2019). Iterations get several times cheaper, convergence per iteration
+loses less than that, and exploitability is still measured exactly in the full game.
+Single-threaded, Node, time to 0.3% of pot:
+
+| Flop | Exact | Sampled | Baselines |
+|---|---|---|---|
+| AsKh7d, bench ranges, pot 100 | 23.7 s | 15.9 s | 29 MB |
+| Ks9s4s, bench ranges, pot 100 | 6.0 s | 4.3 s | 6 MB |
+| AsKh7d, bench ranges, pot 60 (wide) | 13.4 s | 9.3 s | 29 MB |
+| AsKh7d, pairs and broadway | 16.7 s | 12.9 s | 31 MB |
+| Ks9s4s, pairs and broadway | 5.5 s | 4.5 s | 7 MB |
+
+Stopped at 15 s, single-threaded in Chromium, it leaves 0.29% of pot on the first spot
+where the exact solve leaves 0.69%, 0.11% for 0.20% on the wide flop and 0.17% for
+0.28% on pairs and broadway; the range-weighted error of per-hand root EVs against an
+exact 0.1% solve falls from 1.0–1.1% of pot to 0.12–0.16% on the first, and to about a
+third on the others. It runs on `workers` threads wherever the engine threads (issue #99:
+the WebAssembly engine in Node and the browser, the JavaScript engine in Node). Each thread
+samples the deals of its own runouts, and whether a deal is walked on an iteration is a hash
+of its chance node, the deal and the iteration, so every thread count walks the same deals
+and a fixed count is bitwise repeatable. On 4 Chromium threads it ran 3.1–3.2× faster than on
+one (`bench/blueprint-share/README.md`). The baselines count against `maxBytes`. With `p: 1` it is the exact solve, bit for bit. `rounds: [2]` samples
+river deals only. It works over any storage: 32 or 16 bits (since issue #102) or compact.
+
+### Storage: 16-bit and compact
+
+Two ways to store regrets and strategy sums in less memory, and the engine that runs both on WebAssembly.
+
+#### 16-bit storage
+
+A spot too big for 32-bit storage under `maxBytes` is solved at 16 bits instead
+(`precision: 'i16'` forces it). Regrets and strategy sums are stored as 16-bit integers with
+one scale per node and board, about halving memory. `estimate.compressedBytes` reports
+that size, and a spot is refused only if even that exceeds `maxBytes`. Measured on AsKh7d:
+
+| Flop | Ranges | 32-bit | 16-bit |
+|---|---|---|---|
+| 1 size, 1 raise | 198 vs 165 | 150 MB | 85 MB |
+| 2 sizes, 1 raise | 198 vs 165 | 824 MB | 425 MB |
+| 2 sizes, 1 raise | 309 vs 424 | 1,645 MB | 836 MB |
+| 2 sizes, 2 raises | 309 vs 424 | 3,344 MB | 1,689 MB |
+
+The 309 vs 424, two-size flop solved with two threads at a peak RSS of about 1.1 GB, so it
+fits a 2 GB machine. It reaches each accuracy target in the same number of iterations as
+32-bit, but each iteration costs about 15–20% more, because every update re-encodes its
+block. Strategy sums round up or down at random, weighted by the remainder: rounded to
+nearest, small sums lose most of each iteration's contribution and exploitability stalls
+near 0.04% of pot. The randomness is a hash of the slot and iteration, so solves stay
+deterministic at any thread count.
+
+#### 16-bit and compact storage on the WebAssembly engine
+
+```ts
+import { createRun, defineSpot } from 'poker-flopsolve';
+import { wasmStorage } from 'poker-flopsolve/wasm-storage';
+
+const run = createRun(defineSpot(config), { precision: 'i16', wasmStorage, workers: threads });
+// or a spot with `compactStorage: {}`, with the same `wasmStorage`
+```
+
+A second build of the engine keeps 16-bit storage and every `compactStorage` mode as the
+JavaScript engine does, update for update: per-block scales, rounding to nearest for 16-bit
+regrets, the same hash for the random rounding, per-hand power-of-two scales, `sums: false`,
+`blockScale`, chance sampling's catch-up. It works in 32-bit floats, four hands to a SIMD
+vector, where JavaScript works in 64-bit, so a stored value differs from JavaScript's only
+where it lies within float32 precision of a rounding boundary (about 0.5% of 16-bit values
+an iteration, 0.01% of compact ones); the solves converge alike. Threads share its memory
+as they do the default engine's. Only `poker-flopsolve/wasm-storage` carries its bytes, so
+without the import a build is unchanged, and a solve that does not pass it gives the same
+results as before.
+
+Issue #47's blueprint (flop betting kept, one turn and river size, `runoutBuckets: 3`) solved
+to 0.3% of pot in headless Chromium on a 4-core container, which ran the monotone f32 blueprint
+about 1.3 times slower than the machine above (`bench/nested/wasm-storage.ts`); peak is the
+tab's resident memory:
+
+| As Kh 7d | storage | peak | 4 threads | 1 thread | turn re-solve, 4 / 1 threads |
+|---|---|---|---|---|---|
+| f32 | 707 MiB | 985 MiB (902) | 106 s, 280 it | 303 s | 8.5 / 29.6 s, 64 MiB |
+| i16, `wasmStorage` | 363 MiB | 577 MiB (526 on 1 thread) | 86 s, 200 it | 288 s | 10.6 / 36.0 s, 32 MiB |
+| compact, `wasmStorage` | 272 MiB | 462 MiB (427) | 106 s, 200 it | 435 s | 12.2 / 40.7 s, 21 MiB |
+
+| Ks 9s 4s | storage | peak | 4 threads | 1 thread | turn re-solve, 4 / 1 threads |
+|---|---|---|---|---|---|
+| f32 | 187 MiB | 394 MiB (346) | 32.5 s, 240 it | 104 s | 7.3 / 21.5 s, 40 MiB |
+| i16, `wasmStorage` | 97 MiB | 264 MiB (236) | 23.8 s, 160 it | 119 s | 7.0 / 23.8 s, 20 MiB |
+| compact, `wasmStorage` | 73 MiB | 223 MiB (205) | 35.1 s, 200 it | 119 s | 8.6 / 30.0 s, 14 MiB |
+
+An iteration costs 1.1–1.15 times f32's at 16 bits and 1.3–1.4 times compact, and the
+quantised solves often reach the target a check sooner, so the rainbow blueprint at i16 is
+faster than at f32 in 0.58 times its peak memory. The i16 blueprint on the JavaScript engine
+took 190 s on one thread or four on monotone. On the bench `flop` spot, to 0.2% of pot
+(peak): f32 28.5 s on one thread and 9.2 s on four (708 MiB), i16 33.3 s and 10.9 s
+(293 MiB), compact 41.6 s and 12.6 s (265 MiB), and i16 on the JavaScript engine 80 s and
+81 s.
+
+Issue #84's pass mark for a phone, the rainbow blueprint at 512 MiB peak or less in 60 s or
+less on four threads, is half met: compact peaks at 462 MiB but takes 106 s, and i16 takes
+86 s at 577 MiB. Even f32 takes 106 s here; scaled by the 1.3 above, i16 would take about
+66 s on the machine #47 measured.
+
+WebAssembly memory is one buffer, but Chromium lets it reach wasm32's whole 4 GiB, plain or
+shared, created at that size or grown to it, while it refuses any ArrayBuffer over 2 GiB less
+2 MiB (Chromium 153, `bin/memory-ceiling.ts`). So the engine's ceiling is 4 GiB in a tab, as
+in Node, and compact storage needs no chunks of its own there.
+
+#### Compact storage
+
+`compactStorage: {}` in the spot's config stores regrets and strategy sums as 8-bit
+integers, each hand on each board scaled by its own power of two. Regret matching and the
+average strategy divide each hand's values by their own total, so the scale cancels
+wherever a strategy is read, and costs a byte per hand. Values round up or down at random,
+weighted by the remainder, as 16-bit sums do. It is set on the spot rather than the solve,
+because `maxBytes` is checked against it when the spot is defined
+(`estimate.compactBytes`).
+
+`compactStorage: { sums: false }` keeps no strategy sums. Each node then plays the current
+profile, the regret-matched strategy the next iteration would play. It is cheaper again but
+much more exploitable on deep trees. `blockScale: true` takes the per-hand byte away too.
+
+Storage and peak memory on issue #20's target spots (AsKh7d and Ks9s4s, pot 55, stack 975,
+three bet sizes, a 75% raise, three aggressions), measured on four threads in Node:
+
+| Storage | Bytes per slot | T | Monotone T |
+|---|---|---|---|
+| 32-bit | 8.0 | 17.2 GiB | 3.75 GiB |
+| 16-bit | 4.0 | 8.7 GiB | 1.90 GiB |
+| compact | 2.75 | 5.9 GiB (peak 6.4 GB), 35 s an iteration | 1.29 GiB (peak 1.7 GB) |
+| compact, `sums: false, blockScale: true` | 1.03 | 2.2 GiB (peak 2.7 GB), 24 s an iteration | 0.48 GiB (peak 0.8 GB) |
+
+Accuracy at 320 iterations, against reference solves to 0.17% of pot (T₀: AsKh7d, three
+sizes, all-in as the only raise) and 0.22% (the same tree on Ks9s4s). Exploitability is
+true, in the full tree; EV error is per combination at the root, range-weighted, in % of pot;
+"same size" is the share of OOP's hands, among those whose best root bet size beats the
+next by 0.5% of pot in the reference, that still prefer it:
+
+| Storage | T₀: exploitability, EV error, same size | Monotone T₀ |
+|---|---|---|
+| 32-bit | 0.69% (the reference run itself) | 0.71%, 1.19%, 100% |
+| compact | 0.81%, 0.23%, 100% | 0.83%, 1.09%, 100% |
+| compact, `sums: false, blockScale: true`, CFR+ | 4.76%, 0.17%, 78% | 4.08%, 1.28%, 62% |
+
+It combines with `shareHistories` (one set of storage for betting lines that reach the same
+pot), and the pair is what brings T under 2 GiB: 0.99 GiB with sums, peaking at 1.5 GB on four
+threads, and 0.37 GiB with `sums: false, blockScale: true`. Sharing is lossy on its own; on
+T₀ at 160 iterations it was 9.5% of pot exploitable in 1.06 GiB at 32 bits, with root EVs
+0.66% of pot off and 97% of clear bet-size choices kept; with compact storage added, 9.0%,
+0.63% and 100%, in 0.36 GiB.
+
+It runs on the JavaScript engine, like 16-bit storage, on Node worker threads but on one
+thread in the browser, unless the solve passes `wasmStorage` (see the WebAssembly engine),
+which runs it on the WebAssembly engine, threads included. It combines with `precision`
+(for the rounds before `from`), warm starts and coarse starts (read and written compactly,
+rounded to nearest), `runoutBuckets` and chance sampling; only `analysisOnly` is refused.
+In headless Chromium on one thread, on the JavaScript engine, monotone T₀ took 10.1 s an
+iteration compact, 8.1 s at 16 bits and 2.3 s at 32 bits on WebAssembly; T itself, at
+`sums: false, blockScale: true`, allocated its 2.2 GiB and ran at 95 s an iteration. Storage is split into buffers under 1 GiB, because Chromium refuses
+an ArrayBuffer of 2 GiB or more. `bench/storage/` has the measurements and the variants
+that were left out: 4- and 6-bit regrets, a log scale, sparse regrets, and dropping sums on
+the later streets only.
+
+### Runout buckets and coarse start
+
+Both fold turn and river cards that play alike. `runoutBuckets` solves the folded game. `coarseStart`
+only starts from it and then solves the real game, so with `runoutBuckets` at its own gap or wider it
+has nothing left to fold and does nothing. On ranges with no rank symmetry, such as all of napkinpoker's
+weighted ranges, neither folds anything.
+
+#### Runout buckets
+
+`runoutBuckets: true` solves one turn or river card for several that play alike: two cards
+of one suit, neither pairing the board, equally connected to its straights, whose rank
+swap maps both ranges onto themselves. The stored card stands for the others with hands
+relabelled by the swap. A number instead of `true` is the widest rank gap allowed in a
+bucket (`true` is 1, the most cautious).
+
+It is an approximation — 55 on a 6 river and 66 on a 5 river sit on opposite sides of the
+board card, and no relabelling fixes that — so `exploitabilityPercent()` (and
+`targetPercent`) measure the bucketed game, and `run.trueExploitabilityPercent()` measures
+the strategy in the real one, every card dealt. How much it saves and costs depends on
+the ranges; suited connectors keep ranks apart, pocket pairs near the merged ranks cost
+accuracy. Ranges weighted hand by hand rarely allow any swap: on all 70 of napkinpoker's
+realistic spots it folds nothing, at any gap (see
+[Every option on napkinpoker's reference solves](#every-option-on-napkinpokers-reference-solves)). On AhKdQc, 4 threads, to 0.3% of pot in the bucketed game:
+
+| Ranges | Gap | Runouts | Time | True exploitability |
+|---|---|---|---|---|
+| Bench (wide, connectors) | exact | 2,352 | 13.2 s | 0.271% |
+| | 1 | 1,672 | 10.5 s | 0.278% |
+| | 3 | 1,348 | 8.0 s | 0.302% |
+| Pairs and broadway | exact | 2,352 | 9.3 s | 0.228% |
+| | 1 | 1,396 | 4.9 s | 0.482% |
+| | 3 | 1,088 | 4.2 s | 0.542% |
+
+#### Coarse start
+
+`approximations: { coarseStart: { iterations: 40 } }` first solves a coarse copy of the
+spot, with runouts bucketed as by `runoutBuckets: 3`, for that many iterations. It then
+starts the real spot from those regrets. Coarse iterations are cheaper, and the real solve
+picks up roughly where they left off. The answer is still the real spot's, and
+exploitability measures the real game. Off by default.
+
+Measured in Chromium on one thread, stopped at 15 s, 40 coarse iterations, with root-EV
+error per combination (range-weighted mean, % of pot) against a 0.1% reference:
+
+| Flop | Cold | Coarse start | Exploitability, cold → coarse start |
+|---|---|---|---|
+| AsKh7d, compare ranges, 50% bet | 1.51% | 0.19% | 0.94% → 0.40% |
+| AsKh7d, bench ranges, 66% bet | 0.26% | 0.06% | 0.24% → 0.15% |
+| Ks9s4s, monotone | 0.04% | 0.11% | 0.10% → 0.07% |
+
+The monotone flop reaches 0.5% error in half the time, but a cold solve has already settled
+it by 15 s. To an exploitability target in Node, coarse start was faster on all three.
+`bench/coarse-to-fine/` has the harness.
+
+### Every option on napkinpoker's reference solves
+
+`bench/reference/` scores any solution against 70 full-hand solves by postflop-solver
+(every flop texture, realistic weighted ranges; see its `napkinpoker/README.md`). The fixtures are
+private and not in this repository (issue #119): `bench/reference/napkinpoker.ts` reads them from
+`NAPKIN_REFERENCE` or a napkinpoker checkout beside this one. Only aggregate scores are published here. At each
+stored flop node, and the first turn decision after each stored turn card, it values our
+strategy at the stored per-action EVs. Those are exact action against action. The EV our
+play gives up against each hand's best stored action is the regret we leave in that game.
+It is reach-weighted by the stored range, in % of the node's pot. A flop node is scored
+when the opponent reaches it at least 3% of the time. A turn node is scored when both
+players play its flop line at least 3% of the time. The stored strategy's own loss at the same
+nodes is the floor these numbers can resolve: about 0.03% of pot on the flop and turn,
+0.06% at the root.
+
+**The exact solver against postflop-solver.** Seven spots, solved exactly to 0.3% of pot
+on four threads at 32 bits. Our regrets on the actions either solver plays differ from
+the stored ones by 0.014–0.050% of pot on average, and by 0.16% at the worst
+well-reached node. Our root play loses what the stored strategy does at its own values.
+Larger differences are confined to actions neither solver plays, chiefly shoves, whose
+values neither solve trains closely:
+
+| Spot | Board | Pot | Iterations, time | Played-action regret error, flop / turn (worst node) |
+|---|---|---|---|---|
+| f03 | 7c 6s Jc | 3-bet | 140, 61 s | 0.014 / 0.020% (0.064) |
+| f15 | As Kc 3d | 3-bet | 140, 92 s | 0.041 / 0.021% (0.153) |
+| f23 | 2d 3h 2c | 3-bet | 160, 79 s | 0.019 / 0.021% (0.062) |
+| f79 | 4s 7c 4c | 3-bet | 130, 59 s | 0.017 / 0.023% (0.096) |
+| f85 | 5s Js 6s | single-raised | 390, 249 s | 0.018 / 0.019% (0.055) |
+| f05 | 5s Ts Ac | single-raised | 410, 555 s | 0.021 / 0.050% (0.158) |
+| f01 | 7h 5c 7s | single-raised | 440, 698 s | 0.024 / 0.017% (0.059) |
+
+**Each option.** Measured on three 3-bet pots (f03 two-tone, f15 rainbow, f79 paired), on
+four threads, at the iterations the exact solve took to 0.3% of pot. That makes each row
+the option's cost at equal iterations. Losses are in % of the node's pot, means over the
+spots. Root is OOP at the flop root / IP after a check.
+
+| Option | Storage | Time | Root loss | Flop nodes | Turn nodes | True exploitability |
+|---|---|---|---|---|---|---|
+| exact | 1.00× | 1.00× | 0.059 / 0.054 | 0.030 | 0.031 | 0.27% |
+| `wasmStorage`, i16 | 0.52× | 1.16× | 0.059 / 0.067 | 0.033 | 0.035 | 0.37% |
+| `compactStorage` (with `wasmStorage`) | 0.37× | 1.37× | 0.063 / 0.080 | 0.045 | 0.039 | 0.63% |
+| `shareHistories` | 0.40× | 1.00× | 0.061 / 0.068 | 0.034 | 0.041 | 1.89% |
+| `shareHistories` + `compactStorage` | 0.15× | 1.40× | 0.067 / 0.083 | 0.041 | 0.047 | 2.08% |
+| `thinSizes` (15 of 61 nodes cut) | 0.74× | 0.66× | 0.067 / 0.294 | 0.084 | 0.048 | 0.22% in its own tree |
+| `thinSizes` + `shareHistories` | 0.35× | 0.72× | 0.071 / 0.288 | 0.084 | 0.049 | 2.07% in its own tree |
+| `chanceSampling` | 1.00× | 0.21× | 0.171 / 0.172 | 0.130 | 0.397 | 8.64% |
+| the same, 2× the iterations | 1.00× | 0.38× | 0.086 / 0.086 | 0.052 | 0.093 | 2.26% |
+| the same, 4× the iterations | 1.00× | 0.69× | 0.057 / 0.056 | 0.030 | 0.033 | 0.60% |
+| `shareHistories` + `chanceSampling` | 0.40× | 0.21× | 0.128 / 0.122 | 0.090 | 0.274 | 8.30% |
+| blueprint + `resolveSubgame` | 0.59× | 0.68× with the re-solves | 0.062 / 0.073 | 0.057 | 0.107; re-solved 0.053 | — |
+| `runoutBuckets: 3`, `coarseStart`, and their pairs | as without them | | | | | |
+| **`solveLite`'s blueprint (`litePreset`)**, to its `settle` stop (2.6× the iterations) | 0.22× | 0.30× | 0.052 / 0.068 | 0.052 | 0.127 | 1.89% |
+| **`largeTree`**, 4× the iterations | 0.38× | 0.58× | 0.057 / 0.289 | 0.082 | 0.048 | 0.39% in its own tree |
+
+- **Storage options cost almost nothing at the root.** i16 stays within the noise. Compact
+  storage and sharing add a few hundredths of a percent of pot. Sharing's exploitability
+  plateau (1.9%) lies mostly in lines the stored nodes do not reach.
+- **`thinSizes`' cost is IP's bet after a check.** Away from the root it keeps one size. On
+  these spots IP's 33% bet after a check is its main play, so the IP root loses 0.29%
+  of pot. Its flop and turn means cover only the nodes its tree still holds. The 15 lines
+  it cut are left out, so those means understate its cost.
+- **`chanceSampling` wins on time.** On four threads its iterations cost a fifth of exact
+  ones. At equal iterations it is far from settled, but at four times the iterations, in
+  0.69× the exact solve's time, its root, flop and turn play match the exact solve's, though
+  it is 0.60% of pot exploitable against 0.27%.
+- **`resolveSubgame`:** the blueprint here keeps the flop's betting and gives the turn and
+  river one 75% bet, with no raise or shove there. Re-solving each stored turn with the
+  full betting (200 iterations) halves the blueprint's turn loss, to 0.053% of pot
+  against 0.031% exact.
+- **`runoutBuckets` folds nothing on any of the 70 spots, at any gap.** Their weighted
+  ranges give no rank swap that maps both ranges onto themselves. So it, and
+  `coarseStart`, which buckets the same way, leave these solves exactly as they were.
+- **The presets** (issue #115) cost what their parts do. Lite settles in 0.30× the exact solve's time
+  in 0.22× its storage, with root play as close to the stored play as the exact solve's. Its turn
+  nodes lose 0.127% of pot, because its turn keeps the 75% bet but drops the raise and the all-in the
+  stored solves play, and it plateaus at sharing's 1.9% exploitability. `largeTree` costs `thinSizes`' IP root loss and
+  nothing more, in 0.38× the storage and 0.58× the time.
+
+`bench/reference/results/` has every number, per spot and per node. `test/combinations.test.ts` solves
+every pair of the eight opt-ins and the two presets on a small spot. Every pair runs, repeatable
+on two threads and matching one thread and the JavaScript engine. `test/presets-score.test.ts` scores both presets on f03 against the
+stored EVs, so a regression in any option they use fails `npm test` wherever the fixtures are
+checked out; elsewhere it skips.
 
 ## Verification
 
@@ -478,17 +1316,29 @@ enumerated and can be canonicalised for a 12× win.
   runout count — invisible on a river board, where that factor is 1.
 - Zero-sum to 1e-9, exploitability non-negative and non-increasing, and every strategy a
   probability distribution.
+- **Against an independent solver.** On seven of napkinpoker's postflop-solver references,
+  every texture, exact solves agree with the stored regrets to 0.01–0.05% of pot on the
+  actions either plays (see [Every option on napkinpoker's reference solves](#every-option-on-napkinpokers-reference-solves)).
+- **Options in pairs.** Every pair of the eight opt-ins and the two presets is solved, repeated, compared across
+  thread counts and engines, and checked to change nothing when one of them is off.
 
 ```bash
+npm run lint    # conventions: kebab-case file names, tab indents, no focused tests
+npm run check   # types, with unused locals, parameters and imports refused
 npm test
 ```
 
 ## Releasing
 
 `.github/workflows/publish.yml` publishes to npm from `main`. Every push to `main` is
-type-checked, tested and built; if the `version` in `package.json` is not on npm yet, it
+linted, type-checked, tested and built; if the `version` in `package.json` is not on npm yet, it
 is published, with provenance. So a release is: bump `version`, merge to `main`. A push
 that leaves the version alone publishes nothing.
+
+A prerelease version (`0.5.0-beta.0`) is published under its own dist-tag, the word after the
+`-` (`beta`), so `npm install poker-flopsolve` keeps getting the latest stable release and the
+beta is installed by name: `npm install poker-flopsolve@beta`. A plain version is published as
+`latest`.
 
 It publishes by npm trusted publishing: npm trusts this repository's `publish.yml`
 (set up under the package's settings on npmjs.com), the job proves who it is with GitHub's

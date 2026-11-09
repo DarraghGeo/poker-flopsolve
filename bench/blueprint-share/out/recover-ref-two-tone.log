@@ -1,0 +1,38 @@
+two-tone-none: 306 nodes, 1021 runouts, 501 MiB f32
+  20 it, 15.312%, 9 s
+  40 it, 3.367%, 16 s
+  80 it, 0.709%, 30 s
+  120 it, 0.353%, 44 s
+  160 it, 0.220%, 57 s
+  200 it, 0.145%, 74 s
+  240 it, 0.256%, 93 s
+  280 it, 0.334%, 110 s
+  320 it, 0.219%, 124 s
+  360 it, 0.153%, 138 s
+  400 it, 0.111%, 151 s
+  440 it, 0.083%, 165 s
+  480 it, 0.064%, 179 s
+  520 it, 0.049%, 193 s
+blueprint: 520 it, 0.049% (best 0.049%), 193 s, engine wasm, peak RSS 726 MiB
+  reference check_check_-2c: line reached 38.9%, 600 it, 0.320% of its pot, 26 s
+  reference check_check_-Qd: line reached 38.9%, 600 it, 0.214% of its pot, 25 s
+  reference check_check_-As: line reached 38.9%, 600 it, 0.273% of its pot, 16 s
+  reference bet_18.15_call_-2c: line reached 18.5%, 600 it, 0.195% of its pot, 20 s
+  reference bet_18.15_call_-Qd: line reached 18.5%, 600 it, 0.103% of its pot, 18 s
+  reference bet_18.15_call_-As: line reached 18.5%, 600 it, 0.131% of its pot, 16 s
+  reference check_bet_41.25_call_-2c: line reached 6.2%, 600 it, 0.035% of its pot, 13 s
+  reference check_bet_41.25_call_-Qd: line reached 6.2%, 600 it, 0.156% of its pot, 12 s
+  reference check_bet_41.25_call_-As: line reached 6.2%, 600 it, 0.066% of its pot, 9 s
+root EV error, % pot: OOP mean 0.000 max 0.000; IP mean 0.000 max 0.000
+  OOP at root: root play loses 0.1163% pot at reference values (max 0.785); the reference's own 0.1163%
+  IP after check: root play loses 0.0521% pot at reference values (max 0.319); the reference's own 0.0521%
+  re-solve bet_18.15_call_-2c (line reached 18.5%): opponent gains 0.456 / 0.476% of its pot
+  re-solve bet_18.15_call_-As (line reached 18.5%): opponent gains 0.330 / 0.290% of its pot
+  re-solve bet_18.15_call_-Qd (line reached 18.5%): opponent gains 0.213 / 0.294% of its pot
+  re-solve check_bet_41.25_call_-2c (line reached 6.2%): opponent gains 0.180 / 0.110% of its pot
+  re-solve check_bet_41.25_call_-As (line reached 6.2%): opponent gains 0.236 / 0.139% of its pot
+  re-solve check_bet_41.25_call_-Qd (line reached 6.2%): opponent gains 0.532 / 0.482% of its pot
+  re-solve check_check_-2c (line reached 38.9%): opponent gains 0.640 / 0.736% of its pot
+  re-solve check_check_-As (line reached 38.9%): opponent gains 0.619 / 0.663% of its pot
+  re-solve check_check_-Qd (line reached 38.9%): opponent gains 0.479 / 0.652% of its pot
+re-solve gain, weighted by line reach: OOP refined 0.482%, IP refined 0.545%

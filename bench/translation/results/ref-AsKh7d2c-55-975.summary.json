@@ -1,0 +1,9 @@
+{
+ "tag": "AsKh7d2c-55-975",
+ "bytes": 67278184,
+ "compressedBytes": 34111716,
+ "iterations": 400,
+ "ms": 17242.720128,
+ "exploitability": 0.29706843447900344,
+ "memory": "rss 0.24 GiB, heap 10 MiB, arrayBuffers 0.00 GiB"
+}

@@ -54,8 +54,8 @@ export interface Runouts {
 	/**
 	 * The symmetries each stored board still has, as a prefix into
 	 * `stabiliserMap`: map ids, identity first. A board with more than the
-	 * identity holds hands that mirror each other on it, whose strategies the
-	 * solver keeps tied together.
+	 * identity holds hands that mirror each other on it, which the solver
+	 * stores once per orbit.
 	 */
 	readonly stabiliserStart: readonly Int32Array[];
 	readonly stabiliserMap: readonly Int32Array[];
@@ -130,8 +130,6 @@ export function enumerateRunouts(
 	};
 	recordStabilisers(stabilisers);
 
-	const used = new Uint8Array(DECK);
-	const seen = new Uint8Array(DECK);
 	for (let round = 1; round < rounds; round++) {
 		const previousWidth = width[round - 1];
 		const previousCount = counts[round - 1];
@@ -148,57 +146,9 @@ export function enumerateRunouts(
 
 		for (let p = 0; p < previousCount; p++) {
 			starts[p] = parents.length;
-			used.fill(0);
-			seen.fill(0);
 			const base = p * previousWidth;
-			for (let i = 0; i < previousWidth; i++) used[previousCards[base + i]] = 1;
-			const stabiliser = stabilisers[p];
-
-			// One stored child per orbit of the board's symmetries.
-			const children: { card: number; maps: number[]; cards: number[]; fixing: number[]; merged: boolean }[] = [];
-			for (let card = 0; card < DECK; card++) {
-				if (used[card] || seen[card]) continue;
-				// Ascending, so the first unseen card of an orbit is its lowest.
-				const child = { card, maps: [] as number[], cards: [] as number[], fixing: [] as number[], merged: false };
-				for (const sigma of stabiliser) {
-					const image = maps.card[sigma][card];
-					if (image === card) child.fixing.push(sigma);
-					if (seen[image]) continue;
-					seen[image] = 1;
-					// `sigma` sends `card` to `image`, so its inverse sends the
-					// deal of `image` back onto this board.
-					child.maps.push(image === card ? 0 : maps.inverse(sigma));
-					child.cards.push(image);
-				}
-				children.push(child);
-			}
-
-			// Runout buckets: a child that plays like an earlier one is folded
-			// into it, relabelled by swapping the two cards' ranks.
-			if (merge) {
-				const boardRanks = new Set<number>();
-				for (let i = 0; i < previousWidth; i++) boardRanks.add(previousCards[base + i] >> 2);
-				for (let j = 0; j < children.length; j++) {
-					const later = children[j];
-					const rankJ = later.card >> 2;
-					if (boardRanks.has(rankJ)) continue;
-					for (let i = 0; i < j; i++) {
-						const earlier = children[i];
-						if (earlier.merged || (earlier.card & 3) !== (later.card & 3)) continue;
-						const rankI = earlier.card >> 2;
-						if (boardRanks.has(rankI) || rankJ - rankI > merge.maxGap || !merge.ranks(rankI, rankJ)) continue;
-						if (connectivity(boardRanks, rankI) !== connectivity(boardRanks, rankJ)) continue;
-						const swap = maps.add(rankSwap(rankI, rankJ));
-						for (let m = 0; m < later.maps.length; m++) {
-							earlier.maps.push(maps.then(later.maps[m], swap));
-							earlier.cards.push(later.cards[m]);
-						}
-						later.merged = true;
-						approximate = true;
-						break;
-					}
-				}
-			}
+			const children = dealChildren(maps, previousCards, base, previousWidth, stabilisers[p], merge);
+			for (const child of children) if (child.merged) approximate = true;
 
 			for (const child of children) {
 				if (child.merged) continue;
@@ -231,6 +181,90 @@ export function enumerateRunouts(
 		stabiliserStart, stabiliserMap, maps, symmetric, approximate,
 		initial: [...board],
 	};
+}
+
+/** One stored child of a board, and the real deals it stands for. */
+export interface DealtChild {
+	readonly card: number;
+	/** Each member deal's map onto this board, and its card; see `Runouts.orbitMap`. */
+	readonly maps: number[];
+	readonly cards: number[];
+	/** The parent's symmetries that also fix this card: the child's own. */
+	readonly fixing: number[];
+	/** Folded into an earlier child, so not stored. */
+	merged: boolean;
+}
+
+const usedScratch = new Uint8Array(DECK);
+const seenScratch = new Uint8Array(DECK);
+
+/**
+ * The children of one board: one per orbit of its symmetries, ascending by
+ * card, with runout buckets folded into earlier children (`merged`).
+ *
+ * @param maps the relabellings in use, which merges add to
+ * @param cards flat board cards, the parent at `base`, `width` of them
+ * @param stabiliser the parent's symmetries, identity first
+ */
+export function dealChildren(
+	maps: CardMaps,
+	cards: ArrayLike<number>,
+	base: number,
+	width: number,
+	stabiliser: readonly number[],
+	merge?: RunoutMerge,
+): DealtChild[] {
+	const used = usedScratch;
+	const seen = seenScratch;
+	used.fill(0);
+	seen.fill(0);
+	for (let i = 0; i < width; i++) used[cards[base + i]] = 1;
+
+	// One stored child per orbit of the board's symmetries.
+	const children: DealtChild[] = [];
+	for (let card = 0; card < DECK; card++) {
+		if (used[card] || seen[card]) continue;
+		// Ascending, so the first unseen card of an orbit is its lowest.
+		const child: DealtChild = { card, maps: [], cards: [], fixing: [], merged: false };
+		for (const sigma of stabiliser) {
+			const image = maps.card[sigma][card];
+			if (image === card) child.fixing.push(sigma);
+			if (seen[image]) continue;
+			seen[image] = 1;
+			// `sigma` sends `card` to `image`, so its inverse sends the
+			// deal of `image` back onto this board.
+			child.maps.push(image === card ? 0 : maps.inverse(sigma));
+			child.cards.push(image);
+		}
+		children.push(child);
+	}
+
+	// Runout buckets: a child that plays like an earlier one is folded
+	// into it, relabelled by swapping the two cards' ranks.
+	if (merge) {
+		const boardRanks = new Set<number>();
+		for (let i = 0; i < width; i++) boardRanks.add(cards[base + i] >> 2);
+		for (let j = 0; j < children.length; j++) {
+			const later = children[j];
+			const rankJ = later.card >> 2;
+			if (boardRanks.has(rankJ)) continue;
+			for (let i = 0; i < j; i++) {
+				const earlier = children[i];
+				if (earlier.merged || (earlier.card & 3) !== (later.card & 3)) continue;
+				const rankI = earlier.card >> 2;
+				if (boardRanks.has(rankI) || rankJ - rankI > merge.maxGap || !merge.ranks(rankI, rankJ)) continue;
+				if (connectivity(boardRanks, rankI) !== connectivity(boardRanks, rankJ)) continue;
+				const swap = maps.add(rankSwap(rankI, rankJ));
+				for (let m = 0; m < later.maps.length; m++) {
+					earlier.maps.push(maps.then(later.maps[m], swap));
+					earlier.cards.push(later.cards[m]);
+				}
+				later.merged = true;
+				break;
+			}
+		}
+	}
+	return children;
 }
 
 /** Which runouts may be bucketed together; see `enumerateRunouts`. */
@@ -322,11 +356,13 @@ export function resolveBoard(runouts: Runouts, board: readonly number[]): Resolv
 		const round = i - start + 1;
 		const dealt = runouts.maps.card[map][board[i]];
 		let found = -1;
-		for (let child = runouts.childStart[round][index]; child < runouts.childStart[round][index + 1] && found < 0; child++) {
+		const children = runouts.childStart[round];
+		const relabel = runouts.orbitMap[round];
+		for (let child = children[index]; child < children[index + 1] && found < 0; child++) {
 			for (let m = runouts.orbitStart[round][child]; m < runouts.orbitStart[round][child + 1]; m++) {
 				if (runouts.orbitCard[round][m] !== dealt) continue;
 				found = child;
-				map = runouts.maps.then(map, runouts.orbitMap[round][m]);
+				map = runouts.maps.then(map, relabel[m]);
 				break;
 			}
 		}

@@ -20,21 +20,26 @@
  * their real cards, so two spots may store different runouts (one folding
  * mirrored deals, the other not); hands match by combination, so a range may
  * have grown or shrunk.
+ *
+ * A solve of another board can seed this one through a card relabelling — a
+ * permutation of the deck taking one board onto the other, a rank swap for a
+ * nearby flop — through which its runouts and hands are read.
  */
 
 import type { Context, RegretStore, SumStore } from './cfr.ts';
-import { tieBlock } from './cfr.ts';
-import { COMBOS } from './cards.ts';
+import { COMPACT_SUM_STEPS, regretMatch, scaleExponent, SHIFT_SCALE } from './cfr.ts';
+import { COMBO_CARDS, COMBOS, DECK, comboIndex } from './cards.ts';
+import { markMembers } from './hands.ts';
 import type { Runouts } from './runouts.ts';
 import { resolveBoard } from './runouts.ts';
 import type { Tree } from './tree.ts';
 import { ActionKind, NodeKind } from './tree.ts';
 
 /** Largest ratio between two bet sizes, as pot fractions, still taken as the same. */
-const SIZE_TOLERANCE = 1.35;
+export const SIZE_TOLERANCE = 1.35;
 
-const REGRET_STEPS = 32767;
-const SUM_STEPS = 65535;
+export const REGRET_STEPS = 32767;
+export const SUM_STEPS = 65535;
 
 /** What a warm start carried over. */
 export interface WarmStartReport {
@@ -54,7 +59,7 @@ export interface WarmStartReport {
 /**
  * Pair each decision node of `to` with its counterpart in `from`, or -1.
  */
-export function matchNodes(to: Tree, from: Tree): Int32Array {
+export function matchNodes(to: Tree, from: Tree, tolerance = SIZE_TOLERANCE): Int32Array {
 	const match = new Int32Array(to.nodeCount).fill(-1);
 	const walk = (a: number, b: number): void => {
 		if (to.kind[a] !== from.kind[b] || to.round[a] !== from.round[b]) return;
@@ -66,7 +71,7 @@ export function matchNodes(to: Tree, from: Tree): Int32Array {
 		match[a] = b;
 		for (let e = 0; e < to.numEdges[a]; e++) {
 			const edge = to.firstEdge[a] + e;
-			const other = matchEdge(to, edge, a, from, b);
+			const other = matchEdge(to, edge, a, from, b, tolerance);
 			if (other >= 0) walk(to.edgeChild[edge], from.edgeChild[other]);
 		}
 	};
@@ -74,7 +79,7 @@ export function matchNodes(to: Tree, from: Tree): Int32Array {
 	return match;
 }
 
-function matchEdge(to: Tree, edge: number, node: number, from: Tree, other: number): number {
+function matchEdge(to: Tree, edge: number, node: number, from: Tree, other: number, tolerance: number): number {
 	const kind = to.edgeAction[edge];
 	const sized = kind === ActionKind.Bet || kind === ActionKind.Raise;
 	const size = to.edgeTarget[edge] / to.pot[node];
@@ -90,11 +95,11 @@ function matchEdge(to: Tree, edge: number, node: number, from: Tree, other: numb
 			best = candidate;
 		}
 	}
-	return bestGap <= Math.log(SIZE_TOLERANCE) ? best : -1;
+	return bestGap <= Math.log(tolerance) ? best : -1;
 }
 
 /** Read one block — a node on a board — as plain numbers, `actions * count` of them. */
-function readBlock(
+export function readBlock(
 	store: RegretStore | SumStore,
 	scale: Float64Array | null,
 	block: number,
@@ -107,7 +112,7 @@ function readBlock(
 }
 
 /** Write one block, re-encoding it when storage is 16-bit. */
-function writeBlock(
+export function writeBlock(
 	store: RegretStore | SumStore,
 	scale: Float64Array | null,
 	steps: number,
@@ -130,32 +135,155 @@ function writeBlock(
 	scale[block] = largest / steps;
 }
 
+/**
+ * Read a compactly stored block as plain numbers: the regrets, unless
+ * `regrets` is null, and the strategy sums. Where compact storage keeps no
+ * sums its strategy is the current profile, so that is what comes back as
+ * the sums: any positive multiple of a strategy averages to it.
+ */
+export function readCompactBlock(
+	ctx: Context,
+	node: number,
+	listSlot: number,
+	block: number,
+	base: number,
+	actions: number,
+	count: number,
+	regrets: Float64Array | null,
+	sums: Float64Array,
+): void {
+	const plan = ctx.compact!;
+	const chunk = ctx.layout.compactChunk![node];
+	const q = ctx.compactRegret![chunk];
+	const handBase = ctx.layout.handOffset![node] + ctx.layout.rowStart[listSlot];
+	const shifts = plan.perHand ? ctx.handShift![chunk] : null;
+	const blockScale = !plan.perHand && !plan.float ? ctx.compactScale![block] : 1;
+	for (let i = 0; i < count; i++) {
+		const scale = shifts ? SHIFT_SCALE[shifts[handBase + i]] : blockScale;
+		if (regrets) for (let a = 0; a < actions; a++) regrets[a * count + i] = q[base + a * count + i] * scale;
+		if (!plan.sums) continue;
+		const sumScale = SHIFT_SCALE[ctx.sumShift![chunk][handBase + i]];
+		const stored = ctx.compactSum![chunk];
+		for (let a = 0; a < actions; a++) sums[a * count + i] = stored[base + a * count + i] * sumScale;
+	}
+	if (!plan.sums) regretMatch(q, base, actions, count, sums);
+}
+
+/**
+ * Write a compactly stored block, encoding it as compact storage does but
+ * rounded to nearest: the regrets unless `regrets` is null, the sums where it
+ * keeps them unless `sums` is null.
+ */
+export function writeCompactBlock(
+	ctx: Context,
+	node: number,
+	listSlot: number,
+	block: number,
+	base: number,
+	actions: number,
+	count: number,
+	regrets: Float64Array | null,
+	sums: Float64Array | null,
+): void {
+	const plan = ctx.compact!;
+	const chunk = ctx.layout.compactChunk![node];
+	const q = ctx.compactRegret![chunk];
+	const handBase = ctx.layout.handOffset![node] + ctx.layout.rowStart[listSlot];
+	const steps = plan.steps;
+	const fit = (value: number, top: number, bottom: number): number => {
+		const rounded = Math.round(value);
+		return rounded > top ? top : rounded < bottom ? bottom : rounded;
+	};
+	if (regrets && plan.float) {
+		for (let k = 0; k < actions * count; k++) q[base + k] = regrets[k];
+	} else if (regrets && !plan.perHand) {
+		let largest = 0;
+		for (let k = 0; k < actions * count; k++) largest = Math.max(largest, Math.abs(regrets[k]));
+		const step = largest > 0 ? steps / largest : 0;
+		for (let k = 0; k < actions * count; k++) q[base + k] = fit(regrets[k] * step, steps, -steps);
+		ctx.compactScale![block] = largest / steps;
+	} else if (regrets) {
+		const shifts = ctx.handShift![chunk];
+		for (let i = 0; i < count; i++) {
+			let largest = 0;
+			for (let a = 0; a < actions; a++) largest = Math.max(largest, Math.abs(regrets[a * count + i]));
+			const exponent = scaleExponent(largest, steps);
+			shifts[handBase + i] = exponent;
+			const inverse = exponent === 0 ? 0 : 1 / SHIFT_SCALE[exponent];
+			for (let a = 0; a < actions; a++) q[base + a * count + i] = fit(regrets[a * count + i] * inverse, steps, -steps);
+		}
+	}
+	if (!sums || !plan.sums) return;
+	const stored = ctx.compactSum![chunk];
+	const shifts = ctx.sumShift![chunk];
+	for (let i = 0; i < count; i++) {
+		let largest = 0;
+		for (let a = 0; a < actions; a++) largest = Math.max(largest, sums[a * count + i]);
+		const exponent = scaleExponent(largest, COMPACT_SUM_STEPS);
+		shifts[handBase + i] = exponent;
+		const inverse = exponent === 0 ? 0 : 1 / SHIFT_SCALE[exponent];
+		for (let a = 0; a < actions; a++) stored[base + a * count + i] = fit(sums[a * count + i] * inverse, COMPACT_SUM_STEPS, 0);
+	}
+}
+
 /** The real cards of a stored board. */
-function realCards(runouts: Runouts, round: number, board: number): number[] {
+export function realCards(runouts: Runouts, round: number, board: number): number[] {
 	const width = runouts.width[round];
 	return Array.from(runouts.cards[round].subarray(board * width, (board + 1) * width));
 }
 
 /**
- * Seed `to` from `from`. Both must be built on the same board.
+ * Seed `to` from `from`. Both must be built on the same board, unless `cards`
+ * relabels one onto the other.
  *
+ * @param cards for a solve of a different board: each card of `to` to the card
+ *   of `from` it plays as, a permutation of the deck taking `to`'s board onto
+ *   `from`'s. Hands and dealt cards map through it too. Unset, the identity.
+ * @param tolerance largest ratio between two bet sizes still matched; unset,
+ *   `SIZE_TOLERANCE`. `Infinity` maps every bet to the nearest one of its kind,
+ *   which seeds a size the old tree lacked from its neighbour.
  * @returns what matched
- * @throws if the boards differ
+ * @throws if the boards differ, or `cards` does not take one onto the other
  */
-export function warmStart(to: Context, from: Context, averages: boolean): WarmStartReport {
+export function warmStart(
+	to: Context,
+	from: Context,
+	averages: boolean,
+	cards?: Uint8Array,
+	tolerance = SIZE_TOLERANCE,
+): WarmStartReport {
+	if (!(tolerance >= 1)) throw new Error(`warmStart: the size tolerance is a ratio of at least 1, not ${tolerance}`);
+	// Each node is copied on its own, so into shared storage every history of
+	// a group would overwrite the same block and the last would win. From
+	// shared storage the copy is exact: each node takes its owner's block.
+	if (to.layout.shared && !from.layout.shared) {
+		throw new Error('A spot with shareHistories can only warm-start from a solve that shares histories too');
+	}
 	const a = to.runouts.initial;
 	const b = from.runouts.initial;
-	if (a.length !== b.length || a.some((card, i) => card !== b[i])) {
-		throw new Error('A warm start must come from a solve of the same board');
+	if (cards) checkRelabelling(cards, a, b);
+	else if (a.length !== b.length || a.some((card, i) => card !== b[i])) {
+		throw new Error('A warm start must come from a solve of the same board, unless `warmCards` relabels one onto the other');
 	}
-	const match = matchNodes(to.tree, from.tree);
+	// A real board of `to` as `from` sees it: its own given board first, in
+	// its order, then the dealt cards relabelled.
+	const asSource = (real: number[]): number[] =>
+		cards ? [...b, ...real.slice(a.length).map((card) => cards[card])] : real;
+	// Each hand of `to` as the hand of `from` it plays as.
+	const comboOf = new Uint16Array(COMBOS);
+	for (let combo = 0; combo < COMBOS; combo++) {
+		comboOf[combo] = cards ? comboIndex(cards[COMBO_CARDS[combo * 2]], cards[COMBO_CARDS[combo * 2 + 1]]) : combo;
+	}
+	const match = matchNodes(to.tree, from.tree, tolerance);
 	const { tree } = to;
 	const width = to.layout.maxActions * COMBOS;
 	const oldRegret = new Float64Array(width);
 	const oldSum = new Float64Array(width);
 	const newRegret = new Float64Array(width);
 	const newSum = new Float64Array(width);
-	const hasRegret = to.regret.length > 0 && from.regret.length > 0;
+	// An analysis-only run has none; compact storage may keep all of its regrets compactly.
+	const keepsRegrets = (ctx: Context): boolean => ctx.regret.length > 0 || (ctx.compactRegret ?? null) !== null;
+	const hasRegret = keepsRegrets(to) && keepsRegrets(from);
 
 	// A combination's position in the old board's hand list, or -1.
 	const position = new Int32Array(COMBOS).fill(-1);
@@ -172,12 +300,12 @@ export function warmStart(to: Context, from: Context, averages: boolean): WarmSt
 		// Which old action each new one continues.
 		const actionOf = new Int32Array(actions).fill(-1);
 		for (let e = 0; e < actions; e++) {
-			const other = matchEdge(tree, tree.firstEdge[node] + e, node, from.tree, old);
+			const other = matchEdge(tree, tree.firstEdge[node] + e, node, from.tree, old, tolerance);
 			if (other >= 0) actionOf[e] = other - from.tree.firstEdge[old];
 		}
 
 		for (let board = 0; board < to.runouts.counts[round]; board++) {
-			const resolved = resolveBoard(from.runouts, realCards(to.runouts, round, board));
+			const resolved = resolveBoard(from.runouts, asSource(realCards(to.runouts, round, board)));
 			// Blocks are laid out by position in each board's hand list.
 			const oldSlot = (from.active.roundBase[round] + resolved.board) * 2 + owner;
 			const oldFrom = from.active.start[oldSlot];
@@ -185,9 +313,14 @@ export function warmStart(to: Context, from: Context, averages: boolean): WarmSt
 			const oldBlock = from.layout.blockOffset[old] + resolved.board;
 			const oldBase = from.layout.offset[old] + oldActions * from.layout.rowStart[oldSlot];
 			const oldLength = oldActions * oldCount;
-			if (hasRegret) readBlock(from.regret, from.regretScale, oldBlock, oldBase, oldLength, oldRegret);
-			readBlock(from.strategySum, from.sumScale, oldBlock, oldBase, oldLength, oldSum);
-			for (let j = 0; j < oldCount; j++) position[from.active.list[oldFrom + j]] = j;
+			if (round >= from.layout.compactFrom) {
+				readCompactBlock(from, old, oldSlot, oldBlock, oldBase, oldActions, oldCount, hasRegret ? oldRegret : null, oldSum);
+			} else {
+				if (hasRegret) readBlock(from.regret, from.regretScale, oldBlock, oldBase, oldLength, oldRegret);
+				readBlock(from.strategySum, from.sumScale, oldBlock, oldBase, oldLength, oldSum);
+			}
+			// Every hand an old entry stands for is at that entry.
+			markMembers(from.active, oldFrom, oldCount, position, false);
 
 			const newSlot = (to.active.roundBase[round] + board) * 2 + owner;
 			const newFrom = to.active.start[newSlot];
@@ -196,24 +329,47 @@ export function warmStart(to: Context, from: Context, averages: boolean): WarmSt
 			newRegret.fill(0, 0, length);
 			newSum.fill(0, 0, length);
 			for (let i = 0; i < count; i++) {
-				const j = position[resolved.combos[to.active.list[newFrom + i]]];
-				if (j < 0) continue;
-				for (let e = 0; e < actions; e++) {
-					const action = actionOf[e];
-					if (action < 0) continue;
-					newRegret[e * count + i] = oldRegret[action * oldCount + j];
-					newSum[e * count + i] = oldSum[action * oldCount + j];
+				// An entry stands for its mirror orbit here, which the old solve
+				// may have stored apart and not played alike: it takes their mean.
+				const firstMember = to.active.memberStart[newFrom + i];
+				const membersEnd = to.active.memberStart[newFrom + i + 1];
+				const share = 1 / (membersEnd - firstMember);
+				for (let m = firstMember; m < membersEnd; m++) {
+					const j = position[resolved.combos[comboOf[to.active.memberCombo[m]]]];
+					if (j < 0) continue;
+					for (let e = 0; e < actions; e++) {
+						const action = actionOf[e];
+						if (action < 0) continue;
+						newRegret[e * count + i] += share * oldRegret[action * oldCount + j];
+						newSum[e * count + i] += share * oldSum[action * oldCount + j];
+					}
 				}
 			}
-			for (let j = 0; j < oldCount; j++) position[from.active.list[oldFrom + j]] = -1;
+			markMembers(from.active, oldFrom, oldCount, position, true);
 
 			const block = to.layout.blockOffset[node] + board;
 			const base = to.layout.offset[node] + actions * to.layout.rowStart[newSlot];
-			if (hasRegret) writeBlock(to.regret, to.regretScale, REGRET_STEPS, block, base, length, newRegret);
-			if (averages) writeBlock(to.strategySum, to.sumScale, SUM_STEPS, block, base, length, newSum);
-			// The old solve may not have kept mirrored hands equal; this one must.
-			tieBlock(to, node, board);
+			if (round >= to.layout.compactFrom) {
+				writeCompactBlock(to, node, newSlot, block, base, actions, count, hasRegret ? newRegret : null, averages ? newSum : null);
+			} else {
+				if (hasRegret) writeBlock(to.regret, to.regretScale, REGRET_STEPS, block, base, length, newRegret);
+				if (averages) writeBlock(to.strategySum, to.sumScale, SUM_STEPS, block, base, length, newSum);
+			}
 		}
 	}
 	return { matchedNodes: matched, decisionNodes: tree.decisionNodes.length, averages };
+}
+
+/** Throw unless `cards` is a permutation of the deck taking board `a` onto board `b`. */
+function checkRelabelling(cards: Uint8Array, a: readonly number[], b: readonly number[]): void {
+	const seen = new Uint8Array(DECK);
+	if (cards.length !== DECK) throw new Error(`A card relabelling maps all ${DECK} cards; got ${cards.length}`);
+	for (const card of cards) {
+		if (card >= DECK || seen[card]) throw new Error('A card relabelling must be a permutation of the deck');
+		seen[card] = 1;
+	}
+	const target = new Set(b);
+	if (a.length !== b.length || a.some((card) => !target.has(cards[card]))) {
+		throw new Error('The card relabelling must take the board onto the warm start\'s board');
+	}
 }

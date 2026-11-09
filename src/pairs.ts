@@ -23,7 +23,8 @@
 
 import { COMBO_CARDS, COMBOS } from './cards.ts';
 import type { Context } from './cfr.ts';
-import { averageStrategy } from './cfr.ts';
+import { storedStrategy } from './cfr.ts';
+import { markMembers } from './hands.ts';
 import { NodeKind } from './tree.ts';
 
 /** Opposing hands per walk; more share the walk better but need more memory. */
@@ -38,8 +39,10 @@ interface PairBuffers {
 	readonly hands: Uint16Array[];
 	readonly strategy: Float64Array[];
 	readonly rank: Int32Array;
-	/** A combination's position in the current decision's hand list. */
+	/** A combination's position in the current decision's hand list; -1 between uses. */
 	readonly position: Int32Array;
+	/** Each opposing hand's position in the acting list, or -1, per depth: deeper walks reuse `position`. */
+	readonly at: Int32Array[];
 }
 
 function treeDepth(ctx: Context): number {
@@ -71,7 +74,8 @@ function makeBuffers(ctx: Context, width: number): PairBuffers {
 		hands: make(() => new Uint16Array(width)),
 		strategy: make(() => new Float64Array(actions * COMBOS)),
 		rank: new Int32Array(COMBOS),
-		position: new Int32Array(COMBOS),
+		position: new Int32Array(COMBOS).fill(-1),
+		at: make(() => new Int32Array(width)),
 	};
 }
 
@@ -207,26 +211,29 @@ function walk(
 		const childLive = buffers.live[depth];
 		const childCols = buffers.cols[depth + 1];
 		const mappedHands = buffers.hands[depth];
+		const starts = runouts.childStart[nextRound];
 
-		for (let childBoard = runouts.childStart[nextRound][board]; childBoard < runouts.childStart[nextRound][board + 1]; childBoard++) {
+		for (let childBoard = starts[board]; childBoard < starts[board + 1]; childBoard++) {
+			const stored = dealtCards[childBoard * width + width - 1];
 			// Every deal this board stands for, the stored one first. The
 			// opposing hands are an arbitrary list, not a symmetric range, so a
 			// mirrored deal is walked with every hand relabelled onto the
 			// stored board rather than assumed equal to it.
 			for (let m = orbitStart[childBoard]; m < orbitStart[childBoard + 1]; m++) {
-				const dealt = m === orbitStart[childBoard] ? dealtCards[childBoard * width + width - 1] : runouts.orbitCard[nextRound][m];
+				const dealt = m === orbitStart[childBoard] ? stored : runouts.orbitCard[nextRound][m];
 				const map = runouts.maps.combo[runouts.orbitMap[nextRound][m]];
+				const blocked = (combo: number): boolean => cards[combo * 2] === dealt || cards[combo * 2 + 1] === dealt;
 
 				let childCount = 0;
 				for (let i = 0; i < liveCount; i++) {
 					const combo = live[i];
-					if (cards[combo * 2] === dealt || cards[combo * 2 + 1] === dealt) continue;
+					if (blocked(combo)) continue;
 					childLive[childCount++] = map[combo];
 				}
 				let childColCount = 0;
 				for (let c = 0; c < colCount; c++) {
 					const k = cols[c];
-					if (cards[hands[k] * 2] !== dealt && cards[hands[k] * 2 + 1] !== dealt) childCols[childColCount++] = k;
+					if (!blocked(hands[k])) childCols[childColCount++] = k;
 				}
 				if (childColCount === 0) continue;
 				for (let k = 0; k < hands.length; k++) mappedHands[k] = map[hands[k]];
@@ -239,7 +246,7 @@ function walk(
 					const row = childCols[c] * COMBOS;
 					for (let i = 0; i < liveCount; i++) {
 						const combo = live[i];
-						if (cards[combo * 2] === dealt || cards[combo * 2 + 1] === dealt) continue;
+						if (blocked(combo)) continue;
 						out[row + combo] += value[row + map[combo]];
 					}
 				}
@@ -254,19 +261,17 @@ function walk(
 	const owner = tree.player[node] as 0 | 1;
 	const lists = ctx.active;
 	const listSlot = (lists.roundBase[tree.round[node]] + board) * 2 + owner;
-	const active = lists.list;
 	const activeFrom = lists.start[listSlot];
 	const activeCount = lists.count[listSlot];
 	// Storage, and so the strategy, is laid out by position in this list.
 	const stride = activeCount;
 	const slotBase = ctx.layout.offset[node] + actions * ctx.layout.rowStart[listSlot];
 	const strategy = buffers.strategy[depth];
-	averageStrategy(ctx.strategySum, slotBase, actions, stride, strategy, ctx.regret);
+	storedStrategy(ctx, node, slotBase, actions, stride, strategy);
 
 	// The traverser's values are counterfactual: its own reach never enters.
 	if (owner === traverser) {
 		for (let a = 0; a < actions; a++) {
-			const offset = a * COMBOS;
 			const value = walk(
 				ctx, buffers, traverser, hands, tree.edgeChild[edgeBase + a], board, colReach,
 				cols, colCount, live, liveCount, depth + 1,
@@ -274,8 +279,12 @@ function walk(
 			for (let c = 0; c < colCount; c++) {
 				const row = cols[c] * COMBOS;
 				for (let i = 0; i < activeCount; i++) {
-					const combo = active[activeFrom + i];
-					out[row + combo] += strategy[a * stride + i] * value[row + combo];
+					// A packed entry's strategy is every hand's it stands for.
+					const share = strategy[a * stride + i];
+					for (let m = lists.memberStart[activeFrom + i]; m < lists.memberStart[activeFrom + i + 1]; m++) {
+						const combo = lists.memberCombo[m];
+						out[row + combo] += share * value[row + combo];
+					}
 				}
 			}
 		}
@@ -287,13 +296,16 @@ function walk(
 	const childCols = buffers.cols[depth + 1];
 	// Each opposing hand's position in the acting player's list here.
 	const position = buffers.position;
-	for (let i = 0; i < activeCount; i++) position[active[activeFrom + i]] = i;
+	markMembers(lists, activeFrom, activeCount, position, false);
+	const at = buffers.at[depth];
+	for (let c = 0; c < colCount; c++) at[cols[c]] = position[hands[cols[c]]];
+	markMembers(lists, activeFrom, activeCount, position, true);
 	for (let a = 0; a < actions; a++) {
-		const offset = a * COMBOS;
 		let childCount = 0;
 		for (let c = 0; c < colCount; c++) {
 			const k = cols[c];
-			const r = colReach[k] * strategy[a * stride + position[hands[k]]];
+			// A hand not in the list here cannot be holding it.
+			const r = at[k] < 0 ? 0 : colReach[k] * strategy[a * stride + at[k]];
 			childReach[k] = r;
 			if (r !== 0) childCols[childCount++] = k;
 		}

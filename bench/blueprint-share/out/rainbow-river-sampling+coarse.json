@@ -1,0 +1,179 @@
+{
+ "tag": "rainbow-river-sampling+coarse",
+ "storageBytes": 181089712,
+ "peakRss": 426684416,
+ "engine": "wasm",
+ "seconds": 106.288592147,
+ "iterations": 400,
+ "exploitability": 3.1561027773946257,
+ "best": 3.1561027773946257,
+ "history": [
+  {
+   "iterations": 20,
+   "seconds": 8.350010332999998,
+   "exploitability": 57.29148713431368
+  },
+  {
+   "iterations": 40,
+   "seconds": 14.161467278999998,
+   "exploitability": 27.399484265568507
+  },
+  {
+   "iterations": 80,
+   "seconds": 24.168890758999996,
+   "exploitability": 12.887434300313274
+  },
+  {
+   "iterations": 120,
+   "seconds": 33.798565631,
+   "exploitability": 8.312080885160858
+  },
+  {
+   "iterations": 160,
+   "seconds": 43.993215055,
+   "exploitability": 6.246357579986662
+  },
+  {
+   "iterations": 200,
+   "seconds": 54.247548769,
+   "exploitability": 5.064272148999222
+  },
+  {
+   "iterations": 240,
+   "seconds": 64.707224099,
+   "exploitability": 4.330085446390803
+  },
+  {
+   "iterations": 280,
+   "seconds": 75.039823059,
+   "exploitability": 3.8833709152571947
+  },
+  {
+   "iterations": 320,
+   "seconds": 85.721526538,
+   "exploitability": 3.5719608735020794
+  },
+  {
+   "iterations": 360,
+   "seconds": 95.757299359,
+   "exploitability": 3.3202786186309248
+  },
+  {
+   "iterations": 400,
+   "seconds": 106.28841709800001,
+   "exploitability": 3.1561027773946257
+  }
+ ],
+ "rootError": [
+  {
+   "mae": 0.749588174929862,
+   "max": 2.8075509055803707
+  },
+  {
+   "mae": 0.8541210541610266,
+   "max": 3.6713245213388035
+  }
+ ],
+ "loss": [
+  {
+   "decision": "OOP at root",
+   "blueprint": {
+    "mean": 0.022795498462303533,
+    "max": 0.2943541920693491
+   },
+   "reference": {
+    "mean": 0.008871218779525755,
+    "max": 0.04991630740054376
+   }
+  },
+  {
+   "decision": "IP after check",
+   "blueprint": {
+    "mean": 0.013878533203659825,
+    "max": 0.09584578108788833
+   },
+   "reference": {
+    "mean": 0.00831599431394231,
+    "max": 0.039456157042288
+   }
+  }
+ ],
+ "resolves": [
+  {
+   "key": "bet_82.5_call_-2c",
+   "lineReach": 0.1249610020966374,
+   "gain": [
+    2.592764526892185,
+    0.9719013122494519
+   ]
+  },
+  {
+   "key": "bet_82.5_call_-7c",
+   "lineReach": 0.1249610020966374,
+   "gain": [
+    2.0262579842782196,
+    0.5537753449979609
+   ]
+  },
+  {
+   "key": "bet_82.5_call_-Qs",
+   "lineReach": 0.1249610020966374,
+   "gain": [
+    4.1380818439013645,
+    0.7151099564963529
+   ]
+  },
+  {
+   "key": "check_bet_41.25_call_-2c",
+   "lineReach": 0.05418120349237849,
+   "gain": [
+    3.6707179370931415,
+    4.154996531154911
+   ]
+  },
+  {
+   "key": "check_bet_41.25_call_-7c",
+   "lineReach": 0.05418120349237849,
+   "gain": [
+    5.166006402341773,
+    5.202786353231518
+   ]
+  },
+  {
+   "key": "check_bet_41.25_call_-Qs",
+   "lineReach": 0.05418120349237849,
+   "gain": [
+    4.369380976381654,
+    8.006529161596408
+   ]
+  },
+  {
+   "key": "check_check_-2c",
+   "lineReach": 0.476598546648886,
+   "gain": [
+    3.434600049314979,
+    2.9146509596604893
+   ]
+  },
+  {
+   "key": "check_check_-7c",
+   "lineReach": 0.476598546648886,
+   "gain": [
+    2.7360805496196074,
+    1.7676423402127888
+   ]
+  },
+  {
+   "key": "check_check_-Qs",
+   "lineReach": 0.476598546648886,
+   "gain": [
+    2.66912459333466,
+    3.9830011253070006
+   ]
+  }
+ ],
+ "resolveGain": [
+  3.0616050127903547,
+  2.7199249989529886
+ ]
+}

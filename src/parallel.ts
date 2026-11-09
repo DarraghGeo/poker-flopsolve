@@ -40,6 +40,9 @@ import { NodeKind } from './tree.ts';
 import type { WorkerHandle } from './platform/node.ts';
 import { spawnWorker } from './platform/node.ts';
 
+/** How a pool starts its workers; the platform's `spawnWorker` unless a test swaps it. */
+export type SpawnWorker = (setup: WorkerSetup, onError: (error: Error) => void) => WorkerHandle;
+
 export { defaultWorkerCount } from './platform/node.ts';
 
 export const CONTROL = {
@@ -50,8 +53,88 @@ export const CONTROL = {
 	iterWeight: 4,
 	ready: 5,
 	mode: 6,
+	/** Set, never cleared, once any thread's part of a step threw; see src/worker.ts. */
+	failed: 7,
 	size: 8,
 } as const;
+
+/** What a threaded step throws once a thread has failed mid-iteration, here or in src/engine.ts. */
+export const THREAD_FAILED_ERROR =
+	'A solver thread failed mid-iteration; this run cannot continue. Close it and solve again, or use workers: 1.';
+
+/**
+ * What a threaded step throws once another thread has gone silent past the
+ * backstop, here or in src/engine.ts.
+ */
+export const THREAD_LOST_ERROR =
+	'A solver thread stopped answering mid-iteration; it may have run out of memory or been killed. ' +
+	'This run cannot continue. Close it and solve again, or use workers: 1.';
+
+/**
+ * The backstop on how long the main thread waits for the others in one step.
+ *
+ * A thread that throws reports itself in shared memory, but one killed
+ * without unwinding (a Node worker out of V8 heap, a worker the browser
+ * kills) runs no `catch` or `finally`, and its error event cannot reach a
+ * main thread waiting in `Atomics.wait`. Every thread's shard is the same
+ * size as the main thread's own and runs under the same load, so the wait is
+ * bounded at a multiple of the main thread's own shard time, and never under
+ * the floor: it only fires with one thread both 20× slower than the main
+ * thread and over a minute late.
+ */
+export const THREAD_BACKSTOP_FLOOR_MS = 60_000;
+export const THREAD_BACKSTOP_FACTOR = 20;
+
+/**
+ * How long, from the step's dispatch, the main thread waits for the others.
+ * @param ownMs the main thread's own shard time this step
+ * @param floorMs the shortest wait; tests shorten it
+ */
+export function backstopMs(ownMs: number, floorMs: number = THREAD_BACKSTOP_FLOOR_MS): number {
+	return Math.max(floorMs, THREAD_BACKSTOP_FACTOR * ownMs);
+}
+
+/** How long one `Atomics.wait` of {@link awaitThreads} sleeps before looking again. */
+const WAIT_SLICE_MS = 50;
+/** A wait that overruns its slice by more than this was a stopped process, not a slow thread. */
+const STOPPED_MS = 1_000;
+
+/**
+ * Wait, after this thread's own shard, for the other threads to count
+ * themselves done in `control[slot]`, or until the backstop passes.
+ *
+ * Time the whole process spends stopped mid-wait (a debugger, Ctrl-Z, a VM
+ * pause, a sleep the clock counts) stops every thread alike, so it extends
+ * the backstop rather than counting against the others.
+ *
+ * @param control the pool's control slots
+ * @param slot the slot the other threads count themselves done in
+ * @param target how many other threads there are
+ * @param dispatched `performance.now()` when the step was dispatched
+ * @param floorMs the backstop's floor; see {@link backstopMs}
+ * @param stopped whether to stop waiting for some other reason
+ * @returns {@link THREAD_LOST_ERROR} once the backstop passes, else null
+ */
+export function awaitThreads(
+	control: Int32Array,
+	slot: number,
+	target: number,
+	dispatched: number,
+	floorMs: number | undefined,
+	stopped: () => boolean,
+): Error | null {
+	// Monotonic, so a change to the wall clock is not taken for a silent thread.
+	let giveUp = dispatched + backstopMs(performance.now() - dispatched, floorMs);
+	for (;;) {
+		const done = Atomics.load(control, slot);
+		if (done >= target || stopped()) return null;
+		const before = performance.now();
+		if (before > giveUp) return new Error(THREAD_LOST_ERROR);
+		Atomics.wait(control, slot, done, WAIT_SLICE_MS);
+		const overrun = performance.now() - before - WAIT_SLICE_MS;
+		if (overrun > STOPPED_MS) giveUp += overrun;
+	}
+}
 
 export const COMMAND = { work: 0, exit: 1 } as const;
 
@@ -121,6 +204,17 @@ export interface WorkerSetup {
 	/** Per-block scales, for 16-bit storage only. */
 	readonly regretScale: SharedArrayBuffer | null;
 	readonly sumScale: SharedArrayBuffer | null;
+	/** Compact storage's regrets and hand scales, else null. */
+	readonly compactRegret: SharedArrayBuffer[] | null;
+	readonly handShift: SharedArrayBuffer[] | null;
+	readonly compactSum: SharedArrayBuffer[] | null;
+	readonly sumShift: SharedArrayBuffer[] | null;
+	readonly compactScale: SharedArrayBuffer | null;
+	/**
+	 * Chance sampling's baselines, last walks and last updates, else null.
+	 * Each thread reads and writes only its own runouts' entries.
+	 */
+	readonly sampling: readonly [SharedArrayBuffer, SharedArrayBuffer, SharedArrayBuffer] | null;
 	readonly control: SharedArrayBuffer;
 	readonly exchange: SharedArrayBuffer;
 	readonly entryCount: number;
@@ -143,6 +237,8 @@ export interface Pool {
  * @param plan how the runouts are split
  * @param payload everything the worker needs to rebuild the context
  * @param workers threads doing the work, the main thread included
+ * @param spawn how each worker is started
+ * @param backstopFloorMs the shortest a step waits for the workers; see {@link backstopMs}
  */
 export function startPool(
 	ctx: Context,
@@ -150,6 +246,8 @@ export function startPool(
 	plan: ShardPlan,
 	payload: unknown,
 	workers: number,
+	spawn: SpawnWorker = spawnWorker,
+	backstopFloorMs: number = THREAD_BACKSTOP_FLOOR_MS,
 ): Pool {
 	const entryCount = plan.entryNodes.length;
 	// The main thread is one of the `workers`; only the rest are spawned.
@@ -164,6 +262,16 @@ export function startPool(
 	const threads: WorkerHandle[] = [];
 	let failure: Error | null = null;
 
+	// Workers wrap each of sampling's buffers whole, so each must be its own shared buffer.
+	const samplingBuffers = ctx.sampling
+		? ([ctx.sampling.baseline, ctx.sampling.lastWalk, ctx.sampling.lastUpdate] as const).map((view) => {
+				if (!(view.buffer instanceof SharedArrayBuffer) || view.byteOffset !== 0 || view.byteLength !== view.buffer.byteLength) {
+					throw new Error('chanceSampling on worker threads needs its state in shared buffers of its own');
+				}
+				return view.buffer;
+			})
+		: null;
+
 	for (let w = 0; w < spawned; w++) {
 		const setup: WorkerSetup = {
 			workerId: w,
@@ -175,13 +283,19 @@ export function startPool(
 			strategySum: ctx.strategySum.buffer as SharedArrayBuffer,
 			regretScale: (ctx.regretScale?.buffer as SharedArrayBuffer | undefined) ?? null,
 			sumScale: (ctx.sumScale?.buffer as SharedArrayBuffer | undefined) ?? null,
+			compactRegret: ctx.compactRegret?.map((chunk) => chunk.buffer as SharedArrayBuffer) ?? null,
+			handShift: ctx.handShift?.map((chunk) => chunk.buffer as SharedArrayBuffer) ?? null,
+			compactSum: ctx.compactSum?.map((chunk) => chunk.buffer as SharedArrayBuffer) ?? null,
+			sumShift: ctx.sumShift?.map((chunk) => chunk.buffer as SharedArrayBuffer) ?? null,
+			compactScale: (ctx.compactScale?.buffer as SharedArrayBuffer | undefined) ?? null,
+			sampling: samplingBuffers ? [samplingBuffers[0], samplingBuffers[1], samplingBuffers[2]] : null,
 			control: controlBuffer,
 			exchange: exchangeBuffer,
 			entryCount,
 		};
 		// A worker that dies would otherwise leave the main thread waiting on a
 		// counter that can never reach its target.
-		const thread = spawnWorker(setup, (error: Error) => {
+		const thread = spawn(setup, (error: Error) => {
 			failure ??= error;
 			Atomics.store(control, CONTROL.ready, spawned);
 			Atomics.add(control, CONTROL.done, spawned);
@@ -213,6 +327,9 @@ export function startPool(
 	const mainReachMe = new Float64Array(COMBOS);
 	const mainReachOpp = new Float64Array(COMBOS);
 
+	const failed = (): Error | null =>
+		failure ?? (Atomics.load(control, CONTROL.failed) ? new Error(THREAD_FAILED_ERROR) : null);
+
 	const dispatch = (mode: Mode, traverser: 0 | 1, iterWeight: number): void => {
 		Atomics.store(control, CONTROL.done, 0);
 		Atomics.store(control, CONTROL.mode, mode);
@@ -221,6 +338,7 @@ export function startPool(
 		Atomics.store(control, CONTROL.command, COMMAND.work);
 		Atomics.add(control, CONTROL.generation, 1);
 		Atomics.notify(control, CONTROL.generation);
+		const dispatched = performance.now();
 
 		// Shard 0 is this thread's, done while the workers do theirs. With no
 		// collect or override set the split-round chance nodes expand as usual,
@@ -247,51 +365,65 @@ export function startPool(
 			ctx.shardEnd = fullEnd;
 		}
 
-		for (;;) {
-			const done = Atomics.load(control, CONTROL.done);
-			if (done >= spawned) break;
-			if (failure) throw failure;
-			Atomics.wait(control, CONTROL.done, done, 50);
+		// A worker whose walk throws says so in `failed` and counts itself
+		// done, as its error event cannot reach this thread while it waits.
+		// One killed without unwinding does neither, hence the backstop.
+		failure ??= awaitThreads(control, CONTROL.done, spawned, dispatched, backstopFloorMs, () => failure !== null);
+		const dead = failed();
+		if (dead) throw dead;
+	};
+
+	const traverseAll: RootTraversal = (mode, traverser, iterWeight) => {
+		// Pass A: walk the round above the split to capture what each worker
+		// needs, applying nothing.
+		ctx.applyUpdates = false;
+		ctx.chanceOverride = null;
+		ctx.chanceCollect = (node, reachMe, reachOpp) => {
+			const entry = plan.entryIndexOf[node];
+			exchange.set(reachMe.subarray(0, COMBOS), entry * 2 * COMBOS);
+			exchange.set(reachOpp.subarray(0, COMBOS), entry * 2 * COMBOS + COMBOS);
+		};
+		try {
+			solver.traverseRoot(mode, traverser, iterWeight);
+		} finally {
+			ctx.chanceCollect = null;
 		}
-		if (failure) throw failure;
+
+		// Leaves this thread's own partial in `chanceValues`.
+		dispatch(mode, traverser, iterWeight);
+
+		for (let w = 0; w < spawned; w++) {
+			const base = reachFloats + w * entryCount * COMBOS;
+			for (let i = 0; i < entryCount * COMBOS; i++) chanceValues[i] += exchange[base + i];
+		}
+
+		// Pass B: finish that round from the totals, now applying updates.
+		ctx.chanceOverride = chanceValues;
+		ctx.applyUpdates = true;
+		try {
+			const value = solver.traverseRoot(mode, traverser, iterWeight);
+			total.set(value.subarray(0, COMBOS));
+		} finally {
+			ctx.chanceOverride = null;
+		}
+		return total;
 	};
 
 	return {
 		workers,
 		traverse(mode, traverser, iterWeight) {
-			// Pass A: walk the round above the split to capture what each worker
-			// needs, applying nothing.
-			ctx.applyUpdates = false;
-			ctx.chanceOverride = null;
-			ctx.chanceCollect = (node, reachMe, reachOpp) => {
-				const entry = plan.entryIndexOf[node];
-				exchange.set(reachMe.subarray(0, COMBOS), entry * 2 * COMBOS);
-				exchange.set(reachOpp.subarray(0, COMBOS), entry * 2 * COMBOS + COMBOS);
-			};
+			// Once any thread has failed, so does every step after, before it
+			// touches anything.
+			const dead = failed();
+			if (dead) throw dead;
 			try {
-				solver.traverseRoot(mode, traverser, iterWeight);
-			} finally {
-				ctx.chanceCollect = null;
+				return traverseAll(mode, traverser, iterWeight);
+			} catch (error) {
+				// This thread's own part may have thrown with the workers still
+				// walking; no later step may run over them.
+				Atomics.store(control, CONTROL.failed, 1);
+				throw error;
 			}
-
-			// Leaves this thread's own partial in `chanceValues`.
-			dispatch(mode, traverser, iterWeight);
-
-			for (let w = 0; w < spawned; w++) {
-				const base = reachFloats + w * entryCount * COMBOS;
-				for (let i = 0; i < entryCount * COMBOS; i++) chanceValues[i] += exchange[base + i];
-			}
-
-			// Pass B: finish that round from the totals, now applying updates.
-			ctx.chanceOverride = chanceValues;
-			ctx.applyUpdates = true;
-			try {
-				const value = solver.traverseRoot(mode, traverser, iterWeight);
-				total.set(value.subarray(0, COMBOS));
-			} finally {
-				ctx.chanceOverride = null;
-			}
-			return total;
 		},
 		close() {
 			Atomics.store(control, CONTROL.command, COMMAND.exit);

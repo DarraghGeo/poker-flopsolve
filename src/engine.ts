@@ -7,13 +7,21 @@
  * The engine keeps the accumulators in its own memory as 32-bit floats; the
  * solver's `regret` and `strategySum` are views onto them, so everything that
  * reads storage from JavaScript — strategy queries, warm starts, `valuesAt` —
- * sees the very same numbers. It runs single-threaded, with 32-bit storage,
- * where WebAssembly SIMD is available; otherwise the JavaScript traversal in
- * cfr.ts runs.
+ * sees the very same numbers. It runs where WebAssembly SIMD is available,
+ * on one thread or several; otherwise the JavaScript traversal in cfr.ts
+ * runs. A second build, which only `poker-flopsolve/wasm-storage` carries,
+ * keeps 16-bit and compact storage the same way (`EngineInput.storage`).
+ *
+ * WebAssembly memory is one buffer, but Chromium lets it reach wasm32's full
+ * 4 GiB, plain or shared, made at that size or grown to it, where it refuses
+ * any ArrayBuffer over 2 GiB less 2 MiB (measured in Chromium 153 by
+ * bin/memory-ceiling.ts; issue #84). So compact storage needs no chunks of
+ * its own in the engine: its chunks are regions of the one memory, laid out
+ * as the JavaScript engine's buffers are.
  */
 
-import { COMBOS, DECK } from './cards.ts';
-import type { ActiveLists, Layout, PlayerIndex, RootTraversal } from './cfr.ts';
+import { COMBOS } from './cards.ts';
+import type { ActiveLists, CompactPlan, Layout, PlayerIndex, RegretStore, RootTraversal, SamplingPlan, SumStore } from './cfr.ts';
 import { dcfrFactors, Mode, treeDepth } from './cfr.ts';
 import type { HandSpace } from './hands.ts';
 import type { Runouts } from './runouts.ts';
@@ -21,7 +29,7 @@ import type { Tree } from './tree.ts';
 import { ENGINE_WASM } from './wasm/engine.ts';
 import { ENGINE_SHARED_WASM } from './wasm/engine-shared.ts';
 import type { ShardPlan } from './parallel.ts';
-import { WORKER_START_ERROR, WORKER_START_MS } from './parallel.ts';
+import { awaitThreads, THREAD_FAILED_ERROR, WORKER_START_ERROR, WORKER_START_MS } from './parallel.ts';
 
 /** The parts of the WebAssembly API used here, typed locally: the project builds without DOM typings. */
 interface WasmApi {
@@ -36,18 +44,42 @@ const modules: Record<'plain' | 'shared', object | null | undefined> = { plain: 
 
 /** The compiled engine, over plain or shared memory; null where unavailable. */
 export function compiledEngine(kind: 'plain' | 'shared'): object | null {
-	if (modules[kind] !== undefined) return modules[kind]!;
-	modules[kind] = null;
+	return compileInto(modules, kind, kind === 'plain' ? ENGINE_WASM : ENGINE_SHARED_WASM);
+}
+
+/** Compile base64 WebAssembly into `cache[kind]` once; null there where unavailable. */
+function compileInto(cache: Record<'plain' | 'shared', object | null | undefined>, kind: 'plain' | 'shared', text: string): object | null {
+	if (cache[kind] !== undefined) return cache[kind]!;
+	cache[kind] = null;
 	try {
 		if (!wasm) return null;
-		const text = kind === 'plain' ? ENGINE_WASM : ENGINE_SHARED_WASM;
 		const bytes = Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
 		if (!wasm.validate(bytes)) return null;
-		modules[kind] = new wasm.Module(bytes);
+		cache[kind] = new wasm.Module(bytes);
 	} catch {
-		modules[kind] = null;
+		cache[kind] = null;
 	}
-	return modules[kind]!;
+	return cache[kind]!;
+}
+
+/**
+ * The engine with 16-bit and compact storage (issue #84), as base64 for plain
+ * and shared memory. Only `poker-flopsolve/wasm-storage` holds the bytes, so
+ * a build that never imports it carries none of them; a solve opts in by
+ * passing it as `SolveOptions.wasmStorage`.
+ */
+export interface WasmStorage {
+	readonly plain: string;
+	readonly shared: string;
+}
+
+const storageModules = new WeakMap<WasmStorage, Record<'plain' | 'shared', object | null | undefined>>();
+
+/** The storage engine compiled, over plain or shared memory; null where unavailable. */
+function compiledStorage(source: WasmStorage, kind: 'plain' | 'shared'): object | null {
+	let cache = storageModules.get(source);
+	if (!cache) storageModules.set(source, (cache = { plain: undefined, shared: undefined }));
+	return compileInto(cache, kind, source[kind]);
 }
 
 function compiled(): object | null {
@@ -69,13 +101,42 @@ export interface EngineInput {
 	readonly hands: HandSpace;
 	readonly runoutWeight: Float64Array;
 	readonly chipScale: number;
+	/** Chance sampling's layout, for `Approximations.chanceSampling`; unset for none. */
+	readonly sampling?: SamplingPlan;
+	/** Bytes left unused below the layout, rounded up to 16; tests set it to place every pointer past 2 GiB. */
+	readonly lowBytes?: number;
+	/**
+	 * 16-bit or compact storage, run by the storage engine `source` holds;
+	 * unset for 32-bit storage on the default engine. `quantised` keeps
+	 * the nodes before `compact.from` (all of them without `compact`) at 16
+	 * bits, as `precision: 'i16'` does.
+	 */
+	readonly storage?: { readonly source: WasmStorage; readonly quantised: boolean; readonly compact: CompactPlan | null };
+}
+
+/** Compact storage's arrays, per chunk, as `Context` holds them; views onto the engine's memory. */
+export interface EngineCompact {
+	readonly regret: (Int8Array | Float32Array)[];
+	readonly handShift: Uint8Array[] | null;
+	readonly sum: Uint8Array[] | null;
+	readonly sumShift: Uint8Array[] | null;
+	readonly scale: Float64Array | null;
 }
 
 /** A running engine. */
 export interface Engine {
-	/** The accumulators, as views onto the engine's memory. */
-	readonly regret: Float32Array;
-	readonly strategySum: Float32Array;
+	/** The accumulators, as views onto the engine's memory: 32-bit, or 16-bit with `EngineInput.storage`. */
+	readonly regret: RegretStore;
+	readonly strategySum: SumStore;
+	/** With 16-bit storage, the per-block scales `Context.regretScale` and `sumScale` hold; else null. */
+	readonly regretScale: Float64Array | null;
+	readonly sumScale: Float64Array | null;
+	/** With compact storage, its arrays; else null. */
+	readonly compact: EngineCompact | null;
+	/** Chance sampling's state, as views onto the engine's memory; null without sampling. */
+	readonly sampling: { baseline: Float32Array; lastWalk: Int32Array; lastUpdate: Int32Array } | null;
+	/** With shared storage, `Context.discounted` as a view onto the engine's memory; else null. */
+	readonly discounted: Int32Array | null;
 	/** Install as the solver's root traversal; `dcfr` picks the update rule. */
 	root(dcfr: boolean): RootTraversal;
 	/** Release worker threads, if any. */
@@ -99,13 +160,33 @@ export interface EngineWorkerSetup {
 	readonly stride: number;
 	readonly control: SharedArrayBuffer;
 	readonly settings: SharedArrayBuffer;
+	/** With shared storage: where the discount marks, the block table and the weighted nodes (or 0) sit. */
+	readonly shared?: readonly [number, number, number];
+	/** Set for the storage engine, whose updates need the iteration on every walk. */
+	readonly storage?: boolean;
+	/**
+	 * With chance sampling, `setSampling`'s arguments as the main thread
+	 * passed them: its state is in the shared memory, and each thread walks
+	 * and marks only its own runouts' deals.
+	 */
+	readonly sampling?: SamplingArgs;
 }
+
+/** `EngineExports.setSampling`'s arguments, in order. */
+export type SamplingArgs = Parameters<EngineExports['setSampling']>;
 
 /** How a pool starts its workers; the platform layer supplies it. */
 export type SpawnEngineWorker = (setup: EngineWorkerSetup, onError: (error: Error) => void) => { terminate(): void };
 
-/** Control slots shared with engine workers. */
-export const ENGINE_CONTROL = { generation: 0, done: 1, command: 2, mode: 3, traverser: 4, ready: 5, size: 8 } as const;
+/** The most memory the engine lays out: just under wasm32's 4 GB. */
+const MAX_MEMORY = 0xffff0000;
+
+/**
+ * Control slots shared with engine workers. `failed` is set, never cleared,
+ * once any thread's part of a step threw: the main thread waits in
+ * `Atomics.wait` and so never sees a worker's error event while a step runs.
+ */
+export const ENGINE_CONTROL = { generation: 0, done: 1, command: 2, mode: 3, traverser: 4, ready: 5, failed: 6, size: 8 } as const;
 
 /**
  * Lay a spot out in a fresh memory and instantiate the engine over it, or
@@ -115,12 +196,34 @@ export const ENGINE_CONTROL = { generation: 0, done: 1, command: 2, mode: 3, tra
  */
 export function createEngine(
 	input: EngineInput,
-	pool?: { plan: ShardPlan; threads: number; spawn: SpawnEngineWorker },
+	pool?: {
+		plan: ShardPlan;
+		threads: number;
+		spawn: SpawnEngineWorker;
+		/** The shortest a step waits for the other threads; see `awaitThreads` in src/parallel.ts. */
+		backstopFloorMs?: number;
+	},
 ): Engine | null {
 	const shared = pool !== undefined;
-	const compiledModule = compiledEngine(shared ? 'shared' : 'plain');
+	const storage = input.storage ?? null;
+	const compiledModule = storage
+		? compiledStorage(storage.source, shared ? 'shared' : 'plain')
+		: compiledEngine(shared ? 'shared' : 'plain');
 	if (!compiledModule || !wasm) return null;
 	const { tree, runouts, layout, active, hands } = input;
+	const compact = storage?.compact ?? null;
+	const quantised = storage?.quantised ?? false;
+	// Its accumulators alone would pass wasm32's 4 GB, so no engine; checked
+	// before anything is built. Such a layout is also the only kind that
+	// holds offsets as Float64, which the engine's 32-bit offset table could
+	// not take.
+	const width = quantised ? 2 : 4;
+	const compactBytes = !compact
+		? 0
+		: compact.float
+			? layout.compactSlots * 4
+			: (layout.compactSlots + (compact.perHand ? layout.compactHands : 0)) * (compact.sums ? 2 : 1);
+	if (layout.totalSlots * width * 2 + compactBytes > MAX_MEMORY || !(layout.offset instanceof Int32Array)) return null;
 	const threads = pool ? pool.threads : 1;
 
 	const flatten = (parts: readonly Int32Array[]): [Int32Array, Int32Array] => {
@@ -150,14 +253,15 @@ export function createEngine(
 		add(tree.kind), add(tree.round), add(Uint8Array.from(tree.player, (p) => (p < 0 ? 255 : p))), add(tree.firstEdge),
 		add(tree.numEdges), add(tree.edgeChild), add(tree.payoff), add(layout.offset), add(layout.rowStart),
 		add(active.roundBase), add(active.start), add(Int32Array.from(active.count)), add(active.cardA), add(active.cardB),
-		add(active.strength), add(active.tieStart), add(active.ties), add(upRound), add(upStart), add(hands.up),
+		add(active.strength), add(active.packed), add(Float32Array.from(active.multiplicity)), add(active.memberStart),
+		add(active.memberA), add(active.memberB), add(upRound), add(upStart), add(hands.up),
 		add(hands.sameStart), add(hands.same), add(childRound), add(childStart), add(orbitRound), add(orbitStart),
 		add(input.runoutWeight),
-		add(null, layout.totalSlots * 4), // regret
-		add(null, layout.totalSlots * 4), // strategy sums
+		add(null, layout.totalSlots * width), // regret
+		add(null, layout.totalSlots * width), // strategy sums
 	];
-	const REGRET = common[27];
-	const SUMS = common[28];
+	const REGRET = common[common.length - 2];
+	const SUMS = common[common.length - 1];
 	// Each thread's own.
 	const own = Array.from({ length: threads }, () => ({
 		buffers: add(null, depths * depthBytes),
@@ -172,14 +276,49 @@ export function createEngine(
 	const reach = pool ? add(null, entries * 2 * rowBytes) : -1;
 	const values = pool ? add(null, entries * rowBytes) : -1;
 	const partials = pool ? add(null, (threads - 1) * entries * rowBytes) : -1;
+	// Chance sampling, only when asked for.
+	const plan = input.sampling;
+	const sample = plan
+		? {
+				baseOffset: add(plan.baseOffset), boardOffset: add(plan.boardOffset), walkOffset: add(plan.walkOffset),
+				blockOffset: add(layout.blockOffset), baseline: add(null, plan.values * 4), lastWalk: add(null, plan.walks * 4),
+				lastUpdate: add(null, plan.blocks * 4),
+			}
+		: null;
+	// History sharing's once-an-iteration discount marks, only when storage is shared.
+	const share = layout.shared
+		? {
+				marks: add(null, layout.blocks * 4),
+				blockOffset: sample ? sample.blockOffset : add(layout.blockOffset),
+				weighted: layout.reachWeighted ? add(layout.reachWeighted) : -1,
+			}
+		: null;
+	// 16-bit and compact storage's settings, scales and chunks, only on the storage engine.
+	const chunks = compact ? layout.chunkSlots.length : 0;
+	const stored = storage
+		? {
+				block: add(null, 128),
+				blockOffset: sample ? sample.blockOffset : share ? share.blockOffset : add(layout.blockOffset),
+				regretScale: quantised ? add(null, layout.blocks * 8) : -1,
+				sumScale: quantised ? add(null, layout.blocks * 8) : -1,
+				compactChunk: compact ? add(layout.compactChunk) : -1,
+				handOffset: compact ? add(Int32Array.from(layout.handOffset!)) : -1,
+				tables: compact ? add(null, chunks * 4 * 5) : -1,
+				regrets: layout.chunkSlots.map((slots) => add(null, slots * (compact!.float ? 4 : 1))),
+				shifts: compact?.perHand ? layout.chunkHands.map((count) => add(null, count)) : [],
+				sums: compact?.sums ? layout.chunkSlots.map((slots) => add(null, slots)) : [],
+				sumShifts: compact?.sums ? layout.chunkHands.map((count) => add(null, count)) : [],
+				compactScale: compact && !compact.perHand && !compact.float ? add(null, layout.blocks * 8) : -1,
+			}
+		: null;
 
 	const offsets: number[] = [];
-	let total = 64;
+	let total = 64 + Math.ceil(Math.max(input.lowBytes ?? 0, 0) / 16) * 16;
 	for (const piece of pieces) {
 		offsets.push(total);
 		total += piece.bytes;
 	}
-	if (total > 0xffff0000) return null; // past wasm32's 4 GB
+	if (total > MAX_MEMORY) return null;
 	const pages = Math.ceil(total / 65536) + 1;
 	const memory = shared ? new wasm.Memory({ initial: pages, maximum: pages, shared: true }) : new wasm.Memory({ initial: pages });
 	const bytes = new Uint8Array(memory.buffer);
@@ -189,20 +328,87 @@ export function createEngine(
 	for (const mine of own) {
 		const head = new Uint32Array(memory.buffer, offsets[mine.header], 40);
 		common.forEach((slot, i) => (head[i] = offsets[slot]));
-		head[29] = offsets[mine.buffers];
-		head[30] = depthBytes;
-		head[31] = rowBytes;
-		head[32] = offsets[mine.cardSums];
-		head[33] = input.chipScale;
+		head[common.length] = offsets[mine.buffers];
+		head[common.length + 1] = depthBytes;
+		head[common.length + 2] = rowBytes;
+		head[common.length + 3] = offsets[mine.cardSums];
+		head[common.length + 4] = input.chipScale;
+		if (stored) head[common.length + 5] = offsets[stored.block];
 	}
+	if (stored) {
+		const at = (slot: number): number => (slot >= 0 ? offsets[slot] : 0);
+		const block = new Uint32Array(memory.buffer, offsets[stored.block], 20);
+		block.set([
+			quantised ? 1 : 0, compact ? compact.from : 255, !compact ? 0 : compact.float ? 3 : compact.perHand ? 1 : 2,
+			compact?.sums ? 1 : 0, compact?.stochastic ? 1 : 0, compact?.steps ?? 127,
+			at(stored.regretScale), at(stored.sumScale), offsets[stored.blockOffset], at(stored.compactChunk),
+			at(stored.handOffset),
+		]);
+		if (compact) {
+			// Per chunk: where its regrets, hand scales, sums and sum scales sit, and its first slot.
+			const tables = offsets[stored.tables];
+			const table = new Uint32Array(memory.buffer, tables, chunks * 5);
+			for (let c = 0; c < chunks; c++) {
+				table[c] = offsets[stored.regrets[c]];
+				table[chunks + c] = stored.shifts.length ? offsets[stored.shifts[c]] : 0;
+				table[2 * chunks + c] = stored.sums.length ? offsets[stored.sums[c]] : 0;
+				table[3 * chunks + c] = stored.sumShifts.length ? offsets[stored.sumShifts[c]] : 0;
+				table[4 * chunks + c] = layout.chunkStart[c] >>> 0;
+			}
+			block.set([tables, tables + chunks * 4, tables + chunks * 8, tables + chunks * 12, tables + chunks * 16, at(stored.compactScale)], 11);
+		}
+	}
+	// The update rule's factors, as float64, which the storage engine reads before each walk.
+	const factors = stored ? new Float64Array(memory.buffer, offsets[stored.block] + 80, 4) : null;
 
 	const instance = new wasm.Instance(compiledModule, { env: { memory, abort: () => { throw new Error('engine abort'); } } });
 	const exports = instance.exports as unknown as EngineExports;
 	exports.init(offsets[own[0].header]);
 	exports.setMaxActions(maxActions);
+	let samplingViews: Engine['sampling'] = null;
+	let samplingArgs: SamplingArgs | null = null;
+	if (plan && sample) {
+		let mask = 0;
+		for (let r = 0; r < plan.rounds.length; r++) if (plan.rounds[r]) mask |= 1 << r;
+		samplingArgs = [
+			mask, plan.p, plan.every, plan.unbiased ? 1 : 0, plan.catchUp ? 1 : 0,
+			offsets[sample.baseOffset], offsets[sample.boardOffset], offsets[sample.walkOffset],
+			offsets[sample.baseline], offsets[sample.lastWalk], offsets[sample.lastUpdate], offsets[sample.blockOffset],
+		];
+		const a = samplingArgs;
+		exports.setSampling(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11]);
+		samplingViews = {
+			baseline: new Float32Array(memory.buffer, offsets[sample.baseline], plan.values),
+			lastWalk: new Int32Array(memory.buffer, offsets[sample.lastWalk], plan.walks),
+			lastUpdate: new Int32Array(memory.buffer, offsets[sample.lastUpdate], plan.blocks),
+		};
+	}
 
-	const regret = new Float32Array(memory.buffer, offsets[REGRET], layout.totalSlots);
-	const strategySum = new Float32Array(memory.buffer, offsets[SUMS], layout.totalSlots);
+	const weightedAt = share && share.weighted >= 0 ? offsets[share.weighted] : 0;
+	if (share) exports.setShared(offsets[share.marks], offsets[share.blockOffset], weightedAt);
+	const discounted = share ? new Int32Array(memory.buffer, offsets[share.marks], layout.blocks) : null;
+
+	const regret: RegretStore = quantised
+		? new Int16Array(memory.buffer, offsets[REGRET], layout.totalSlots)
+		: new Float32Array(memory.buffer, offsets[REGRET], layout.totalSlots);
+	const strategySum: SumStore = quantised
+		? new Uint16Array(memory.buffer, offsets[SUMS], layout.totalSlots)
+		: new Float32Array(memory.buffer, offsets[SUMS], layout.totalSlots);
+	const scaleView = (slot: number): Float64Array | null =>
+		slot >= 0 ? new Float64Array(memory.buffer, offsets[slot], layout.blocks) : null;
+	const compactViews: EngineCompact | null = stored && compact
+		? {
+				regret: stored.regrets.map((slot, c) =>
+					compact.float
+						? new Float32Array(memory.buffer, offsets[slot], layout.chunkSlots[c])
+						: new Int8Array(memory.buffer, offsets[slot], layout.chunkSlots[c]),
+				),
+				handShift: compact.perHand ? stored.shifts.map((slot, c) => new Uint8Array(memory.buffer, offsets[slot], layout.chunkHands[c])) : null,
+				sum: compact.sums ? stored.sums.map((slot, c) => new Uint8Array(memory.buffer, offsets[slot], layout.chunkSlots[c])) : null,
+				sumShift: compact.sums ? stored.sumShifts.map((slot, c) => new Uint8Array(memory.buffer, offsets[slot], layout.chunkHands[c])) : null,
+				scale: scaleView(stored.compactScale),
+			}
+		: null;
 	const me = new Float32Array(memory.buffer, offsets[own[0].rootMe], stride);
 	const opp = new Float32Array(memory.buffer, offsets[own[0].rootOpp], stride);
 	const result = new Float64Array(COMBOS);
@@ -239,6 +445,9 @@ export function createEngine(
 				rootMe: offsets[own[w].rootMe], rootOpp: offsets[own[w].rootOpp],
 				partial: offsets[partials] + (w - 1) * entries * rowBytes,
 				stride, control: controlBuffer, settings: settingsBuffer,
+				...(share ? { shared: [offsets[share.marks], offsets[share.blockOffset], weightedAt] as const } : {}),
+				...(stored ? { storage: true } : {}),
+				...(samplingArgs ? { sampling: samplingArgs } : {}),
 			};
 			workers.push(pool.spawn(setup, (error) => {
 				failure ??= error;
@@ -263,7 +472,21 @@ export function createEngine(
 		}
 	}
 
-	const run = (mode: number, traverser: 0 | 1, iterWeight: number, dcfr: boolean): Float64Array => {
+	const failed = (): Error | null =>
+		failure ?? (control && Atomics.load(control, ENGINE_CONTROL.failed) ? new Error(THREAD_FAILED_ERROR) : null);
+
+	// The iteration a step is for, and its rule, which shared storage's threads need.
+	let iteration = 0;
+	let dcfrRule = 0;
+	const run = (asked: number, traverser: 0 | 1, iterWeight: number, dcfr: boolean): Float64Array => {
+		// Once any thread has failed, so does every step after, before it
+		// touches anything.
+		const dead = failed();
+		if (dead) throw dead;
+		// The engine knows three modes; the current profile is its Train
+		// with updates off.
+		const apply = asked === Mode.Current ? 0 : 1;
+		const mode = asked === Mode.Current ? Mode.Train : asked;
 		for (const player of [0, 1] as const) {
 			const [from, count] = rootList(player);
 			const into = player === traverser ? me : opp;
@@ -271,47 +494,29 @@ export function createEngine(
 			for (let i = 0; i < count; i++) into[i] = weights[active.list[from + i]];
 		}
 		const [positive, negative, sum, weight, clamp] = settingsFor(mode, iterWeight, dcfr);
+		iteration = mode === Mode.Train ? iterWeight : 0;
+		dcfrRule = dcfr ? 1 : 0;
+		if (plan || share || stored) exports.setIteration(iteration, dcfrRule);
+		// CFR+ at 16 bits or compact floors a negative regret, as `updateQuantised`
+		// and `updateCompact` do (one only a warm start could bring); 32-bit storage keeps it.
+		factors?.set([positive, mode === Mode.Train && !dcfr ? 0 : negative, sum, weight]);
 		let at: number;
 		if (!pool) {
-			at = exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
+			if (apply === 0) exports.setPhase(0, 0);
+			try {
+				at = exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp) >>> 0;
+			} finally {
+				if (apply === 0) exports.setPhase(0, 1);
+			}
 		} else {
-			const plan = pool.plan;
-			// Collect: walk above the split, recording what the workers need.
-			exports.setShard(plan.round, 0, 0);
-			exports.setPhase(1, 0);
-			exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
-			// Every thread walks its slice of the split round.
-			settings!.set([positive, negative, sum, weight, clamp]);
-			Atomics.store(control!, ENGINE_CONTROL.done, 0);
-			Atomics.store(control!, ENGINE_CONTROL.mode, mode);
-			Atomics.store(control!, ENGINE_CONTROL.traverser, traverser);
-			Atomics.store(control!, ENGINE_CONTROL.command, 0);
-			Atomics.add(control!, ENGINE_CONTROL.generation, 1);
-			Atomics.notify(control!, ENGINE_CONTROL.generation);
-			exports.setShard(plan.round, plan.bounds[0], plan.bounds[1]);
-			exports.setPhase(0, 1);
-			const valueView = new Float32Array(memory.buffer, offsets[values], entries * stride);
-			for (let entry = 0; entry < entries; entry++) {
-				const slot = offsets[reach] + entry * 2 * rowBytes;
-				const out = exports.runChance(mode, traverser, plan.entryNodes[entry], slot, slot + rowBytes, positive, negative, sum, weight, clamp);
-				valueView.set(new Float32Array(memory.buffer, out, stride), entry * stride);
+			try {
+				at = runThreaded(mode, traverser, apply, positive, negative, sum, weight, clamp);
+			} catch (error) {
+				// This thread's own part may have thrown with the workers still
+				// walking; no later step may run over them.
+				Atomics.store(control!, ENGINE_CONTROL.failed, 1);
+				throw error;
 			}
-			for (;;) {
-				const done = Atomics.load(control!, ENGINE_CONTROL.done);
-				if (done >= threads - 1 || failure) break;
-				Atomics.wait(control!, ENGINE_CONTROL.done, done, 50);
-			}
-			if (failure) throw failure;
-			const partialView = new Float32Array(memory.buffer, offsets[partials], (threads - 1) * entries * stride);
-			for (let w = 0; w < threads - 1; w++) {
-				for (let i = 0; i < entries * stride; i++) valueView[i] += partialView[w * entries * stride + i];
-			}
-			// Finish above the split from the totals, now applying updates.
-			exports.setShard(plan.round, 0, 0);
-			exports.setPhase(2, 1);
-			at = exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
-			exports.setPhase(0, 1);
-			exports.setShard(-1, 0, 0);
 		}
 		const [, count] = rootList(traverser);
 		const values32 = new Float32Array(memory.buffer, at, count);
@@ -319,9 +524,63 @@ export function createEngine(
 		return result;
 	};
 
+	/** One threaded traversal, returning where the root values are. */
+	const runThreaded = (
+		mode: number, traverser: 0 | 1, apply: number,
+		positive: number, negative: number, sum: number, weight: number, clamp: number,
+	): number => {
+		const plan = pool!.plan;
+		// Collect: walk above the split, recording what the workers need.
+		exports.setShard(plan.round, 0, 0);
+		exports.setPhase(1, 0);
+		exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
+		// Every thread walks its slice of the split round.
+		settings!.set([positive, negative, sum, weight, clamp, apply, iteration, dcfrRule]);
+		Atomics.store(control!, ENGINE_CONTROL.done, 0);
+		Atomics.store(control!, ENGINE_CONTROL.mode, mode);
+		Atomics.store(control!, ENGINE_CONTROL.traverser, traverser);
+		Atomics.store(control!, ENGINE_CONTROL.command, 0);
+		Atomics.add(control!, ENGINE_CONTROL.generation, 1);
+		Atomics.notify(control!, ENGINE_CONTROL.generation);
+		const dispatched = performance.now();
+		exports.setShard(plan.round, plan.bounds[0], plan.bounds[1]);
+		exports.setPhase(0, apply);
+		const valueView = new Float32Array(memory.buffer, offsets[values], entries * stride);
+		for (let entry = 0; entry < entries; entry++) {
+			const slot = offsets[reach] + entry * 2 * rowBytes;
+			const out = exports.runChance(mode, traverser, plan.entryNodes[entry], slot, slot + rowBytes, positive, negative, sum, weight, clamp) >>> 0;
+			valueView.set(new Float32Array(memory.buffer, out, stride), entry * stride);
+		}
+		// A thread whose walk throws says so in `failed` and counts itself
+		// done, as its error event cannot reach this thread while it waits.
+		// One killed without unwinding does neither, hence the backstop.
+		failure ??= awaitThreads(
+			control!, ENGINE_CONTROL.done, threads - 1, dispatched, pool!.backstopFloorMs, () => failure !== null,
+		);
+		const dead = failed();
+		if (dead) throw dead;
+		const partialView = new Float32Array(memory.buffer, offsets[partials], (threads - 1) * entries * stride);
+		for (let w = 0; w < threads - 1; w++) {
+			for (let i = 0; i < entries * stride; i++) valueView[i] += partialView[w * entries * stride + i];
+		}
+		// Finish above the split from the totals, now applying updates
+		// unless this is a current-profile read.
+		exports.setShard(plan.round, 0, 0);
+		exports.setPhase(2, apply);
+		const at = exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp) >>> 0;
+		exports.setPhase(0, 1);
+		exports.setShard(-1, 0, 0);
+		return at;
+	};
+
 	return {
 		regret,
 		strategySum,
+		regretScale: stored ? scaleView(stored.regretScale) : null,
+		sumScale: stored ? scaleView(stored.sumScale) : null,
+		compact: compactViews,
+		sampling: samplingViews,
+		discounted,
 		threads,
 		root(dcfr) {
 			return (mode, traverser, iterWeight) => run(mode, traverser, iterWeight, dcfr);
@@ -336,13 +595,24 @@ export function createEngine(
 	};
 }
 
-/** The engine's exports. */
+/**
+ * The engine's exports. A pointer one returns is a wasm32 `usize`, which
+ * JavaScript receives as a signed 32-bit integer: read it with `>>> 0`, or
+ * any address past 2 GiB comes back negative (#62).
+ */
 export interface EngineExports {
 	init(header: number): void;
 	setMaxActions(count: number): void;
 	setShard(round: number, start: number, end: number): void;
 	setExchange(entries: number, reach: number, values: number, stride: number): void;
 	setPhase(phase: number, apply: number): void;
+	setSampling(
+		rounds: number, p: number, every: number, unbiased: number, catchUp: number,
+		baseOffsets: number, boardOffsets: number, walkOffsets: number,
+		baselines: number, lastWalks: number, lastUpdates: number, blockOffsets: number,
+	): void;
+	setIteration(t: number, dcfr: number): void;
+	setShared(marks: number, blockOffsets: number, weighted: number): void;
 	run(mode: number, traverser: number, me: number, opp: number, positive: number, negative: number, sum: number, weight: number, clamp: number): number;
 	runChance(mode: number, traverser: number, node: number, me: number, opp: number, positive: number, negative: number, sum: number, weight: number, clamp: number): number;
 }

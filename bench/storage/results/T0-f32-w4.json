@@ -1,0 +1,43 @@
+{
+ "spot": "T0",
+ "variant": "f32",
+ "workers": 4,
+ "engine": "js",
+ "storageMiB": 5232.6,
+ "estimateMiB": 5250.4,
+ "peakRssMiB": 5706,
+ "setupSeconds": 1,
+ "rows": [
+  {
+   "iterations": 80,
+   "trainSeconds": 614.7,
+   "exploitability": 4.8246,
+   "positiveShare": 0.5826
+  },
+  {
+   "iterations": 160,
+   "trainSeconds": 1151.6,
+   "exploitability": 1.5315,
+   "positiveShare": 0.5714
+  },
+  {
+   "iterations": 320,
+   "trainSeconds": 2331.3,
+   "exploitability": 0.6913,
+   "positiveShare": 0.5736
+  },
+  {
+   "iterations": 480,
+   "trainSeconds": 3354.2,
+   "exploitability": 0.2941,
+   "positiveShare": 0.5569
+  },
+  {
+   "iterations": 640,
+   "trainSeconds": 4373.1,
+   "exploitability": 0.1704,
+   "positiveShare": 0.565
+  }
+ ],
+ "sizeChoice": null
+}
