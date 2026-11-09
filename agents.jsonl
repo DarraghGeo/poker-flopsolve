@@ -38,3 +38,4 @@
 {"url":null,"title":"Multithreaded chanceSampling (it ignores workers today)","issue":99,"state":"active","updated":"2026-11-09T03:29:23.783Z"}
 {"url":null,"title":"Recover turn re-solve quality from a shared blueprint (2-3% vs 0.5-0.7% of subgame pot)","issue":101,"state":"active","updated":"2026-11-09T03:29:31.574Z"}
 {"url":null,"title":"Scorer and combination test matrix against the napkinpoker references","issue":103,"state":"active","updated":"2026-11-09T03:29:35.429Z"}
+{"url":null,"title":"Whole three-size tree in 1-2 GiB: diagnose the thinSizes + shareHistories stall, then find the best combination","issue":102,"state":"active","updated":"2026-11-09T03:29:38.655Z"}
