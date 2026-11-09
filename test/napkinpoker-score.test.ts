@@ -6,7 +6,8 @@
 import { describe, expect, it } from 'vitest';
 import { napkinNodes } from '../bench/reference/napkinpoker.ts';
 import type { NapkinNode } from '../bench/reference/napkinpoker.ts';
-import { lineReach, MIN_REACH, pairSubset, scoreNode, storedNodes } from '../bench/reference/score.ts';
+import { COMBO_CARDS, COMBOS, parseCards } from '../src/cards.ts';
+import { lineReach, MIN_REACH, offCards, pairSubset, scoreNode, storedNodes } from '../bench/reference/score.ts';
 
 /** Two hands, two actions, pot 10: hand 0 prefers action 0 by 1 chip, hand 1 action 1 by 2. */
 const node: NapkinNode = {
@@ -35,6 +36,21 @@ describe('napkinpoker scorer', () => {
 		const worst = scoreNode(node, 'flop', (a, combo) => (combo === 5 ? a : 1 - a));
 		expect(worst.loss).toBeCloseTo(17.5, 12);
 		expect(worst.strategyDiff).toBeCloseTo((0.5 + 3) / 4, 12);
+	});
+
+	it('plays a hand it holds no strategy for uniformly over the actions its tree has', () => {
+		// Our tree lacks action 1: such a hand checks, losing hand 1's 2 chips (weight 3 of 4).
+		const scored = scoreNode(node, 'flop', () => 0, (a) => a === 0);
+		expect(scored.loss).toBeCloseTo(15, 12);
+	});
+
+	it('drops hands a later card blocks from a reach', () => {
+		const reach = new Float64Array(COMBOS).fill(1);
+		const [turn] = parseCards('2s');
+		const off = offCards(reach, [turn]);
+		for (let h = 0; h < COMBOS; h++) {
+			expect(off[h]).toBe(COMBO_CARDS[h * 2] === turn || COMBO_CARDS[h * 2 + 1] === turn ? 0 : 1);
+		}
 	});
 
 	it('pairs a subset of the stored actions, but not an action the stored solver lacks', () => {

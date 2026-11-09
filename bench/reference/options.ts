@@ -16,12 +16,11 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { parseCards } from '../../src/cards.ts';
 import { createRun, defineSpot, resolveSubgame } from '../../src/index.ts';
 import type { Solution, SolveOptions, SpotConfig } from '../../src/index.ts';
 import { wasmStorage } from '../../src/wasm-storage.ts';
-import { napkinSpots, nodeAt } from './napkinpoker.ts';
-import { scoreSolution, scoreSubgame, storedNodes } from './score.ts';
+import { napkinSpots } from './napkinpoker.ts';
+import { locate, scoreSolution, scoreSubgame, storedNodes, summarise } from './score.ts';
 import type { NodeScore } from './score.ts';
 
 interface Variant {
@@ -71,7 +70,6 @@ function blueprintOf(config: SpotConfig): SpotConfig {
 	};
 }
 
-const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : Number.NaN);
 const brief = (n: NodeScore | null): { loss: number; ref: number } | null => n && { loss: n.loss, ref: n.refLoss };
 
 function main(): void {
@@ -130,32 +128,25 @@ function resolveTurns(blueprint: Solution, id: string, full: SpotConfig): { summ
 		maxRaises: (full.maxRaises as number[]).slice(1),
 		allowAllIn: (full.allowAllIn as boolean[]).slice(1),
 	};
+	let skipped = 0;
 	for (const stored of storedNodes(id, 'turn')) {
-		let match: ReturnType<typeof nodeAt>;
-		try {
-			match = nodeAt(blueprint.spot, stored.path);
-		} catch {
+		const at = locate(blueprint, stored);
+		if (!at) {
+			skipped++;
 			continue;
 		}
-		const cards = [...blueprint.spot.board, ...match.dealt.flatMap((c) => parseCards(c))];
-		const board = blueprint.spot.resolveBoard(cards, match.node).board;
-		const sub = resolveSubgame(blueprint, match.node, board, {
+		const sub = resolveSubgame(blueprint, at.node, at.board, {
 			player: stored.actor,
 			betting,
 			iterations: 200,
 			solve: { workers: 4 },
 		});
-		const scored = scoreSubgame(sub.solution, stored);
+		const scored = scoreSubgame(sub.solution, stored, at.relabel);
 		if (scored) nodes.push(scored);
+		else skipped++;
 	}
 	return {
-		summary: {
-			nodes: nodes.length,
-			loss: mean(nodes.map((n) => n.loss)),
-			refLoss: mean(nodes.map((n) => n.refLoss)),
-			handDiff: mean(nodes.map((n) => n.handDiff)),
-			seconds: (performance.now() - start) / 1000,
-		},
+		summary: { ...summarise(nodes), skipped, seconds: (performance.now() - start) / 1000 },
 		nodes,
 	};
 }

@@ -825,8 +825,9 @@ the later streets only.
 stored flop node, and the first turn decision after each stored turn card, it values our
 strategy at the stored per-action EVs. Those are exact action against action. The EV our
 play gives up against each hand's best stored action is the regret we leave in that game.
-It is reach-weighted by the stored range, in % of the node's pot. Only nodes both players
-reach at least 3% of the time are scored. The stored strategy's own loss at the same
+It is reach-weighted by the stored range, in % of the node's pot. A flop node is scored
+when the opponent reaches it at least 3% of the time. A turn node is scored when both
+players play its flop line at least 3% of the time. The stored strategy's own loss at the same
 nodes is the floor these numbers can resolve: about 0.03% of pot on the flop and turn,
 0.06% at the root.
 
@@ -859,13 +860,13 @@ spots. Root is OOP at the flop root / IP after a check.
 | `compactStorage` (with `wasmStorage`) | 0.37× | 1.37× | 0.063 / 0.080 | 0.045 | 0.039 | 0.63% |
 | `shareHistories` | 0.40× | 1.00× | 0.061 / 0.068 | 0.034 | 0.041 | 1.89% |
 | `shareHistories` + `compactStorage` | 0.15× | 1.40× | 0.067 / 0.083 | 0.041 | 0.047 | 2.08% |
-| `thinSizes` | 0.74× | 0.66× | 0.067 / 0.294 | 0.084 | 0.048 | 0.22% in its own tree |
+| `thinSizes` (15 of 61 nodes cut) | 0.74× | 0.66× | 0.067 / 0.294 | 0.084 | 0.048 | 0.22% in its own tree |
 | `thinSizes` + `shareHistories` | 0.35× | 0.72× | 0.071 / 0.288 | 0.084 | 0.049 | 2.07% in its own tree |
 | `lineRunouts: { aggressions: 2 }` | 0.73× | 1.65× | 0.097 / 0.072 | 0.251 | 0.234 | 5.94% |
 | `chanceSampling`, one thread | 1.00× | 0.54× | 0.171 / 0.172 | 0.130 | 0.397 | 8.64% |
 | the same, twice the iterations | 1.00× | 1.04× | 0.086 / 0.082 | 0.052 | 0.093 | 2.23% |
 | `shareHistories` + `chanceSampling` | 0.40× | 0.67× | 0.128 / 0.122 | 0.091 | 0.273 | 8.30% |
-| blueprint + `resolveSubgame` | 0.59× | 0.56× | 0.062 / 0.073 | 0.057 | 0.107; re-solved 0.053 | — |
+| blueprint + `resolveSubgame` | 0.59× | 0.68× with the re-solves | 0.062 / 0.073 | 0.057 | 0.107; re-solved 0.053 | — |
 | `runoutBuckets: 3`, `coarseStart`, and their pairs | as without them | | | | | |
 
 - **Storage options cost almost nothing at the root.** i16 stays within the noise. Compact
@@ -873,7 +874,8 @@ spots. Root is OOP at the flop root / IP after a check.
   plateau (1.9%) lies mostly in lines the stored nodes do not reach.
 - **`thinSizes`' cost is IP's bet after a check.** Away from the root it keeps one size. On
   these spots IP's 33% bet after a check is its main play, so the IP root loses 0.29%
-  of pot.
+  of pot. Its flop and turn means cover only the nodes its tree still holds. The 15 lines
+  it cut are left out, so those means understate its cost.
 - **`lineRunouts` costs on the flop.** Its coarse runouts on two-aggression lines move flop
   play by 0.25% of pot.
 - **`chanceSampling` runs on one thread, and four exact threads beat it here.** At equal

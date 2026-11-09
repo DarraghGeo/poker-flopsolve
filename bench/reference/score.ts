@@ -19,7 +19,7 @@
  * values are noisy below that.
  */
 
-import { COMBOS, parseCards } from '../../src/cards.ts';
+import { COMBO_CARDS, COMBOS, parseCards } from '../../src/cards.ts';
 import type { Solution } from '../../src/index.ts';
 import { openMass } from '../../src/resolve.ts';
 import type { NapkinNode } from './napkinpoker.ts';
@@ -83,8 +83,9 @@ type Mix = (action: number, combo: number) => number;
  * Score one stored node given how we play it.
  *
  * @param mix our probability of stored action `a` (by the stored order) for a real combination
+ * @param has whether our tree offers stored action `a`; unset, every one
  */
-export function scoreNode(stored: NapkinNode, street: 'flop' | 'turn', mix: Mix): NodeScore {
+export function scoreNode(stored: NapkinNode, street: 'flop' | 'turn', mix: Mix, has: (action: number) => boolean = () => true): NodeScore {
 	const actions = stored.actions.length;
 	let mass = 0;
 	let loss = 0;
@@ -111,8 +112,11 @@ export function scoreNode(stored: NapkinNode, street: 'flop' | 'turn', mix: Mix)
 		let diff = 0;
 		let sum = 0;
 		for (let a = 0; a < actions; a++) sum += mix(a, combo);
+		// A hand we hold no strategy for plays uniformly over the actions we have.
+		let held = 0;
+		for (let a = 0; a < actions; a++) if (has(a)) held++;
 		for (let a = 0; a < actions; a++) {
-			const p = sum > 0 ? mix(a, combo) / sum : 1 / actions;
+			const p = sum > 0 ? mix(a, combo) / sum : has(a) ? 1 / held : 0;
 			ours += p * stored.ev[a][i];
 			theirs += stored.strategy[a][i] * stored.ev[a][i];
 			diff += Math.abs(p - stored.strategy[a][i]);
@@ -141,7 +145,7 @@ export function scoreNode(stored: NapkinNode, street: 'flop' | 'turn', mix: Mix)
 }
 
 /** Where a stored node sits in a solution: its node, stored board and hand relabelling. */
-interface Located {
+export interface Located {
 	readonly node: number;
 	readonly board: number;
 	/** Real combination → the combination it plays as on the stored board. */
@@ -168,7 +172,7 @@ export function pairSubset(labels: readonly string[], stored: readonly string[])
  * lacks: a thinned or simplified tree. With `strict`, both throw instead, and
  * the menus must match one to one.
  */
-function locate(sol: Solution, stored: NapkinNode, prefix = 0, strict = false): Located | null {
+export function locate(sol: Solution, stored: NapkinNode, prefix = 0, strict = false): Located | null {
 	let match: ReturnType<typeof nodeAt>;
 	try {
 		match = nodeAt(sol.spot, stored.path.slice(prefix));
@@ -200,7 +204,7 @@ function mixOf(sol: Solution, at: Located): Mix {
 	};
 }
 
-function summarise(nodes: readonly NodeScore[]): Summary {
+export function summarise(nodes: readonly NodeScore[]): Summary {
 	const mean = (f: (n: NodeScore) => number): number =>
 		nodes.length ? nodes.reduce((s, n) => s + f(n), 0) / nodes.length : Number.NaN;
 	return { nodes: nodes.length, loss: mean((n) => n.loss), refLoss: mean((n) => n.refLoss), handDiff: mean((n) => n.handDiff) };
@@ -212,8 +216,14 @@ function summarise(nodes: readonly NodeScore[]): Summary {
  * a flop decision on the line was not stored, which the export does only
  * for lines a player rarely takes.
  */
+const flopBySpot = new Map<string, Map<string, NapkinNode>>();
+
 export function lineReach(stored: NapkinNode): [number, number] | null {
-	const flop = new Map(napkinNodes('flop').filter((n) => n.spot === stored.spot).map((n) => [n.path.join(','), n]));
+	let flop = flopBySpot.get(stored.spot);
+	if (!flop) {
+		flop = new Map(napkinNodes('flop').filter((n) => n.spot === stored.spot).map((n) => [n.path.join(','), n]));
+		flopBySpot.set(stored.spot, flop);
+	}
 	const reach: [number, number] = [1, 1];
 	const steps = stored.path.slice(0, stored.path.findIndex((s) => s.startsWith('d')));
 	for (let i = 0; i < steps.length; i++) {
@@ -259,7 +269,7 @@ export function scoreSolution(sol: Solution, spot: string, streets: readonly ('f
 	for (const street of streets) {
 		for (const stored of storedNodes(spot, street)) {
 			const at = locate(sol, stored);
-			if (at) nodes.push(scoreNode(stored, street, mixOf(sol, at)));
+			if (at) nodes.push(scoreNode(stored, street, mixOf(sol, at), (a) => at.pairing[a] >= 0));
 			else missing.push(`${stored.id} ${stored.path.join(',')}`);
 		}
 	}
@@ -277,10 +287,17 @@ export function scoreSolution(sol: Solution, spot: string, streets: readonly ('f
 /**
  * Score a re-solved turn (`resolveSubgame(...).solution`) at the stored turn
  * node it starts at: its root is that node, on the flop plus the turn card.
+ *
+ * @param relabel real combination → combination on the subgame's board, as
+ *   the blueprint's `resolveBoard` gave it for that turn (`Located.relabel`)
  */
-export function scoreSubgame(sub: Solution, stored: NapkinNode): NodeScore | null {
-	const at = locate(sub, stored, stored.path.length);
-	return at && scoreNode(stored, 'turn', mixOf(sub, at));
+export function scoreSubgame(sub: Solution, stored: NapkinNode, relabel?: Uint16Array): NodeScore | null {
+	const own = locate(sub, stored, stored.path.length);
+	if (!own) return null;
+	// The subgame is dealt on the blueprint's stored board, which with
+	// buckets or mirrored runouts can differ from the real one.
+	const at = relabel ? { ...own, relabel: Uint16Array.from(relabel, (c) => own.relabel[c]) } : own;
+	return scoreNode(stored, 'turn', mixOf(sub, at), (a) => at.pairing[a] >= 0);
 }
 
 /** One node's regrets, ours against the stored solver's. */
@@ -325,9 +342,19 @@ export function crossCheck(sol: Solution, spot: string, streets: readonly ('flop
 		for (const stored of storedNodes(spot, street)) {
 			const at = locate(sol, stored, 0, true)!;
 			const actor = tree.player[at.node] as 0 | 1;
-			const me = sol.reachAt(at.node, at.board, actor);
-			const opp = sol.reachAt(at.node, at.board, (1 - actor) as 0 | 1);
-			const evs = stored.actions.map((_, a) => nodeEvs(sol, tree.edgeChild[tree.firstEdge[at.node] + at.pairing[a]], at.board, actor, me, opp));
+			// reachAt keeps hands a later card blocks; they cannot be dealt here.
+			const round = tree.round[at.node];
+			const width = sol.spot.runouts.width[round];
+			const cards = sol.spot.runouts.cards[round].subarray(at.board * width, at.board * width + width);
+			const me = offCards(sol.reachAt(at.node, at.board, actor), cards);
+			const opp = offCards(sol.reachAt(at.node, at.board, (1 - actor) as 0 | 1), cards);
+			const open = openMass(opp);
+			const live: number[] = [];
+			for (let h = 0; h < COMBOS; h++) if (me[h] > 0 || opp[h] > 0) live.push(h);
+			const liveList = Uint16Array.from(live);
+			const evs = stored.actions.map((_, a) =>
+				nodeEvs(sol, tree.edgeChild[tree.firstEdge[at.node] + at.pairing[a]], at.board, actor, me, opp, open, liveList),
+			);
 			const mix = mixOf(sol, at);
 			const pct = 100 / stored.pot;
 			let mass = 0;
@@ -396,16 +423,30 @@ export function crossCheck(sol: Solution, spot: string, streets: readonly ('flop
 /**
  * Our EV in chips per combination of `player` from `node` on stored board
  * `board`, conditional on reaching it: values under the average strategy over
- * the opponent's unblocked reach, per runout. NaN where undefined.
+ * the opponent's unblocked reach (`open`), per runout. NaN where undefined.
  */
-function nodeEvs(sol: Solution, node: number, board: number, player: 0 | 1, reachMe: Float64Array, reachOpp: Float64Array): Float64Array {
-	const live: number[] = [];
-	for (let h = 0; h < COMBOS; h++) if (reachMe[h] > 0 || reachOpp[h] > 0) live.push(h);
-	const liveList = Uint16Array.from(live);
-	const values = sol.solver.valuesAt(node, board, player, reachMe, reachOpp, liveList, liveList.length);
-	const open = openMass(reachOpp);
+function nodeEvs(
+	sol: Solution,
+	node: number,
+	board: number,
+	player: 0 | 1,
+	reachMe: Float64Array,
+	reachOpp: Float64Array,
+	open: Float64Array,
+	live: Uint16Array,
+): Float64Array {
+	const values = sol.solver.valuesAt(node, board, player, reachMe, reachOpp, live, live.length);
 	const deals = sol.solver.ctx.runoutWeight[sol.spot.tree.round[node]];
 	const out = new Float64Array(COMBOS).fill(Number.NaN);
 	for (let h = 0; h < COMBOS; h++) if (reachMe[h] > 0 && open[h] > 0) out[h] = values[h] / (open[h] * deals);
+	return out;
+}
+
+/** `reach` with every combination holding one of `cards` zeroed. */
+export function offCards(reach: Float64Array, cards: ArrayLike<number>): Float64Array {
+	const out = reach.slice();
+	const used = new Uint8Array(52);
+	for (let i = 0; i < cards.length; i++) used[cards[i]] = 1;
+	for (let h = 0; h < COMBOS; h++) if (used[COMBO_CARDS[h * 2]] || used[COMBO_CARDS[h * 2 + 1]]) out[h] = 0;
 	return out;
 }
