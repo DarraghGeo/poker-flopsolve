@@ -1382,6 +1382,35 @@ export interface Approximations {
 	 *   is choice-free, and those call frequencies are mixed bluff-catching
 	 *   choices that a best response recomputed each iteration does not
 	 *   converge to.
+	 *
+	 * Lite mode (issue #100) measured these speed trims of its blueprint and
+	 * left them off or out. Rainbow As Kh 7d, issue #47's betting, in Node,
+	 * against the unshared blueprint, `settle` at its defaults; `bench/lite/out/`
+	 * has the logs:
+	 *
+	 * - A wider `runoutBuckets` gap than 3 (6, 13): the same 1396 runouts on
+	 *   the bench ranges, whose suited connectors keep low cards apart.
+	 * - `allInThreshold: 0.67`: the same tree; at SPR 18 no bet commits two
+	 *   thirds of a stack.
+	 * - Sampling `p` 0.2: 92 ms an iteration against 0.35's 251, but the root
+	 *   play wandered, and the settle rule fired with it losing 0.043% of pot
+	 *   and per-hand EVs 1.5% off. p 0.5, 0.7 and 0.9 gave closer per-hand
+	 *   EVs (0.42-0.44% of pot against 0.44-0.50) for 1.8, 3.5 and 5.4 times
+	 *   the time an iteration, and no earlier settled root play per second.
+	 * - `noDonk` on the turn and river, and a flop capped at two aggressions:
+	 *   together 44% cheaper an iteration on rainbow, settled in 63 s instead
+	 *   of 100 with the root play still within 0.01% of pot. But they change
+	 *   the game. On Ts 9s 4h turn re-solves at the full betting gave the
+	 *   opponent 16% of the subgame pot instead of 4% (14% from the trimmed
+	 *   tree unshared and converged), and per-hand EVs were three times as far
+	 *   off. Each alone cost less but still too much: `noDonk` 6.7 / 12.9%
+	 *   (OOP / IP refined), the cap 7.6 / 3.8%, for 6-18% less time to settle.
+	 *   Both stay as `LiteOptions` for callers who want the speed.
+	 * - Warm-starting turn re-solves from the blueprint's regrets below the
+	 *   node (`copySubtree` before the first iteration): the opponent's gain
+	 *   moved by under 0.15% of the subgame pot at 100 and 300 iterations
+	 *   with DCFR's count restarted, and doubled with the blueprint's count
+	 *   kept. One turn/river size says little about the full betting's.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
