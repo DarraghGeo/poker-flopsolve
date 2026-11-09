@@ -597,6 +597,33 @@ that is 1.5 times less storage at `w = 0.1` and 2 times at `w = 4`, but much los
 one-size tree was left 20% of pot exploitable at `w = 4`. A shared spot can warm-start
 only from another shared solve.
 
+**Keeping the busiest lines unshared.** A turn re-solved from a shared blueprint
+(`resolveSubgame`) inherits only the ranges the blueprint brings to it, and sharing
+distorts them. The flop play is stored unshared, but it learns from shared river values.
+`shareHistories: { keepLines }` gives the named lines (as `Solution.path` names their
+first turn decision, e.g. `"check check /"`) storage of their own. `linesWithin` picks the
+most-reached lines that a storage budget allows. Rank them on a cheap copy of the spot,
+with its river checked down, then solve the hybrid from cold:
+
+```ts
+import { createRun, defineSpot, linesWithin } from 'poker-flopsolve';
+import { wasmStorage } from 'poker-flopsolve/wasm-storage';
+
+const blueprint = { ...config, shareHistories: true };
+const pick = createRun(defineSpot({ ...blueprint, betSizes: [flopSizes, turnSizes, []] }), { workers: 4 });
+pick.step(80);
+const keepLines = linesWithin(pick.snapshot(), 150 * 2 ** 20, { config: blueprint, precision: 'i16' });
+pick.close();
+const run = createRun(defineSpot({ ...blueprint, shareHistories: { keepLines } }), { workers: 4, precision: 'i16', wasmStorage });
+```
+
+On issue #47's blueprint (one turn and river size, `runoutBuckets: 3`), turns re-solved
+from plain sharing gave a best response 3.0–4.2% of the subgame pot, against 0.4–0.7% from
+the unshared blueprint. With the budget, the gap was 0.1–0.8%. On As Kh 7d, the 150 MiB
+budget at 16 bits kept 3 lines and peaked at 392 MiB in Chromium on 4 threads, with a
+re-solve gain of 1.47 / 0.92% against 0.67 / 0.50% unshared. Figures are in
+`bench/blueprint-share/README.md`.
+
 ### Thinning bet sizes (approximate, for memory)
 
 `thinSizes: true` keeps the configured sizes only where they earn their memory. The root

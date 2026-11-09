@@ -132,3 +132,95 @@ settle point the root play costs 0.019 / 0.013% (rainbow), 0.118 / 0.076
 (two-tone) and 0.059 / 0.035 (monotone): within a few hundredths of the
 floor. Exploitability is the shared blueprint's plateau (2.9–4.8%), as #85
 found; it is reported, not gated on.
+
+## Recovering turn re-solves (issue #101)
+
+`recover.ts <board> <name> '<json>'` solves a blueprint variant and scores
+it against the unshared reference above (`measure.ts <board> none` with
+`BLUEPRINT_TARGET=0.05`, rebuilt here; it reproduces #85's figures to the
+last digit). It reports what `measure.ts` does, plus the distance of each
+player's turn range from the reference's, and re-solves with one player's
+range swapped for the reference's. `refine.ts` is the refinement it tries.
+`browser.ts` takes `KEEP_TOP`/`KEEP_MIB`, `PICK_PROXY` and `PRECISION=i16`
+for the hybrid. Logs and JSON are in `out/recover-*` and
+`out/browser-*-{budget,proxy,i16}*`.
+
+Re-solve gain below is the opponent's best response against an unsafe turn
+re-solve at T's betting (300 iterations), under the reference's ranges, %
+of the subgame pot, weighted by line reach, refining OOP / IP. "Over" is
+that minus the unshared blueprint's own re-solves. These scores measure what
+sharing costs against the unshared blueprint, not distance to the full
+three-size game.
+
+**Diagnosis.** `resolveSubgame` at new betting already starts cold:
+`subgameAt` hands over only the ranges. The whole gap is the refined
+player's own range at the turn. On rainbow at 400 iterations, re-solving
+with the reference's OOP range gives 0.67 against 3.05 for OOP, and with
+the reference's IP range 0.54 against 2.15 for IP. The ranges reach the
+lines about as often as they should (mass 0.95–1.0); their composition is
+off by 0.06–0.09 in total variation.
+
+**What was tried, rainbow, 400 iterations, f32, Node on 4 threads:**
+
+| variant | storage | re-solve gain | over | root EV error, mean | root play loss |
+|---|---|---|---|---|---|
+| unshared | 707 MiB | 0.67 / 0.50 | | | 0.009 / 0.008 |
+| shared | 173 | 3.05 / 2.15 | +2.38 / +1.65 | 0.56 / 0.46 | 0.014 / 0.014 |
+| shared, 800 it | 173 | 2.48 / 2.36 | +1.81 / +1.86 | 0.45 / 0.29 | 0.009 / 0.011 |
+| `weighting: 'counterfactual'` | 173 | 7.25 / 6.48 | +6.6 / +6.0 | 3.10 / 1.58 | 0.029 / 0.037 |
+| `chanceSampling` p 0.5 | 173 | 2.52 / 2.26 | +1.86 / +1.76 | 0.51 / 0.47 | 0.014 / 0.013 |
+| `chanceSampling` p 0.7 | 173 | 2.78 / 1.99 | +2.12 / +1.49 | 0.48 / 0.42 | 0.013 / 0.013 |
+| `chanceSampling` p 0.9 | 173 | 3.43 / 2.30 | +2.77 / +1.80 | 0.47 / 0.55 | 0.016 / 0.011 |
+| 8-bit `compactStorage` | 173 (f32 count) | 2.38 / 1.89 | +1.72 / +1.39 | 0.56 / 0.48 | 0.016 / 0.011 |
+| refine the opened line 60 it | 201–215 | 2.51 / 1.89 | +1.84 / +1.39 | | 0.013 / 0.013 |
+| keep top 1 | 201 | 2.48 / 1.58 | +1.81 / +1.08 | 0.45 / 0.53 | 0.024 / 0.011 |
+| keep top 3 | 285 | 1.10 / 0.83 | +0.43 / +0.34 | 0.24 / 0.21 | 0.013 / 0.009 |
+| keep top 3, warm from the pick | 285 | 1.66 / 0.89 | +0.99 / +0.39 | 0.30 / 0.25 | 0.012 / 0.009 |
+| keep top 6 | 383 | 1.16 / 0.65 | +0.49 / +0.15 | 0.23 / 0.27 | 0.014 / 0.009 |
+| keep 150 MiB, i16 (3 lines) | 150 (i16) | 1.47 / 0.92 | +0.80 / +0.42 | 0.32 / 0.29 | 0.015 / 0.010 |
+| keep 200 MiB, i16 (6 lines) | 199 (i16) | 1.53 / 0.91 | +0.86 / +0.41 | 0.65 / 0.46 | 0.019 / 0.019 |
+
+Noise (sampled or 8-bit, 4 threads) leaves the ranges 0.08–0.09 from the
+reference's in total variation, as plain sharing does, so it does not
+recover the re-solves. Lines were ranked by `turnLineReach` after 80 shared iterations; with
+`pickProxy`, after 80 iterations of the blueprint with its river checked
+down (57 MiB, 20 s), which picks the same three lines on rainbow.
+
+**Two-tone and monotone, 400 iterations** (references at 0.049% and
+0.043%; the unshared root play's own loss there is 0.116 / 0.052 and
+0.047 / 0.025):
+
+| board | variant | storage | re-solve gain | over | root EV error, mean |
+|---|---|---|---|---|---|
+| Ts 9s 4h | unshared | 501 MiB | 0.48 / 0.55 | | |
+| | shared | 122 | 4.10 / 3.69 | +3.62 / +3.14 | 0.45 / 0.29 |
+| | keep top 3 | 192 | 1.82 / 1.96 | +1.34 / +1.41 | 0.49 / 0.24 |
+| | keep 300 MiB (6 lines) | 282 | 0.61 / 0.72 | +0.13 / +0.17 | 0.08 / 0.06 |
+| | keep 300 MiB, proxy pick (6) | 272 | 0.91 / 0.79 | +0.43 / +0.25 | 0.18 / 0.16 |
+| | keep 150 MiB at i16, proxy pick (6) | 141 (i16) | 0.88 / 0.85 | +0.40 / +0.30 | 0.25 / 0.15 |
+| Ks 9s 4s | unshared | 187 MiB | 0.44 / 0.47 | | |
+| | shared | 47 | 4.23 / 2.72 | +3.79 / +2.25 | 0.46 / 0.87 |
+| | keep top 3 | 76 | 1.16 / 0.60 | +0.72 / +0.14 | 0.16 / 0.27 |
+| | keep top 6 | 102 | 0.67 / 0.54 | +0.23 / +0.07 | 0.08 / 0.09 |
+| | keep 300 MiB (all 19 lines) | 187 | 0.52 / 0.49 | +0.08 / +0.02 | 0.06 / 0.11 |
+
+A fixed number of lines is not enough on two-tone, where the top 3 hold
+less of the play; a storage budget fits all three textures.
+
+**Chromium** (`browser.ts`, 4 threads, 400 iterations, solving time only,
+the pick included; peak is the renderer's RSS):
+
+| variant | storage | peak | ms/it | root loss settled (±0.01%) |
+|---|---|---|---|---|
+| rainbow shared (`browser-rainbow-river-4-rerun.log`) | 173 MiB | 326 MiB | 495 | 136 s |
+| rainbow, 300 MiB budget, pick on the blueprint | 285 | 634 MiB | 576 | 155 s |
+| rainbow, 300 MiB budget, proxy pick | 285 | 555 MiB | 528 | 138 s |
+| rainbow, 150 MiB budget at i16, proxy pick | 150 (i16) | **392 MiB** | 592 | 127 s |
+| rainbow, 200 MiB budget at i16, proxy pick | 199 (i16) | 411 MiB | 639 | 199 s |
+| two-tone, 300 MiB budget, pick on the blueprint | 282 | 563 MiB | 441 | 119 s |
+| two-tone, 300 MiB budget, proxy pick | 272 | 506 MiB | 401 | 53 s |
+| rainbow, 300 MiB budget, 1 thread | 285 | 648 MiB | 1796 | 596 s |
+
+The picking solve's WebAssembly memory stays resident until V8 collects it,
+so it adds to the hybrid's peak. Hence the proxy, and, for rainbow, 16-bit
+storage (`precision: 'i16'` with `wasmStorage`).
