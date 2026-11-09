@@ -37,3 +37,4 @@
 {"url":"https://claude.ai/code/session_014RSNFkY5Mv8AdxxkQHPWUC","title":"Shared 16-bit blocks dither their strategy sums with the same random numbers for every history","issue":94,"state":"active","updated":"2026-11-09T02:13:10.786Z"}
 {"url":null,"title":"Multithreaded chanceSampling (it ignores workers today)","issue":99,"state":"active","updated":"2026-11-09T03:29:23.783Z"}
 {"url":null,"title":"Recover turn re-solve quality from a shared blueprint (2-3% vs 0.5-0.7% of subgame pot)","issue":101,"state":"active","updated":"2026-11-09T03:29:31.574Z"}
+{"url":null,"title":"Scorer and combination test matrix against the napkinpoker references","issue":103,"state":"active","updated":"2026-11-09T03:29:35.429Z"}
