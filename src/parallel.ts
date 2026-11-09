@@ -229,6 +229,11 @@ export interface WorkerSetup {
 	readonly compactSum: SharedArrayBuffer[] | null;
 	readonly sumShift: SharedArrayBuffer[] | null;
 	readonly compactScale: SharedArrayBuffer | null;
+	/**
+	 * Chance sampling's baselines, last walks and last updates, else null.
+	 * Each thread reads and writes only its own runouts' entries.
+	 */
+	readonly sampling: readonly [SharedArrayBuffer, SharedArrayBuffer, SharedArrayBuffer] | null;
 	readonly control: SharedArrayBuffer;
 	readonly exchange: SharedArrayBuffer;
 	readonly entryCount: number;
@@ -292,6 +297,13 @@ export function startPool(
 			compactSum: ctx.compactSum?.map((chunk) => chunk.buffer as SharedArrayBuffer) ?? null,
 			sumShift: ctx.sumShift?.map((chunk) => chunk.buffer as SharedArrayBuffer) ?? null,
 			compactScale: (ctx.compactScale?.buffer as SharedArrayBuffer | undefined) ?? null,
+			sampling: ctx.sampling
+				? [
+						ctx.sampling.baseline.buffer as SharedArrayBuffer,
+						ctx.sampling.lastWalk.buffer as SharedArrayBuffer,
+						ctx.sampling.lastUpdate.buffer as SharedArrayBuffer,
+					]
+				: null,
 			control: controlBuffer,
 			exchange: exchangeBuffer,
 			entryCount,

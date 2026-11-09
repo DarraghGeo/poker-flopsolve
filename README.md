@@ -714,8 +714,10 @@ Stopped at 15 s, single-threaded in Chromium, it leaves 0.29% of pot on the firs
 where the exact solve leaves 0.69%, 0.11% for 0.20% on the wide flop and 0.17% for
 0.28% on pairs and broadway; the range-weighted error of per-hand root EVs against an
 exact 0.1% solve falls from 1.0–1.1% of pot to 0.12–0.16% on the first, and to about a
-third on the others. It runs on one thread only, in both engines; the baselines count against
-`maxBytes`. With `p: 1` it is the exact solve, bit for bit. `rounds: [2]` samples
+third on the others. It runs on `workers` threads in both engines (issue #99): each thread
+samples the deals of its own runouts, and whether a deal is walked on an iteration is a hash
+of the deal and the iteration, so every thread count walks the same deals and a fixed count
+is bitwise repeatable. The baselines count against `maxBytes`. With `p: 1` it is the exact solve, bit for bit. `rounds: [2]` samples
 river deals only.
 
 ### Coarse start (approximate start, exact answer)
