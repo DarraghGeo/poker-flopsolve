@@ -28,11 +28,19 @@ export const wasmStorage: WasmStorage = { plain: ENGINE_STORAGE_WASM, shared: EN
 /** Settings for `largeTree`. */
 export interface LargeTreeOptions {
 	/**
-	 * 'i16' (the default): 16-bit storage, the more accurate. 'compact':
-	 * `compactStorage` at its defaults (8 bits, with sums), about two thirds
-	 * of the memory and a little slower, for a tab with less to give.
+	 * 'i16' (the default): 16-bit storage, the more accurate; a
+	 * `compactStorage` in the config is dropped. 'compact': `compactStorage`
+	 * (8 bits with sums, or the config's own settings), about two thirds of
+	 * the memory and a little slower, for a tab with less to give.
 	 */
 	readonly storage?: 'i16' | 'compact';
+	/**
+	 * Solve options of your own (workers, iterations, a target, ...), merged
+	 * over the preset's: `approximations` field by field, so `chanceSampling`
+	 * settings of your own replace the preset's and others join them. The
+	 * engine stays the preset's.
+	 */
+	readonly options?: SolveOptions;
 }
 
 /** What `largeTree` returns: the spot's settings and the solve's. */
@@ -45,15 +53,15 @@ export interface LargeTree {
  * A preset for a tree too big for memory, opt-in (issue #102): the
  * combination of memory levers that measured best on the round's target T.
  *
- *   const { config, options } = largeTree(myConfig);
- *   const run = createRun(defineSpot(config), { ...options, workers: 4 });
+ *   const { config, options } = largeTree({ ...myConfig, maxBytes: 2.5 * 2 ** 30 }, { options: { workers: 4 } });
+ *   const run = createRun(defineSpot(config), options);
  *
  * It returns `config` with `thinSizes` set, and solve options for 16-bit
  * storage on the WebAssembly engine (`precision: 'i16'`, `wasmStorage`) with
- * `chanceSampling` at its defaults. With `storage: 'compact'` it sets
- * `compactStorage` instead of 16 bits (a `compactStorage` already given is
- * kept). Spread your own options over it (workers, iterations, a target);
- * nothing else is changed, and a solve that does not use it is unchanged.
+ * `chanceSampling` at its defaults; `storage: 'compact'` sets
+ * `compactStorage` instead of 16 bits. Nothing else is changed, and a solve
+ * that does not use it is unchanged. `maxBytes` stays the config's: the
+ * browser build's default, 512 MiB, is too little for T, so raise it there.
  *
  * Measured on T (As Kh 7d, pot 55, stack 975, 0.33 / 0.75 / 1.5 pot, a
  * 0.75 raise and all-in, three aggressions, every street: 17.2 GiB at 32
@@ -65,8 +73,10 @@ export interface LargeTree {
  * and 1.87 GiB in Chromium, 0.25 and 0.23 s an iteration. Compact: 168 s,
  * the same root play, 1.48 / 1.42 GiB peak. What `thinSizes` itself costs
  * against the full tree was measured on T₀ against an exact solve: root
- * play 0.04% of pot, per-hand root EVs about 1.5% of pot off on average.
- * See the `Approximations` notes in src/index.ts for the combinations
+ * play 0.04% of pot, per-hand root EVs about 1.5% of pot off on average;
+ * and on seven napkinpoker spots against postflop-solver's EVs, 0.04% of pot
+ * at OOP's root as for an exact solve, but 0.34% against 0.16% for IP's play
+ * after a check, whose 0.33 bet `thinSizes` cuts. See the `Approximations` notes in src/index.ts for the combinations
  * measured and left out.
  */
 export function largeTree(config: SpotConfig, preset: LargeTreeOptions = {}): LargeTree {
@@ -74,8 +84,15 @@ export function largeTree(config: SpotConfig, preset: LargeTreeOptions = {}): La
 	if (storage !== 'i16' && storage !== 'compact') {
 		throw new Error(`largeTree: storage must be 'i16' or 'compact', got ${String(storage)}`);
 	}
-	const sampling: SolveOptions = { approximations: { chanceSampling: {} } };
+	const own = preset.options ?? {};
+	const { compactStorage, ...rest } = config;
+	const options: SolveOptions = {
+		...(storage === 'i16' ? { precision: 'i16' as const } : {}),
+		...own,
+		approximations: { chanceSampling: {}, ...own.approximations },
+		wasmStorage,
+	};
 	return storage === 'i16'
-		? { config: { ...config, thinSizes: true }, options: { precision: 'i16', wasmStorage, ...sampling } }
-		: { config: { ...config, thinSizes: true, compactStorage: config.compactStorage ?? {} }, options: { wasmStorage, ...sampling } };
+		? { config: { ...rest, thinSizes: true }, options }
+		: { config: { ...rest, thinSizes: true, compactStorage: compactStorage ?? {} }, options };
 }

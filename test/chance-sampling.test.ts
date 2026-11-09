@@ -147,6 +147,22 @@ describe('chance sampling', () => {
 				expect(Math.abs(narrow.exploitability - wide.exploitability)).toBeLessThan(0.05 * wide.exploitability + 0.01);
 			});
 		}
+		it('counts 16-bit storage, not 32-bit, beside the baselines', () => {
+			// Room for the 16-bit storage and the baselines, not for 32 bits.
+			const spot = defineSpot(flop);
+			const probe = createRun(spot, { workers: 1, precision: 'i16', ...sampling({ p: 0.5 }) });
+			const baselines = probe.solver.ctx.sampling!.bytes;
+			probe.close();
+			const maxBytes = Math.ceil(spot.estimate.compressedBytes + baselines + 1024);
+			expect(maxBytes).toBeLessThan(spot.estimate.bytes);
+			const tight = defineSpot({ ...flop, maxBytes });
+			for (const options of [{ precision: 'i16' as const }, {}, { precision: 'i16' as const, wasmStorage }]) {
+				const run = createRun(tight, { workers: 1, ...options, ...sampling({ p: 0.5 }) });
+				expect(run.solver.ctx.regretScale).toBeTruthy();
+				run.close();
+			}
+		});
+
 		it('picks the same deals on the JavaScript engine as on the WebAssembly one', () => {
 			const options: SolveOptions = { precision: 'i16', ...sampling({ p: 0.4, rounds: [1, 2] }) };
 			const js = solveWith(flop, 3, { ...options, engine: 'js' });

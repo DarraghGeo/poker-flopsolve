@@ -1694,9 +1694,12 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const active = buildActiveLists(spot.runouts, spot.players, showdown);
 	const hands = buildHandSpace(spot.runouts, spot.players, active);
 	const samplingPlan = samplingOptions ? planSampling(spot.tree, spot.runouts, active, layout, samplingOptions) : undefined;
-	// Measured as the precision choice above measures storage: by the estimate;
-	// with compact storage, which that estimate does not know, by the layout.
-	const storageBytes = compact ? layout.bytes : Math.max(bytes, layout.bytes);
+	// Measured as the precision choice above measures storage: by the estimate
+	// at the precision chosen (16-bit storage by its own); with compact
+	// storage, which that estimate does not know, by the layout.
+	const storageBytes = compact
+		? layout.bytes
+		: Math.max(quantised ? spot.estimate.compressedBytes : bytes, layout.bytes);
 	if (samplingPlan && storageBytes + samplingBytes(samplingPlan) > maxBytes) {
 		throw new Error(
 			`chanceSampling needs ${Math.ceil(samplingBytes(samplingPlan) / 2 ** 20)} MiB of baselines beside ` +

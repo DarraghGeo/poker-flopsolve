@@ -25,9 +25,28 @@ describe('largeTree', () => {
 		const { config, options } = largeTree(flop, { storage: 'compact' });
 		expect(config).toEqual({ ...flop, thinSizes: true, compactStorage: {} });
 		expect(options).toEqual({ wasmStorage, approximations: { chanceSampling: {} } });
+		expect('precision' in options).toBe(false);
 		// A compactStorage of the caller's own is kept.
 		const own = largeTree({ ...flop, compactStorage: { from: 1 } }, { storage: 'compact' });
 		expect(own.config.compactStorage).toEqual({ from: 1 });
+	});
+
+	it('stores at 16 bits in its default mode, whatever compactStorage the config had', () => {
+		const { config } = largeTree({ ...flop, compactStorage: { from: 1 } });
+		expect(config.compactStorage).toBeUndefined();
+		expect('compactStorage' in config).toBe(false);
+	});
+
+	it('merges solve options given to it, approximations included', () => {
+		const { options } = largeTree(flop, { options: { workers: 4, iterations: 50, approximations: { coarseStart: { iterations: 5 } } } });
+		expect(options).toEqual({
+			precision: 'i16', wasmStorage, workers: 4, iterations: 50,
+			approximations: { chanceSampling: {}, coarseStart: { iterations: 5 } },
+		});
+		// Their own chanceSampling settings win; the engine stays the preset's.
+		const own = largeTree(flop, { options: { approximations: { chanceSampling: { p: 0.5 } }, wasmStorage: undefined } });
+		expect(own.options.approximations).toEqual({ chanceSampling: { p: 0.5 } });
+		expect(own.options.wasmStorage).toBe(wasmStorage);
 	});
 
 	it('leaves the config it was given alone', () => {

@@ -112,3 +112,34 @@ exploitability, as #51 saw. It's sharing's own imperfect-recall floor, not a bug
   iterations, with the root strategy moving less at each checkpoint.
 
 The root play barely notices: it loses 0.052% of pot against 0.038% thinned alone.
+
+## napkinpoker spots
+
+`napkin.ts` scores the play at each spot's two stored root decisions against the stored
+postflop-solver EVs (#87): OOP at the root / IP after a check, % of pot, weighted by the
+stored reach.
+
+- **Spots:** six 3-bet pots on rainbow and two-tone flops, plus a small monotone
+  single-raised pot (f85). The single-raised rainbow and two-tone spots are 2.8–7.7 GiB
+  exact, too slow to solve in a 20-minute run.
+- **Iterations:** the exact and `thin+i16` solves ran 300 iterations, the sampled one 1000.
+- **The fixtures' resolution:** they're good to 0.3% of pot. The stored solver's own play
+  loses 0.06–0.09% at the root this way, and up to 0.8% at a rarely reached node (f11).
+
+| spot | stored solver | exact | thin+i16 | thin+i16+sample |
+|---|---|---|---|---|
+| f03 7c6sJc (SB vs BU 3bet) | 0.069 / 0.061 | 0.069 / 0.080 (107 s) | 0.067 / 0.377 (76 s) | 0.067 / 0.373 (44 s) |
+| f11 2h6sJc (SB vs BU 3bet) | 0.073 / 0.781 | 0.016 / 0.614 (176 s) | 0.018 / 1.160 (126 s) | 0.011 / 1.139 (81 s) |
+| f15 AsKc3d (SB vs BU 3bet) | 0.062 / 0.109 | 0.038 / 0.090 (152 s) | 0.053 / 0.239 (120 s) | 0.040 / 0.237 (64 s) |
+| f19 Kh8cQh (SB vs BU 3bet) | 0.069 / 0.225 | 0.050 / 0.185 (113 s) | 0.066 / 0.414 (70 s) | 0.073 / 0.412 (40 s) |
+| f35 TcKhAs (SB vs BU 3bet) | 0.068 / 0.057 | 0.047 / 0.053 (155 s) | 0.037 / 0.040 (113 s) | 0.033 / 0.039 (65 s) |
+| f63 JcQs3s (SB vs BU 3bet) | 0.091 / 0.094 | 0.077 / 0.080 (92 s) | 0.080 / 0.124 (70 s) | 0.074 / 0.123 (40 s) |
+| f85 5sJs6s (UTG vs BB) | 0.003 / 0.008 | 0.001 / 0.011 (158 s) | 0.001 / 0.057 (109 s) | 0.002 / 0.057 (60 s) |
+
+Means over the 7 spots: exact 0.043 / 0.159, `thin+i16` 0.046 / 0.344, `thin+i16+sample`
+0.043 / 0.340.
+
+So 16-bit storage and sampling add nothing here either, and sampling cuts the time to about
+55%. `thinSizes` costs OOP's root nothing, but it costs IP's play after a check about 0.2% of
+pot. These trees offer 0.33 and 0.75 on the flop, and `thinSizes` keeps only the 0.75 bet
+there.

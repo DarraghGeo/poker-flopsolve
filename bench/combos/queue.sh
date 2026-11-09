@@ -3,6 +3,8 @@
 #   bench/combos/queue.sh "<spot> <combination> [checkpoints]" ...
 # Environment for every job passes through (REF, EXPL, MAX_SECONDS, SAVE).
 cd "$(dirname "$0")/../.."
+# Split each job into words, never expand globs.
+set -f
 for job in "$@"; do
 	set -- $job
 	log="bench/combos/out/$1-$2${TAG:-}.log"

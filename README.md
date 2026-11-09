@@ -663,8 +663,11 @@ WebAssembly engine and chance sampling.
 import { createRun, defineSpot } from 'poker-flopsolve';
 import { largeTree } from 'poker-flopsolve/wasm-storage';
 
-const { config, options } = largeTree(myConfig); // or largeTree(myConfig, { storage: 'compact' })
-const run = createRun(defineSpot(config), { ...options, workers: 4 });
+const { config, options } = largeTree(
+	{ ...myConfig, maxBytes: 2.5 * 2 ** 30 }, // the browser build's default, 512 MiB, is too little
+	{ options: { workers: 4 } }, // solve options of your own, merged; storage: 'compact' for less memory
+);
+const run = createRun(defineSpot(config), options);
 ```
 
 Issue #102 measured each combination on T, Node, 4 threads, against `thinSizes` alone at
@@ -687,8 +690,10 @@ So 16-bit or compact storage and sampling cost the root nothing over the thinned
 sampling makes it 2.5 times faster. Buckets halve the time again for a per-hand error of
 0.2% of pot on average and 2.3% at worst. Sharing on top saves memory but loses more and is
 no faster. What `thinSizes` itself costs, against the full tree, was measured on T₀ against
-an exact solve: 0.04% of pot of root play and 1.5% of pot of per-hand EV. `bench/combos/`
-has the scripts and every run.
+an exact solve: 0.04% of pot of root play and 1.5% of pot of per-hand EV. On seven of
+napkinpoker's spots (#87), against postflop-solver's EVs, the preset's root play lost as
+little as an exact solve's at OOP's root (0.04% of pot) but 0.34% against 0.16% for IP after
+a check, where `thinSizes` cuts the 0.33 bet. `bench/combos/` has the scripts and every run.
 
 ### Line runouts (approximate, opt-in)
 
