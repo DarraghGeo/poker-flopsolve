@@ -1,0 +1,156 @@
+{
+ "tag": "rainbow-river-sampling0.9",
+ "storageBytes": 181089712,
+ "peakRss": 415780864,
+ "engine": "wasm",
+ "seconds": 1054.259973392,
+ "iterations": 800,
+ "exploitability": 2.8975692034985663,
+ "best": 2.6880538059527055,
+ "history": [
+  {
+   "iterations": 20,
+   "seconds": 28.119870489,
+   "exploitability": 15.86210493337367
+  },
+  {
+   "iterations": 40,
+   "seconds": 55.228920638,
+   "exploitability": 8.095306751534393
+  },
+  {
+   "iterations": 80,
+   "seconds": 109.770738503,
+   "exploitability": 4.182493909460123
+  },
+  {
+   "iterations": 120,
+   "seconds": 162.898632637,
+   "exploitability": 3.1633694284058866
+  },
+  {
+   "iterations": 160,
+   "seconds": 216.788448656,
+   "exploitability": 2.7984486376248245
+  },
+  {
+   "iterations": 200,
+   "seconds": 272.913399049,
+   "exploitability": 2.697046908070222
+  },
+  {
+   "iterations": 240,
+   "seconds": 326.14469367199996,
+   "exploitability": 2.6880538059527055
+  },
+  {
+   "iterations": 280,
+   "seconds": 381.471629223,
+   "exploitability": 2.6912803329016888
+  },
+  {
+   "iterations": 320,
+   "seconds": 434.201230616,
+   "exploitability": 2.699799966498216
+  },
+  {
+   "iterations": 360,
+   "seconds": 485.356190451,
+   "exploitability": 2.709793625432433
+  },
+  {
+   "iterations": 400,
+   "seconds": 535.6964236110001,
+   "exploitability": 2.7220833720248874
+  },
+  {
+   "iterations": 440,
+   "seconds": 587.6959882460001,
+   "exploitability": 2.7343453480367
+  },
+  {
+   "iterations": 480,
+   "seconds": 639.7781612450001,
+   "exploitability": 2.757277001536992
+  },
+  {
+   "iterations": 520,
+   "seconds": 693.6676039910001,
+   "exploitability": 2.776856205378373
+  },
+  {
+   "iterations": 560,
+   "seconds": 746.298581752,
+   "exploitability": 2.7907174886220067
+  },
+  {
+   "iterations": 600,
+   "seconds": 797.184202742,
+   "exploitability": 2.8037673778574033
+  },
+  {
+   "iterations": 640,
+   "seconds": 847.8804148360001,
+   "exploitability": 2.8182854957234325
+  },
+  {
+   "iterations": 680,
+   "seconds": 899.9308083770001,
+   "exploitability": 2.836706433692906
+  },
+  {
+   "iterations": 720,
+   "seconds": 951.1597835370001,
+   "exploitability": 2.8570188334279347
+  },
+  {
+   "iterations": 760,
+   "seconds": 1003.648359592,
+   "exploitability": 2.8774045259718513
+  },
+  {
+   "iterations": 800,
+   "seconds": 1054.2598149829998,
+   "exploitability": 2.8975692034985663
+  }
+ ],
+ "rootError": [
+  {
+   "mae": 0.4427156144322523,
+   "max": 7.200274318396566
+  },
+  {
+   "mae": 0.3580356865423946,
+   "max": 2.8502136325017773
+  }
+ ],
+ "loss": [
+  {
+   "decision": "OOP at root",
+   "blueprint": {
+    "mean": 0.011310880314506158,
+    "max": 0.10188909580350014
+   },
+   "reference": {
+    "mean": 0.008871218779525755,
+    "max": 0.04991630740054376
+   }
+  },
+  {
+   "decision": "IP after check",
+   "blueprint": {
+    "mean": 0.009782559079085823,
+    "max": 0.0519142493576652
+   },
+   "reference": {
+    "mean": 0.00831599431394231,
+    "max": 0.039456157042288
+   }
+  }
+ ],
+ "resolves": [],
+ "resolveGain": [
+  null,
+  null
+ ]
+}

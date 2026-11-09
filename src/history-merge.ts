@@ -31,6 +31,8 @@ export interface HistoryShareOptions {
 	readonly key: HistoryKey;
 	/** First round whose roots share; later rounds share too. 1 is the turn on a flop spot. */
 	readonly fromRound: number;
+	/** Nodes marked 1 never share: a marked round root keeps its own subtree. */
+	readonly keep?: Uint8Array;
 }
 
 export interface HistoryShare {
@@ -124,7 +126,7 @@ export function aliasHistories(
 		const reps = new Map<string, number>();
 		for (const root of rootsByRound[round] ?? []) {
 			// Already following a representative from an earlier round's walk.
-			if (alias[root] !== root) continue;
+			if (alias[root] !== root || options.keep?.[root]) continue;
 			const key = options.key.kind === 'exact' ? `${exact[root]}` : `${shape[root]}/${bucketOf(root)}`;
 			const rep = reps.get(key);
 			if (rep === undefined) reps.set(key, root);

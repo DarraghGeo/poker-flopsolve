@@ -1,0 +1,35 @@
+f85 it 20 expl 35.595% 15 s
+f85 it 40 expl 13.190% 28 s
+f85 it 60 expl 7.472% 40 s
+f85 it 80 expl 5.077% 53 s
+f85 it 100 expl 3.630% 66 s
+f85 it 120 expl 2.700% 78 s
+f85 it 140 expl 2.169% 92 s
+f85 it 160 expl 1.816% 104 s
+f85 it 180 expl 1.547% 117 s
+f85 it 200 expl 1.280% 130 s
+f85 it 220 expl 1.032% 143 s
+f85 it 240 expl 0.861% 154 s
+f85 it 260 expl 0.731% 167 s
+f85 it 280 expl 0.628% 179 s
+f85 it 300 expl 0.537% 191 s
+f85 it 310 expl 0.496% 197 s
+f85 it 320 expl 0.458% 204 s
+f85 it 330 expl 0.425% 210 s
+f85 it 340 expl 0.394% 217 s
+f85 it 350 expl 0.366% 223 s
+f85 it 360 expl 0.346% 230 s
+f85 it 370 expl 0.328% 237 s
+f85 it 380 expl 0.314% 243 s
+f85 it 390 expl 0.298% 249 s
+f85     flop                  reach 1.00/1.00 err mean 0.231 played 0.000 max 0.455 self 0.001 | X 0.00 (1.00/1.00) B182 0.13 (0.00/0.00) B413 0.17 (0.00/0.00) A9750 0.62 (0.00/0.00)
+f85     flop X                reach 1.00/1.00 err mean 0.207 played 0.055 max 0.315 self 0.046 | X 0.04 (0.43/0.44) B182 0.09 (0.57/0.55) B413 0.15 (0.00/0.00) A9750 0.56 (0.00/0.00)
+f85     flop X,B182           reach 1.00/0.55 err mean 0.151 played 0.016 max 0.452 self 0.040 | F 0.15 (0.33/0.32) C 0.01 (0.53/0.54) R546 0.08 (0.14/0.14) A9750 0.36 (0.00/0.00)
+f85     flop X,B182,R546      reach 0.55/0.14 err mean 0.126 played 0.002 max 0.545 self 0.004 | F 0.21 (0.33/0.33) C 0.04 (0.67/0.67)
+f85-2d  turn X,X,d2d          reach 1.00/1.00 err mean 1.480 played 0.030 max 2.732 self 0.027 | X 0.08 (0.69/0.70) B413 0.15 (0.31/0.30) A9750 4.21 (0.00/0.00)
+f85-2d  turn X,B182,C,d2d     reach 1.00/1.00 err mean 2.478 played 0.000 max 6.785 self 0.001 | X 0.00 (1.00/1.00) B686 0.47 (0.00/0.00) A9568 6.97 (0.00/0.00)
+f85-2d  turn X,B182,R546,C,d2d reach 1.00/1.00 err mean 0.793 played 0.023 max 2.724 self 0.035 | X 0.05 (0.65/0.64) B1232 0.04 (0.35/0.36) A9204 2.29 (0.00/0.00)
+f85-9c  turn X,X,d9c          reach 1.00/1.00 err mean 1.917 played 0.027 max 3.710 self 0.016 | X 0.03 (0.71/0.72) B413 0.09 (0.29/0.28) A9750 5.63 (0.00/0.00)
+f85-9c  turn X,B182,C,d9c     reach 1.00/1.00 err mean 0.339 played 0.001 max 0.839 self 0.002 | X 0.00 (1.00/1.00) B686 0.26 (0.00/0.00) A9568 0.76 (0.00/0.00)
+f85-9c  turn X,B182,R546,C,d9c reach 1.00/1.00 err mean 0.231 played 0.031 max 0.472 self 0.020 | X 0.03 (0.60/0.60) B1232 0.06 (0.40/0.40) A9204 0.59 (0.00/0.00)
+{"id":"f85","name":"UTG vs BB · 5sJs6s · flop","board":"5s Js 6s","potType":"SRP","precision":"f32","bytes":863852034,"iterations":390,"exploitability":0.29832822237015383,"seconds":249.263050085,"reached":true,"summary":{"flopMeanError":0.17876014652976957,"flopPlayedError":0.01834560596657446,"flopWorstPlayed":0.05491940323102513,"turnPlayedError":0.01881818607236935,"turnWorstPlayed":0.0314201239345728,"flopMaxError":0.5450232924739582,"turnMeanError":1.206302678595279,"turnMaxError":6.784722184671813,"rootOop":{"id":"f85","path":"","street":"flop","reach":[1,1],"meanError":0.23088075467752894,"maxError":0.45485668796080336,"playedError":0.00042921108702456,"selfLoss":0.0009168988384139862,"byAction":[{"action":"X","meanError":0,"ours":0.9959606869267948,"stored":0.9975904043716387},{"action":"B182","meanError":0.13090283438367534,"ours":0.0028015928009567643,"stored":0.0020491757807335623},{"action":"B413","meanError":0.1701076417794699,"ours":0.0012342654290123081,"stored":0.0003653674962865411},{"action":"A9750","meanError":0.6225125425469704,"ours":0.0000034548432339623645,"stored":0}]},"rootIp":{"id":"f85","path":"X","street":"flop","reach":[1,0.9976],"meanError":0.2066351380237694,"maxError":0.31481039664061805,"playedError":0.05491940323102513,"selfLoss":0.04570617397792241,"byAction":[{"action":"X","meanError":0.036460171784318984,"ours":0.43134346350543945,"stored":0.44263197337637716},{"action":"B182","meanError":0.087337590961223,"ours":0.5659379344956296,"stored":0.5542557413915726},{"action":"B413","meanError":0.1458256869404514,"ours":0.002706888366808479,"stored":0.003145342802280784},{"action":"A9750","meanError":0.5569171024090848,"ours":0.000011713632122035913,"stored":0.00000944502006594513}]},"rootLossOop":0.0005554222608008325,"rootLossIp":0.011190615396415953,"rootRefLossOop":0.002851041476909169,"rootRefLossIp":0.008326516318546808}}
