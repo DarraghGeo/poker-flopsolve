@@ -1,0 +1,13 @@
+rainbow-sampling-p0.9: 173 MiB f32, keep 0 lines
+400 it (154 s solving): 2.685% of pot; root play loses 0.0160 / 0.0107%; root EV error 0.474 (3.67) / 0.548 (2.97)
+    bet_82.5_call_-2c: TV 0.116 / 0.026, mass ×0.964 / ×1.005; gain 3.75 / 0.87, ref OOP range 0.15 / 0.58, ref IP range 3.59 / 0.41
+    bet_82.5_call_-7c: TV 0.124 / 0.024, mass ×0.962 / ×1.006; gain 3.45 / 0.73, ref OOP range 0.13 / 0.44, ref IP range 3.25 / 0.72
+    bet_82.5_call_-Qs: TV 0.117 / 0.028, mass ×0.957 / ×1.006; gain 3.68 / 0.75, ref OOP range 0.24 / 0.62, ref IP range 3.43 / 0.36
+    check_bet_41.25_call_-2c: TV 0.151 / 0.169, mass ×0.940 / ×1.308; gain 6.06 / 7.63, ref OOP range 1.20 / 7.90, ref IP range 6.14 / 0.33
+    check_bet_41.25_call_-7c: TV 0.150 / 0.183, mass ×0.943 / ×1.313; gain 1.03 / 3.69, ref OOP range 0.20 / 3.52, ref IP range 1.29 / 0.10
+    check_bet_41.25_call_-Qs: TV 0.143 / 0.181, mass ×0.953 / ×1.278; gain 9.96 / 5.35, ref OOP range 0.28 / 4.37, ref IP range 10.19 / 0.30
+    check_check_-2c: TV 0.077 / 0.065, mass ×0.944 / ×0.960; gain 3.55 / 2.65, ref OOP range 0.82 / 2.56, ref IP range 3.52 / 0.83
+    check_check_-7c: TV 0.075 / 0.064, mass ×0.944 / ×0.963; gain 2.58 / 1.77, ref OOP range 0.89 / 1.81, ref IP range 2.84 / 0.39
+    check_check_-Qs: TV 0.071 / 0.061, mass ×0.950 / ×0.965; gain 3.24 / 2.56, ref OOP range 0.61 / 2.58, ref IP range 3.08 / 0.64
+  400 it: re-solve gain 3.431 / 2.299; with the reference OOP range 0.640 / 2.223, IP range 3.425 / 0.567; range TV 0.089 / 0.066
+peak RSS 1916 MiB, 368 s in all

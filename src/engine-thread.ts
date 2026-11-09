@@ -54,6 +54,11 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 		setExchange(entries: number, reach: number, values: number, stride: number): void;
 		setPhase(phase: number, apply: number): void;
 		setShared(marks: number, blockOffsets: number, weighted: number): void;
+		setSampling(
+			rounds: number, p: number, every: number, unbiased: number, catchUp: number,
+			baseOffsets: number, boardOffsets: number, walkOffsets: number,
+			baselines: number, lastWalks: number, lastUpdates: number, blockOffsets: number,
+		): void;
 		setIteration(t: number, dcfr: number): void;
 		runChance(
 			mode: number, traverser: number, node: number, me: number, opp: number,
@@ -67,8 +72,12 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 	engine.setPhase(0, 1);
 	const shared = setup.shared;
 	if (shared) engine.setShared(shared[0], shared[1], shared[2]);
-	// Shared storage discounts by iteration, and the storage engine's rounding hashes it.
-	const needsIteration = shared !== undefined || setup.storage === true;
+	// Chance sampling's state is in the shared memory, at the main thread's offsets.
+	const s = setup.sampling;
+	if (s) engine.setSampling(s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], s[9], s[10], s[11]);
+	// Shared storage discounts by iteration, the storage engine's rounding
+	// hashes it, and chance sampling picks deals and catches up by it.
+	const needsIteration = shared !== undefined || setup.storage === true || s !== undefined;
 
 	const control = new Int32Array(setup.control);
 	const settings = new Float64Array(setup.settings);

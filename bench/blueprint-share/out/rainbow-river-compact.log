@@ -1,0 +1,17 @@
+rainbow-river-compact: 306 nodes, 1396 runouts, 173 MiB f32
+  20 it, 14.294%, 14 s
+  40 it, 8.043%, 28 s
+  80 it, 3.821%, 58 s
+  120 it, 3.108%, 87 s
+  160 it, 2.875%, 119 s
+  200 it, 2.896%, 149 s
+  240 it, 3.017%, 180 s
+  280 it, 2.651%, 211 s
+  320 it, 2.541%, 240 s
+  360 it, 2.529%, 271 s
+  400 it, 2.527%, 300 s
+blueprint: 400 it, 2.527% (best 2.527%), 300 s, engine wasm, peak RSS 283 MiB
+root EV error, % pot: OOP mean 0.557 max 1.992; IP mean 0.476 max 1.856
+  OOP at root: root play loses 0.0162% pot at reference values (max 0.084); the reference's own 0.0089%
+  IP after check: root play loses 0.0106% pot at reference values (max 0.094); the reference's own 0.0083%
+re-solve gain, weighted by line reach: OOP refined NaN%, IP refined NaN%

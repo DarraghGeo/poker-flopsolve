@@ -12,7 +12,8 @@
  *   `pick`-iteration shared solve (default 80), the blueprint then starting
  *   cold;
  * - `checkpoints`: iteration counts to measure at (default [400]);
- * - `sampling`: true for `chanceSampling` (one thread);
+ * - `sampling`: `chanceSampling`, true for its defaults or `{ p }`;
+ * - `compact`: 8-bit `compactStorage` (`{}` for its defaults), on the WebAssembly storage engine;
  * - `refine`: after the last checkpoint, for each reference line, a copy
  *   of the blueprint with that line's rivers unshared (`refine.ts`) runs
  *   `iterations` more, and that line's turns are re-solved from it.
@@ -54,7 +55,8 @@ interface Plan {
 	precision?: 'i16';
 	pick?: number;
 	checkpoints?: number[];
-	sampling?: boolean;
+	sampling?: boolean | { p: number };
+	compact?: Record<string, unknown>;
 	refine?: { iterations: number };
 	/** With `keepTop`/`keepReach`: continue from the picking solve (`refineLines`) rather than start cold; checkpoints count its iterations. */
 	warm?: boolean;
@@ -66,9 +68,9 @@ const plan: Plan = json ? JSON.parse(json) : {};
 const checkpoints = plan.checkpoints ?? [400];
 const RESOLVE_ITERATIONS = 300;
 const MiB = 2 ** 20;
-const workers = plan.sampling ? 1 : (plan.workers ?? 4);
-const approximations: Approximations = plan.sampling ? { chanceSampling: {} } : {};
-const storage = plan.precision === 'i16' ? { precision: 'i16' as const, wasmStorage } : {};
+const workers = plan.workers ?? 4;
+const approximations: Approximations = plan.sampling ? { chanceSampling: plan.sampling === true ? {} : plan.sampling } : {};
+const storage = plan.precision === 'i16' ? { precision: 'i16' as const, wasmStorage } : plan.compact ? { wasmStorage } : {};
 
 const full = fullTree(boardName);
 const later = {
@@ -78,7 +80,7 @@ const REF = new URL(`../../scratch/blueprint-share/${boardName}-none/`, import.m
 
 /** The blueprint config with `keepLines` and weighting applied. */
 function configWith(keep: readonly string[]): SpotConfig {
-	const base = blueprintOf(boardName, plan.share ?? 'river');
+	const base: SpotConfig = { ...blueprintOf(boardName, plan.share ?? 'river'), ...(plan.compact ? { compactStorage: plan.compact } : {}) };
 	const asked = base.shareHistories;
 	if (asked === undefined) return base;
 	const options = { ...(asked === true ? {} : asked), ...(plan.weighting ? { weighting: plan.weighting } : {}) };
