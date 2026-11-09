@@ -1,0 +1,31 @@
+{
+ "spot": "M",
+ "rule": {
+  "runoutBuckets": 3
+ },
+ "iterations": 510,
+ "seconds": 2570,
+ "storage": "2.66 GiB",
+ "peakRss": "3.02 GiB",
+ "heap": "0.02 GiB",
+ "ownExploitability": 0.3,
+ "trueExploitability": 0.972,
+ "rootEv": {
+  "oop": {
+   "mae": 0.305,
+   "max": 1.957
+  },
+  "ip": {
+   "mae": 0.327,
+   "max": 1.735
+  }
+ },
+ "rootBetEvMae": 1.375,
+ "preferredSizeAgreement": 94.9,
+ "reference": {
+  "iterations": 510,
+  "seconds": 3724,
+  "exploitability": 0.2981570257223056
+ },
+ "trueExploitabilitySeconds": 25
+}

@@ -32,6 +32,7 @@ import { COMBO_CARDS, COMBOS, DECK, comboIndex } from './cards.ts';
 import { markMembers } from './hands.ts';
 import type { Runouts } from './runouts.ts';
 import { resolveBoard } from './runouts.ts';
+import { lineStarts } from './lines.ts';
 import type { Tree } from './tree.ts';
 import { ActionKind, NodeKind } from './tree.ts';
 
@@ -304,8 +305,11 @@ export function warmStart(
 			if (other >= 0) actionOf[e] = other - from.tree.firstEdge[old];
 		}
 
-		for (let board = 0; board < to.runouts.counts[round]; board++) {
-			const resolved = resolveBoard(from.runouts, asSource(realCards(to.runouts, round, board)));
+		// With line runouts, each node reads its own line's boards.
+		const starts = from.runouts.lines ? lineStarts(from.runouts.lines, old) : undefined;
+		const family = to.runouts.lines?.families[to.runouts.lines.family[node]];
+		for (let board = family ? family.from : 0; board < (family ? family.to : to.runouts.counts[round]); board++) {
+			const resolved = resolveBoard(from.runouts, asSource(realCards(to.runouts, round, board)), starts);
 			// Blocks are laid out by position in each board's hand list.
 			const oldSlot = (from.active.roundBase[round] + resolved.board) * 2 + owner;
 			const oldFrom = from.active.start[oldSlot];

@@ -650,6 +650,48 @@ Those are memory estimates. The one combined solve tried (As Kh 7d T₀, thinned
 shared) stopped improving at about 4.4% of pot from 250 iterations on, against 0.2% for
 the thinned tree alone, so the two together are not yet measured for accuracy.
 
+### Line runouts (approximate, opt-in)
+
+`lineRunouts: { aggressions: 2 }` deals coarser turn and river cards below every chance
+node whose betting so far holds two bets or raises, and every card elsewhere; `raises: 1`
+picks lines with a raise instead, and either or both may be given. A coarse deal stores
+one card per class of cards that pair, flush and straight the board alike, with ranks folded
+in bands of `band` (default 3), and the class's other cards play as it. It is for trees too big
+to hold otherwise, and it stacks with `runoutBuckets`. There is no default rule, because
+what a rule costs depends on how often its lines are played, and that depends on the board.
+
+Storage, three sizes a street, pot 55, stack 975:
+
+| Spot | Exact | `{ aggressions: 2 }` | with `runoutBuckets: 3` too | `{ raises: 1 }` |
+|---|---|---|---|---|
+| As Kh 7d, raise 0.75 + all-in, 3 aggressions (i16) | 8.67 GiB | 3.91 GiB | 2.66 GiB | 5.53 GiB |
+| Ks 9s 4s, same tree (f32) | 3.75 GiB | 2.66 GiB | 2.18 GiB | |
+
+Accuracy, against exact solves to 0.30% of pot, run as long, 4 threads. Values are in %
+of pot. "Size kept" is the share of the out-of-position range that still prefers the exact
+solve's root bet size:
+
+| Spot | Rule | Storage (f32) | True exploitability | Root EV error, mean (worst) | Size kept |
+|---|---|---|---|---|---|
+| Ks 9s 4s | exact | 3.75 GiB | 0.30 | | |
+| | `{ aggressions: 2 }` | 2.66 GiB | 3.8 | 0.6–0.8 (3.5) | 100% |
+| | the same with `runoutBuckets: 3` | 2.18 GiB | 2.5 | 0.4–0.6 (2.9) | 98% |
+| | `{ aggressions: 2, band: 13 }` | 1.68 GiB | 13.7 | 2.2–2.4 (14.7) | 97% |
+| | `{ raises: 1, band: 13 }` | 2.40 GiB | 8.0 | 1.9–3.1 (11.2) | 100% |
+| | `runoutBuckets: 3` alone | 2.66 GiB | 0.97 | 0.3 (2.0) | 95% |
+| As Kh 7d (all-in raise, 2 aggressions) | exact | 5.78 GiB | 0.30 | | |
+| | `{ aggressions: 2 }` | 3.43 GiB | 16.7 | 3.8–4.0 (19.2) | 29% |
+
+Lines with two aggressions reached 9.8% of river deals on Ks 9s 4s, but 22% on As Kh 7d,
+where they are ordinary play and carry the big pots. Lines with a raise reached 1.3% and
+0.2%, yet even those cost several % of pot, because a best response finds the coarse
+subtrees. `exploitabilityPercent()` measures the coarse game, which is not quite zero-sum
+(a hand holding the stored card misses its class, and values are rescaled for it), so read
+`run.trueExploitabilityPercent()`. Board indices are per line: `spot.resolveBoard(cards,
+node)` finds a real board in a node's line. JavaScript engine only: threaded in Node, one
+thread in the browser. `bench/history-runouts/` has the census, the storage projection
+for any rule, and the measurements.
+
 ### Chance sampling (opt-in)
 
 `approximations: { chanceSampling: {} }` walks each turn and river deal on only some
