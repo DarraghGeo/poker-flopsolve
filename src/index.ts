@@ -370,9 +370,11 @@ export interface SpotConfig {
  *
  * With `shareHistories`, a node sharing another's storage shares its compact
  * storage too; together they fit issue #20's target T in 0.99 GiB (0.37
- * without sums). Measured on T₀ at 160 iterations, compact storage added
- * about a tenth to sharing's own loss: 10.5% of pot exploitable against
- * 9.5%, root EVs 0.86% of pot off against 0.66%, in a third of the memory.
+ * without sums). Measured on T₀ at 160 iterations, with a shared block
+ * discounted once an iteration (issue #93), compact storage added nothing
+ * to sharing's own exploitability or root EV error: 8.7% of pot exploitable
+ * against 9.5%, root EVs 0.48% of pot off against 0.66%, in a third of the
+ * memory. It kept fewer clear bet-size choices, 88% against 97%.
  *
  * What was measured and left out is with the other approximations, in the
  * comment inside `Approximations`.

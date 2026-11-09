@@ -90,7 +90,9 @@ describe('compact storage', () => {
 				if (compact.solver.ctx.compactRegret![chunk][start + i] !== exact.solver.ctx.regret[from + i]) differences++;
 			}
 		}
-		expect(compared).toBeGreaterThan(0);
+		// One chunk, and aliased nodes' empty slices aside, every compact slot compared once.
+		expect(compact.solver.ctx.compactRegret!.length).toBe(1);
+		expect(compared).toBe(compact.solver.ctx.layout.compactSlots);
 		expect(differences).toBe(0);
 		exact.close();
 		compact.close();
