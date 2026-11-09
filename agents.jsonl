@@ -34,4 +34,4 @@
 {"url":"https://claude.ai/code/session_014RSNFiA2Fx4fmHTHYp5bMP","title":"Shared compact blocks round with the same random stream for every history in an iteration","issue":88,"state":"active","updated":"2026-11-09T02:01:47.530Z"}
 {"url":null,"title":"Exact reference solves on a fast local machine (napkinpoker spots + target tree on two-tone/rainbow)","issue":89,"state":"active","updated":"2026-11-09T02:01:55.901Z"}
 {"url":null,"title":"Shared compact blocks get the DCFR discount once per history instead of once per iteration","issue":93,"state":"active","updated":"2026-11-09T02:02:43.741Z"}
-{"url":null,"title":"Shared 16-bit blocks dither their strategy sums with the same random numbers for every history","issue":94,"state":"active","updated":"2026-11-09T02:02:47.282Z"}
+{"url":"https://claude.ai/code/session_014RSNFkY5Mv8AdxxkQHPWUC","title":"Shared 16-bit blocks dither their strategy sums with the same random numbers for every history","issue":94,"state":"active","updated":"2026-11-09T02:13:10.786Z"}
