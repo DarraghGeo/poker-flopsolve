@@ -1,0 +1,62 @@
+{
+	"exact": {
+		"iterations": 140,
+		"workers": 4,
+		"engine": "wasm",
+		"bytes": 547986814,
+		"solveSeconds": 54.92880542,
+		"exploitability": 0.26246395747427786,
+		"trueExploitability": 0.26246395747427786,
+		"rootOop": {
+			"loss": 0.06866802041376012,
+			"ref": 0.06917274072068436
+		},
+		"rootIp": {
+			"loss": 0.03994749873966884,
+			"ref": 0.06083148857371167
+		},
+		"flop": {
+			"nodes": 8,
+			"loss": 0.019562200101571434,
+			"refLoss": 0.02182482482736865,
+			"handDiff": 0.007489898614909252
+		},
+		"turn": {
+			"nodes": 10,
+			"loss": 0.03409151870158383,
+			"refLoss": 0.027171673590499535,
+			"handDiff": 0.013378941932542094
+		},
+		"missing": 0
+	},
+	"shareHistories": {
+		"iterations": 140,
+		"workers": 4,
+		"engine": "wasm",
+		"bytes": 217049438,
+		"solveSeconds": 55.603812960999996,
+		"exploitability": 1.919468423891755,
+		"trueExploitability": 1.919468423891755,
+		"rootOop": {
+			"loss": 0.06637206198771578,
+			"ref": 0.06917274072068436
+		},
+		"rootIp": {
+			"loss": 0.05061287214569375,
+			"ref": 0.06083148857371167
+		},
+		"flop": {
+			"nodes": 8,
+			"loss": 0.020575718483883502,
+			"refLoss": 0.02182482482736865,
+			"handDiff": 0.008770325937275567
+		},
+		"turn": {
+			"nodes": 10,
+			"loss": 0.037337247549916526,
+			"refLoss": 0.027171673590499535,
+			"handDiff": 0.02407720005323356
+		},
+		"missing": 0
+	}
+}
