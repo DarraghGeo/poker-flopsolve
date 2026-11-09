@@ -463,7 +463,7 @@ import { largeTree } from 'poker-flopsolve/wasm-storage';
 
 const lite = solveLite(spot, { workers: 4 });
 lite.changes.roundsSimplified; // ['turn', 'river']
-lite.changes.notes;            // ['turn: OOP loses the bet sizes 0.33, 1.5, all-in at 17 of 19 decisions', ...]
+lite.changes.notes;            // ['turn: OOP loses the bet sizes 0.33, 1.5, all-in at 17 of the 19 such decisions the preset keeps', ...]
 
 const { config, options, changes } = largeTree({ ...spot, maxBytes: 2.5 * 2 ** 30 }, { options: { workers: 4 } });
 changes.sizesCut;              // [{ street: 'flop', player: 'ip', facing: 'bet', sizes: [0.33, 1.5, 'allin'], ... }, ...]

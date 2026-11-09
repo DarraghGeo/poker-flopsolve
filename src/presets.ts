@@ -11,6 +11,7 @@
 
 import { bettingTree } from './betting.ts';
 import { parseCards } from './cards.ts';
+import type { SamplingOptions } from './cfr.ts';
 import type { SpotConfig } from './index.ts';
 import { ActionKind, NodeKind } from './tree.ts';
 import type { Tree } from './tree.ts';
@@ -33,7 +34,11 @@ export interface SizesCut {
 	readonly sizes: readonly (number | 'allin')[];
 	/** The caller's decisions of this kind that lost at least one size. */
 	readonly decisions: number;
-	/** The caller's decisions of this kind that offered any size at all. */
+	/**
+	 * The caller's decisions of this kind, offering any size, that the
+	 * preset's tree still reaches: those below a cut action are gone with
+	 * it and counted in neither number.
+	 */
 	readonly of: number;
 }
 
@@ -154,18 +159,15 @@ export function presetChanges(caller: SpotConfig, preset: SpotConfig, settings: 
 		const sizes = c.sizes.map((s) => (s === 'allin' ? 'all-in' : String(s))).join(', ');
 		const who = c.player === 'oop' ? 'OOP' : 'IP';
 		const what = c.facing === 'bet' ? 'bet' : 'raise';
-		return `${c.street}: ${who} loses the ${what} size${c.sizes.length > 1 ? 's' : ''} ${sizes} at ${c.decisions} of ${c.of} decisions`;
+		return `${c.street}: ${who} loses the ${what} size${c.sizes.length > 1 ? 's' : ''} ${sizes} at ${c.decisions} of the ${c.of} such decisions the preset keeps`;
 	});
 	return { sizesCut: cuts, roundsSimplified, settings, notes: [...sizeNotes, ...notes] };
 }
 
-/** The settings two configs differ in, among `keys`, as changes from `caller` to `preset`. */
-export function configChanges(caller: SpotConfig, preset: SpotConfig, keys: readonly (keyof SpotConfig)[]): SettingChange[] {
-	const out: SettingChange[] = [];
-	for (const key of keys) {
-		const before = caller[key];
-		const after = preset[key];
-		if (JSON.stringify(before) !== JSON.stringify(after)) out.push({ setting: key, from: before, to: after });
-	}
-	return out;
+/** What a `chanceSampling` setting does, in a sentence. */
+export function samplingNote(sampling: SamplingOptions): string {
+	const which = sampling.rounds ? `the deals of rounds ${sampling.rounds.join(', ')}` : "every later round's deals";
+	return sampling.every
+		? `${which} walked once every ${sampling.every} iterations, in rotation`
+		: `${which} sampled at p ${sampling.p ?? 0.35}`;
 }

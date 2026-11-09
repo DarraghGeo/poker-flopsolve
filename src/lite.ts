@@ -17,7 +17,7 @@ import type { SamplingOptions } from './cfr.ts';
 import type { ShareHistories, Solution, SolveOptions, SpotConfig, SubgameBetting } from './index.ts';
 import { defineSpot, solve } from './index.ts';
 import type { PresetChanges, SettingChange } from './presets.ts';
-import { configChanges, presetChanges } from './presets.ts';
+import { presetChanges, samplingNote } from './presets.ts';
 import type { ResolvedSubgame, ResolveOptions } from './resolve.ts';
 import { resolveSubgame } from './resolve.ts';
 import type { SettleOptions } from './settle.ts';
@@ -326,27 +326,44 @@ export function litePreset(config: SpotConfig, options: SolveLiteOptions = {}): 
 		...pick(options, ['workers', 'precision', 'wasmStorage', 'algorithm', 'onProgress', 'targetPercent']),
 	};
 
-	const settings: SettingChange[] = configChanges(config, blueprint, ['noDonk', 'runoutBuckets', 'shareHistories', 'removeActions']);
+	// Each setting compared by what it does, so equivalent spellings
+	// (unset and false, true and a gap of 1) are no change.
+	const settings: SettingChange[] = [];
 	const notes: string[] = [];
+	const change = (setting: string, from: unknown, to: unknown, note: string): void => {
+		settings.push({ setting, from, to });
+		notes.push(`${setting}: ${note}`);
+	};
+	const rounds = 6 - parseCards(config.board).length;
+	const streets = ['flop', 'turn', 'river'].slice(3 - rounds);
+	const donks = (value: SpotConfig['noDonk']): boolean[] => perRound(value ?? false, Array.isArray(value), rounds, 'noDonk');
+	const [donkFrom, donkTo] = [donks(config.noDonk), donks(blueprint.noDonk)];
+	if (donkFrom.join() !== donkTo.join()) {
+		const on = streets.filter((_, r) => donkTo[r]);
+		change('noDonk', config.noDonk, blueprint.noDonk, on.length
+			? `donk bets forbidden on the ${on.join(' and ')}, a speed trim that changes the game`
+			: 'donk bets allowed on every street');
+	}
+	const gap = (value: SpotConfig['runoutBuckets']): number => (value === true ? 1 : typeof value === 'number' ? value : 0);
+	if (gap(config.runoutBuckets) !== gap(blueprint.runoutBuckets)) {
+		const to = gap(blueprint.runoutBuckets);
+		change('runoutBuckets', config.runoutBuckets, blueprint.runoutBuckets, to > 0
+			? `gap ${to}: turn and river cards that play alike are solved once (approximate; folds nothing on ranges with no rank symmetry)`
+			: 'off: every turn and river card solved');
+	}
+	const sharing = (value: SpotConfig['shareHistories']): string => JSON.stringify(value === true ? {} : value || null);
+	if (sharing(config.shareHistories) !== sharing(blueprint.shareHistories)) {
+		const kept = typeof blueprint.shareHistories === 'object' ? (blueprint.shareHistories.keepLines?.length ?? 0) : 0;
+		change('shareHistories', config.shareHistories, blueprint.shareHistories, blueprint.shareHistories
+			? `lines that meet share river storage${kept ? `, but for ${kept} line${kept > 1 ? 's' : ''} kept apart` : ''} (approximate: exploitability plateaus a few % of pot from equilibrium; read the root play)`
+			: 'off: every line stores its own river');
+	}
 	const dropped = (config.removeActions?.length ?? 0) - (blueprint.removeActions?.length ?? 0);
-	if (dropped > 0) notes.push(`removeActions: ${dropped} line${dropped > 1 ? 's' : ''} below a deal or past the flop cap left out of the blueprint; resolve puts those below a deal back`);
-	if (blueprint.noDonk !== config.noDonk) notes.push(`noDonk: ${JSON.stringify(blueprint.noDonk)}, a speed trim that changes the game`);
-	if (blueprint.runoutBuckets !== config.runoutBuckets) {
-		notes.push(`runoutBuckets: ${String(blueprint.runoutBuckets)}, turn and river cards that play alike solved once (approximate; folds nothing on ranges with no rank symmetry)`);
+	if (dropped > 0) {
+		change('removeActions', config.removeActions, blueprint.removeActions, `${dropped} line${dropped > 1 ? 's' : ''} below a deal or past the flop cap left out of the blueprint; resolve puts those below a deal back`);
 	}
-	if (JSON.stringify(blueprint.shareHistories) !== JSON.stringify(config.shareHistories)) {
-		notes.push(
-			'shareHistories: lines that meet share river storage (approximate: exploitability plateaus a few % of pot from equilibrium; read the root play)',
-		);
-	}
-	if (sampling) {
-		settings.push({ setting: 'approximations.chanceSampling', from: undefined, to: sampling });
-		notes.push(`chanceSampling: turn and river deals sampled at p ${sampling.p ?? 0.35}`);
-	}
-	if (settle) {
-		settings.push({ setting: 'settle', from: undefined, to: settle });
-		notes.push('settle: stops once the root play stops moving, not at an exploitability target');
-	}
+	if (sampling) change('approximations.chanceSampling', undefined, sampling, samplingNote(sampling));
+	if (settle) change('settle', undefined, settle, 'stops once the root play stops moving, not at an exploitability target');
 	return { config: blueprint, options: solveOptions, changes: presetChanges(config, blueprint, settings, notes) };
 }
 

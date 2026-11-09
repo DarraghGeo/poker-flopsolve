@@ -119,9 +119,11 @@ function main(): void {
 		if (settle) {
 			const tracker = trackSettle(settle);
 			const { every } = settlePlan(settle);
+			// As solve()'s settle loop: a short last step is not a check.
 			while (run.completed < cap) {
-				run.step(Math.min(every, cap - run.completed));
-				if (tracker.check(run.snapshot(), run.completed)) break;
+				const step = Math.min(every, cap - run.completed);
+				run.step(step);
+				if (step === every && tracker.check(run.snapshot(), run.completed)) break;
 			}
 		} else run.step(cap);
 		const solveSeconds = (performance.now() - start) / 1000;

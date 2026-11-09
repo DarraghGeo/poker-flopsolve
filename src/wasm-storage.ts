@@ -18,7 +18,7 @@
 import type { WasmStorage } from './engine.ts';
 import type { SolveOptions, SpotConfig } from './index.ts';
 import type { PresetChanges, SettingChange } from './presets.ts';
-import { presetChanges } from './presets.ts';
+import { presetChanges, samplingNote } from './presets.ts';
 import { ENGINE_STORAGE_WASM } from './wasm/engine-storage.ts';
 import { ENGINE_STORAGE_SHARED_WASM } from './wasm/engine-storage-shared.ts';
 
@@ -52,9 +52,9 @@ export interface LargeTree {
 	readonly options: SolveOptions;
 	/**
 	 * What the preset changed against the config it was given: the sizes
-	 * `thinSizes` cut (every decision but the flop's first keeps one size
-	 * near 0.75 pot), the streets that lost any, the storage and sampling
-	 * switched on, and a `compactStorage` dropped for 16 bits.
+	 * `thinSizes` cut (see `SpotConfig.thinSizes` for what it keeps), the
+	 * streets that lost any, the storage, engine and sampling switched on,
+	 * and a `compactStorage` dropped for 16 bits.
 	 */
 	readonly changes: PresetChanges;
 }
@@ -109,7 +109,9 @@ export function largeTree(config: SpotConfig, preset: LargeTreeOptions = {}): La
 	const notes: string[] = [];
 	if (config.thinSizes !== true) {
 		settings.push({ setting: 'thinSizes', from: config.thinSizes, to: true });
-		notes.push("thinSizes: every decision but the first round's opening keeps one bet or raise, nearest 0.75 pot (approximate: a smaller game)");
+		notes.push(
+			"thinSizes: past the first round's opening decision each decision keeps the one bet or raise nearest 0.75 pot, and the last round's opening after an earlier bet also its overbets and shove (approximate: a smaller game)",
+		);
 	}
 	if (storage === 'i16') {
 		if (compactStorage) {
@@ -124,10 +126,14 @@ export function largeTree(config: SpotConfig, preset: LargeTreeOptions = {}): La
 		settings.push({ setting: 'compactStorage', from: undefined, to: {} });
 		notes.push('compactStorage: 8-bit storage with sums on the WebAssembly engine');
 	}
-	if (own.wasmStorage !== wasmStorage) settings.push({ setting: 'wasmStorage', from: own.wasmStorage, to: wasmStorage });
-	if (own.approximations?.chanceSampling === undefined) {
-		settings.push({ setting: 'approximations.chanceSampling', from: undefined, to: {} });
-		notes.push('chanceSampling: turn and river deals sampled at p 0.35');
+	if (own.wasmStorage !== wasmStorage) {
+		settings.push({ setting: 'wasmStorage', from: own.wasmStorage, to: wasmStorage });
+		notes.push('wasmStorage: 16-bit and compact storage run on the WebAssembly engine, threads included');
+	}
+	const sampling = options.approximations?.chanceSampling;
+	if (sampling && sampling !== own.approximations?.chanceSampling) {
+		settings.push({ setting: 'approximations.chanceSampling', from: undefined, to: sampling });
+		notes.push(`chanceSampling: ${samplingNote(sampling)}`);
 	}
 	return { config: out, options, changes: presetChanges(config, out, settings, notes) };
 }

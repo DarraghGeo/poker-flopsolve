@@ -59,8 +59,8 @@ describe('litePreset', () => {
 		expect(changes.settings.map((s) => s.setting)).toEqual([
 			'runoutBuckets', 'shareHistories', 'approximations.chanceSampling', 'settle',
 		]);
-		expect(changes.notes.length).toBe(changes.sizesCut.length + 4);
-		expect(changes.notes[0]).toMatch(/^turn: OOP loses the bet sizes 0\.33, 1\.5, all-in at \d+ of \d+ decisions$/);
+		expect(changes.notes).toHaveLength(changes.sizesCut.length + 4);
+		expect(changes.notes[0]).toMatch(/^turn: OOP loses the bet sizes 0\.33, 1\.5, all-in at \d+ of the \d+ such decisions the preset keeps$/);
 	});
 
 	it('reports a flop cap, donk bets and cuts left out, and leaves out what it did not switch on', () => {
@@ -75,6 +75,40 @@ describe('litePreset', () => {
 		expect(changes.notes.some((n) => /removeActions: 1 line/.test(n))).toBe(true);
 		expect(changes.notes.some((n) => /^noDonk/.test(n))).toBe(true);
 		expect(changes.notes.some((n) => /chanceSampling|settle|shareHistories/.test(n))).toBe(false);
+	});
+
+	it('reports a setting by what it does: equivalent spellings are no change, and off reads as off', () => {
+		// Unset and false, true and a gap of 1, an equal array: no change.
+		const same = litePreset({ ...flop, runoutBuckets: true, noDonk: [false, true, true] }, {
+			noDonk: false, runoutBuckets: 1, shareHistories: true, sampling: false, settle: false,
+		}).changes;
+		expect(same.settings.map((s) => s.setting)).toEqual(['noDonk', 'shareHistories']);
+		expect(same.notes.find((n) => n.startsWith('noDonk'))).toBe('noDonk: donk bets allowed on every street');
+		const unchanged = litePreset({ ...flop, noDonk: [false, true, true] }, { sampling: false, settle: false }).changes;
+		expect(unchanged.settings.map((s) => s.setting)).not.toContain('noDonk');
+		expect(litePreset(flop, { noDonk: false }).changes.settings.map((s) => s.setting)).not.toContain('noDonk');
+		// Sharing switched off is reported as off, not as sharing.
+		const unshared = litePreset({ ...flop, shareHistories: true }, { shareHistories: false }).changes;
+		expect(unshared.notes).toContain('shareHistories: off: every line stores its own river');
+		expect(unshared.notes.some((n) => /share river storage/.test(n))).toBe(false);
+		// A gap of 0 is buckets off: asked of an unbucketed spot, no change; a spot's own wider gap stands.
+		expect(litePreset(flop, { runoutBuckets: 0 }).changes.settings.map((s) => s.setting)).not.toContain('runoutBuckets');
+		expect(litePreset({ ...flop, runoutBuckets: 6 }).changes.settings.map((s) => s.setting)).not.toContain('runoutBuckets');
+		expect(litePreset(flop).changes.notes.find((n) => n.startsWith('runoutBuckets'))).toMatch(/^runoutBuckets: gap 3: /);
+	});
+
+	it('describes the sampling it sets as the sampler reads it', () => {
+		const notes = (sampling: object): string | undefined =>
+			litePreset(flop, { sampling }).changes.notes.find((n) => n.startsWith('approximations.chanceSampling'));
+		expect(notes({})).toBe("approximations.chanceSampling: every later round's deals sampled at p 0.35");
+		expect(notes({ p: 0.5 })).toMatch(/at p 0\.5$/);
+		expect(notes({ every: 2, p: 0.9 })).toMatch(/walked once every 2 iterations/);
+	});
+
+	it('gives one note per change', () => {
+		for (const { changes } of [litePreset(flop), litePreset({ ...flop, removeActions: ['check check / bet 18.15'] }, { noDonk: true }), largeTree(flop), largeTree({ ...flop, compactStorage: {} })]) {
+			expect(changes.notes).toHaveLength(changes.sizesCut.length + changes.settings.length);
+		}
 	});
 
 	it('is what solveLite solves, and solveLite hands its report back', () => {
@@ -106,6 +140,13 @@ describe('largeTree changes', () => {
 		const compact = largeTree(flop, { storage: 'compact' }).changes;
 		expect(compact.settings).toContainEqual({ setting: 'compactStorage', from: undefined, to: {} });
 		expect(compact.settings.some((s) => s.setting === 'precision')).toBe(false);
+	});
+
+	it('reports the sampling the solve gets, not the sampling it offered', () => {
+		const off = largeTree(flop, { options: { approximations: { chanceSampling: undefined } } });
+		expect(off.options.approximations?.chanceSampling).toBeUndefined();
+		expect(off.changes.settings.map((s) => s.setting)).not.toContain('approximations.chanceSampling');
+		expect(off.changes.notes.some((n) => /chanceSampling/.test(n))).toBe(false);
 	});
 
 	it('reports nothing it did not change', () => {
