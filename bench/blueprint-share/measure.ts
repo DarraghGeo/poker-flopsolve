@@ -2,7 +2,7 @@
  * Issue #85: accuracy of issue #47's blueprint with `shareHistories`, in Node
  * on four threads at 32 bits (the WebAssembly engine).
  *
- *   node --import tsx bench/blueprint-share/measure.ts <rainbow|two-tone|monotone> <none|river|turn+river> [iterations] [sampling,coarse]
+ *   node --import tsx bench/blueprint-share/measure.ts <rainbow|two-tone|monotone> <none|river|turn+river> [iterations] [sampling|sampling<p>,compact|compact-nearest,coarse]
  *
  * The blueprint is `bench/nested`'s `1size-b3`: T's flop betting, one 0.75
  * bet on the turn and river with no raise, `runoutBuckets: 3`. It is solved
@@ -36,6 +36,7 @@ import { COMBOS, createRun, defineSpot, NodeKind } from '../../src/index.ts';
 import type { Approximations, Solution, SolveRun, SpotConfig } from '../../src/index.ts';
 import { matchupMass, Mode } from '../../src/cfr.ts';
 import { resolveSubgame } from '../../src/resolve.ts';
+import { wasmStorage } from '../../src/wasm-storage.ts';
 import {
 	configFromJson, configToJson, fromJson, lineNode, nodeEvs, openMass, rootActionEvs, rootEvs, toJson, turnBoard,
 } from '../nested/lib.ts';
@@ -45,8 +46,10 @@ const [boardName, shareName, iterArg, approxArg] = process.argv.slice(2) as [Boa
 const CAP = Number(iterArg ?? 400);
 const TARGET = Number(process.env.BLUEPRINT_TARGET ?? 0.3);
 const approxNames = approxArg ? approxArg.split(',') : [];
+// `sampling` walks each deal with probability 0.35, `sampling0.9` with 0.9 (issue #105).
+const samplingName = approxNames.find((name) => name.startsWith('sampling'));
 const approximations: Approximations = {
-	...(approxNames.includes('sampling') ? { chanceSampling: {} } : {}),
+	...(samplingName ? { chanceSampling: samplingName === 'sampling' ? {} : { p: Number(samplingName.slice(8)) } } : {}),
 	// The blueprint's own buckets are at a gap of 3, so the coarse copy needs a wider one.
 	...(approxNames.includes('coarse') ? { coarseStart: { iterations: 40, runoutBuckets: 6 } } : {}),
 };
@@ -58,7 +61,12 @@ const LINE_COUNT = 3;
 const MiB = 2 ** 20;
 
 const full = fullTree(boardName);
-const config: SpotConfig = blueprintOf(boardName, shareName);
+// `compact` stores 8-bit regrets and sums rounded at random, `compact-nearest` rounded to nearest (issue #105).
+const compactName = approxNames.find((name) => name.startsWith('compact'));
+const config: SpotConfig = {
+	...blueprintOf(boardName, shareName),
+	...(compactName ? { compactStorage: compactName === 'compact-nearest' ? { nearest: true } : {} } : {}),
+};
 const later = {
 	betSizes: full.betSizes, raiseSizes: full.raiseSizes, maxRaises: full.maxRaises, allowAllIn: full.allowAllIn, maxBytes: full.maxBytes,
 };
@@ -72,10 +80,10 @@ const isOwnReference = RESOLVES && shareName === 'none' && approxNames.length ==
 // ---------------------------------------------------------------- blueprint
 const spot = defineSpot(config);
 console.log(
-	`${tag}: ${spot.estimate.decisionNodes} nodes, ${spot.estimate.runouts} runouts, ${(spot.estimate.bytes / MiB).toFixed(0)} MiB f32`,
+	`${tag}: ${spot.estimate.decisionNodes} nodes, ${spot.estimate.runouts} runouts, ${((spot.estimate.compactBytes ?? spot.estimate.bytes) / MiB).toFixed(0)} MiB ${compactName ? "8-bit" : "f32"}`,
 );
 const started = performance.now();
-const run = createRun(spot, { workers: 4, approximations });
+const run = createRun(spot, { workers: 4, approximations, ...(compactName ? { wasmStorage } : {}) });
 const history: { iterations: number; seconds: number; exploitability: number }[] = [];
 let done = 0;
 let next = 20;
@@ -280,7 +288,7 @@ writeFileSync(
 	JSON.stringify(
 		{
 			tag,
-			storageBytes: spot.estimate.bytes,
+			storageBytes: spot.estimate.compactBytes ?? spot.estimate.bytes,
 			peakRss,
 			engine,
 			seconds,

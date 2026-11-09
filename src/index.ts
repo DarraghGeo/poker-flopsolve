@@ -262,6 +262,19 @@ export interface SpotConfig {
 	 * but finds no coarser copy at a gap of 3. `bench/blueprint-share/` has
 	 * the scripts and figures.
 	 *
+	 * Where a shared solve stops depends on its first few iterations (issue
+	 * #105). A shared block plays one strategy for every history meeting in
+	 * it, so the game has many stable points, and which one the solve settles
+	 * on is decided early, when regret matching plays nearly pure. Any
+	 * randomness then picks another: chance sampling, 8-bit stochastic
+	 * rounding, even float rounding under CFR+. On #103's turn spot
+	 * (exploitability 5.8% of pot), sampling at p 0.9 ended at 0.3–1.6%
+	 * depending on the seed. On a second turn spot (0.7%) it changed
+	 * nothing, and on the blueprint above it did not lower the plateau
+	 * either: 2.7–2.9% against 2.6–2.7%. Do not count on it. No
+	 * deterministic change found was better on both turn spots.
+	 * `bench/share-noise/` has the measurements.
+	 *
 	 * `true` shares the river. See `ShareHistories` for the turn and for
 	 * lossier buckets.
 	 */
