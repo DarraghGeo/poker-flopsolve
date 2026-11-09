@@ -15,7 +15,7 @@
  *   node can be matched action for action.
  */
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
@@ -23,7 +23,35 @@ import { comboIndex, COMBOS, parseCard } from '../../src/cards.ts';
 import type { Spot, SpotConfig } from '../../src/index.ts';
 import { NodeKind } from '../../src/tree.ts';
 
-const HERE = join(dirname(fileURLToPath(import.meta.url)), 'napkinpoker');
+/**
+ * Where the fixtures live. Their ranges come from course material, so they are
+ * kept in the private napkinpoker repository (napkinpoker#139), not here:
+ * `NAPKIN_REFERENCE` names the folder, else a napkinpoker checkout beside this
+ * repository is used.
+ */
+const SIBLING = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'napkinpoker', 'tools', 'bench', 'flopsolve', 'reference');
+
+/** The fixture folder, or null when it is not available on this machine. */
+export function napkinDir(): string | null {
+	const dir = process.env.NAPKIN_REFERENCE || SIBLING;
+	return existsSync(join(dir, 'spots')) ? dir : null;
+}
+
+/** Whether the fixtures can be loaded; tests skip themselves when not. */
+export function napkinAvailable(): boolean {
+	return napkinDir() !== null;
+}
+
+function fixtureDir(): string {
+	const dir = napkinDir();
+	if (dir === null) {
+		throw new Error(
+			'napkinpoker reference fixtures not found: check out DarraghGeo/napkinpoker beside this repository, ' +
+				'or set NAPKIN_REFERENCE to its tools/bench/flopsolve/reference folder',
+		);
+	}
+	return dir;
+}
 
 /** One street's betting in a stored spot. */
 interface StoredStreet {
@@ -82,6 +110,7 @@ let spotCache: NapkinSpot[] | undefined;
 /** Every stored spot, by id. */
 export function napkinSpots(): NapkinSpot[] {
 	if (spotCache) return [...spotCache];
+	const HERE = fixtureDir();
 	const cards = JSON.parse(readFileSync(join(HERE, 'cards.json'), 'utf8')) as Record<
 		string,
 		{ turns: string[]; rivers: string[] }
@@ -167,7 +196,7 @@ const nodeCache = new Map<string, NapkinNode[]>();
 export function napkinNodes(street: 'flop' | 'turn'): NapkinNode[] {
 	const cached = nodeCache.get(street);
 	if (cached) return [...cached];
-	const text = gunzipSync(readFileSync(join(HERE, `${street}.jsonl.gz`))).toString('utf8');
+	const text = gunzipSync(readFileSync(join(fixtureDir(), `${street}.jsonl.gz`))).toString('utf8');
 	const nodes = text
 		.split('\n')
 		.filter((line) => line.length > 0)

@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { napkinNodes } from '../bench/reference/napkinpoker.ts';
+import { napkinAvailable, napkinNodes } from '../bench/reference/napkinpoker.ts';
 import type { NapkinNode } from '../bench/reference/napkinpoker.ts';
 import { COMBO_CARDS, COMBOS, parseCards } from '../src/cards.ts';
 import { lineReach, MIN_REACH, offCards, pairSubset, scoreNode, storedNodes } from '../bench/reference/score.ts';
@@ -59,7 +59,8 @@ describe('napkinpoker scorer', () => {
 		expect(pairSubset(['X', 'B500'], ['X', 'B759'])).toBeNull();
 	});
 
-	it('scores turn nodes by the reach of their flop line, which their own reach does not show', () => {
+	// Needs the fixtures, which live in private napkinpoker (#119).
+	it.skipIf(!napkinAvailable())('scores turn nodes by the reach of their flop line, which their own reach does not show', () => {
 		const turns = napkinNodes('turn').filter((n) => n.spot === 'f03');
 		expect(turns.every((n) => n.reach[0] === 1 && n.reach[1] === 1)).toBe(true);
 		// After a check, IP bets 75% with 1.7% of its range: too rare for the
