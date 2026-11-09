@@ -840,13 +840,13 @@ values neither solve trains closely:
 
 | Spot | Board | Pot | Iterations, time | Played-action regret error, flop / turn (worst node) |
 |---|---|---|---|---|
-| f03 | 7c 6s Jc | 3-bet | 140, 57 s | 0.014 / 0.020% (0.064) |
-| f15 | As Kc 3d | 3-bet | 140, 90 s | 0.041 / 0.021% (0.153) |
-| f23 | 2d 3h 2c | 3-bet | 160, 92 s | 0.019 / 0.020% (0.058) |
-| f79 | 4s 7c 4c | 3-bet | 130, 77 s | 0.017 / 0.022% (0.095) |
-| f85 | 5s Js 6s | single-raised | 390, 278 s | 0.018 / 0.019% (0.055) |
-| f05 | 5s Ts Ac | single-raised | 410, 729 s | 0.021 / 0.050% (0.158) |
-| f01 | 7h 5c 7s | single-raised | 440, 678 s | 0.024 / 0.016% (0.059) |
+| f03 | 7c 6s Jc | 3-bet | 140, 61 s | 0.014 / 0.020% (0.064) |
+| f15 | As Kc 3d | 3-bet | 140, 92 s | 0.041 / 0.021% (0.153) |
+| f23 | 2d 3h 2c | 3-bet | 160, 79 s | 0.019 / 0.021% (0.062) |
+| f79 | 4s 7c 4c | 3-bet | 130, 59 s | 0.017 / 0.023% (0.096) |
+| f85 | 5s Js 6s | single-raised | 390, 249 s | 0.018 / 0.019% (0.055) |
+| f05 | 5s Ts Ac | single-raised | 410, 555 s | 0.021 / 0.050% (0.158) |
+| f01 | 7h 5c 7s | single-raised | 440, 698 s | 0.024 / 0.017% (0.059) |
 
 **Each option.** Measured on three 3-bet pots (f03 two-tone, f15 rainbow, f79 paired), on
 four threads, at the iterations the exact solve took to 0.3% of pot. That makes each row

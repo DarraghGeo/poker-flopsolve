@@ -1,11 +1,11 @@
-f79 it 20 expl 11.590% 14 s
-f79 it 40 expl 3.071% 26 s
-f79 it 60 expl 1.314% 37 s
-f79 it 80 expl 0.735% 48 s
-f79 it 100 expl 0.471% 60 s
-f79 it 110 expl 0.381% 66 s
-f79 it 120 expl 0.321% 72 s
-f79 it 130 expl 0.278% 77 s
+f79 it 20 expl 11.590% 10 s
+f79 it 40 expl 3.071% 19 s
+f79 it 60 expl 1.314% 28 s
+f79 it 80 expl 0.735% 37 s
+f79 it 100 expl 0.471% 45 s
+f79 it 110 expl 0.381% 50 s
+f79 it 120 expl 0.321% 54 s
+f79 it 130 expl 0.278% 59 s
 f79     flop                  reach 1.00/1.00 err mean 0.466 played 0.025 max 1.536 self 0.056 | X 0.03 (0.53/0.54) B759 0.08 (0.09/0.07) B1725 0.04 (0.37/0.38) A8900 1.71 (0.00/0.00)
 f79     flop B1725            reach 1.00/0.38 err mean 0.098 played 0.006 max 0.393 self 0.011 | F 0.07 (0.37/0.37) C 0.04 (0.55/0.55) R5175 0.11 (0.05/0.05) A8900 0.17 (0.03/0.03)
 f79     flop B759             reach 1.00/0.07 err mean 1.358 played 0.072 max 3.394 self 0.049 | F 0.24 (0.20/0.20) C 0.08 (0.57/0.56) R2277 0.13 (0.23/0.24) A8900 4.98 (0.00/0.00)
@@ -15,18 +15,18 @@ f79     flop B1725,R5175      reach 0.38/0.05 err mean 0.349 played 0.002 max 2.
 f79     flop B759,R2277       reach 0.07/0.24 err mean 0.235 played 0.005 max 1.219 self 0.014 | F 0.44 (0.27/0.26) C 0.03 (0.73/0.74)
 f79     flop X,B759           reach 0.54/0.51 err mean 0.087 played 0.016 max 0.190 self 0.028 | F 0.11 (0.41/0.41) C 0.04 (0.22/0.22) R2277 0.05 (0.36/0.37) A8900 0.14 (0.00/0.00)
 f79     flop X,B759,R2277     reach 0.51/0.20 err mean 0.080 played 0.001 max 0.443 self 0.002 | F 0.15 (0.27/0.27) C 0.01 (0.73/0.73)
-f79-Ks  turn B1725,C,dKs      reach 1.00/1.00 err mean 0.213 played 0.033 max 0.994 self 0.059 | X 0.39 (0.10/0.10) B4313 0.05 (0.61/0.64) A7175 0.20 (0.29/0.27)
-f79-Ks  turn B759,C,dKs       reach 1.00/1.00 err mean 0.214 played 0.015 max 1.188 self 0.020 | X 0.30 (0.15/0.14) B2864 0.05 (0.82/0.83) A8141 0.30 (0.03/0.03)
-f79-Ks  turn X,X,dKs          reach 1.00/1.00 err mean 0.335 played 0.018 max 1.014 self 0.030 | X 0.13 (0.22/0.21) B1725 0.02 (0.78/0.79) A8900 0.85 (0.00/0.00)
+f79-Ks  turn B1725,C,dKs      reach 1.00/1.00 err mean 0.210 played 0.034 max 1.036 self 0.060 | X 0.39 (0.10/0.10) B4313 0.05 (0.61/0.64) A7175 0.19 (0.29/0.27)
+f79-Ks  turn B759,C,dKs       reach 1.00/1.00 err mean 0.247 played 0.016 max 1.225 self 0.021 | X 0.32 (0.15/0.14) B2864 0.05 (0.82/0.83) A8141 0.37 (0.03/0.03)
+f79-Ks  turn X,X,dKs          reach 1.00/1.00 err mean 0.381 played 0.019 max 1.347 self 0.031 | X 0.13 (0.22/0.21) B1725 0.02 (0.78/0.79) A8900 0.99 (0.00/0.00)
 f79-Ks  turn B1725,R5175,C,dKs reach 1.00/1.00 err mean 0.095 played 0.001 max 0.681 self 0.003 | X 0.19 (0.00/0.00) A3725 0.00 (1.00/1.00)
-f79-Ks  turn B759,R2277,C,dKs reach 1.00/1.00 err mean 0.228 played 0.095 max 0.842 self 0.105 | X 0.22 (0.26/0.27) B5141 0.30 (0.39/0.36) A6623 0.16 (0.35/0.37)
-f79-Ks  turn X,B759,C,dKs     reach 1.00/1.00 err mean 0.841 played 0.016 max 1.234 self 0.024 | X 0.03 (0.64/0.65) B2864 0.08 (0.36/0.35) A8141 2.42 (0.00/0.00)
-f79-Ks  turn X,B759,R2277,C,dKs reach 1.00/1.00 err mean 0.196 played 0.015 max 1.271 self 0.034 | X 0.11 (0.30/0.30) B5141 0.24 (0.31/0.29) A6623 0.24 (0.39/0.41)
-f79-Ts  turn B1725,C,dTs      reach 1.00/1.00 err mean 0.093 played 0.015 max 0.279 self 0.021 | X 0.11 (0.25/0.24) B4313 0.09 (0.29/0.28) A7175 0.08 (0.45/0.47)
-f79-Ts  turn B759,C,dTs       reach 1.00/1.00 err mean 0.189 played 0.031 max 0.536 self 0.038 | X 0.09 (0.45/0.43) B2864 0.12 (0.48/0.48) A8141 0.36 (0.07/0.09)
-f79-Ts  turn X,X,dTs          reach 1.00/1.00 err mean 0.177 played 0.026 max 0.783 self 0.063 | X 0.06 (0.50/0.50) B1725 0.07 (0.46/0.47) A8900 0.41 (0.04/0.03)
-f79-Ts  turn B1725,R5175,C,dTs reach 1.00/1.00 err mean 0.011 played 0.003 max 0.113 self 0.001 | X 0.02 (0.01/0.00) A3725 0.00 (0.99/1.00)
-f79-Ts  turn B759,R2277,C,dTs reach 1.00/1.00 err mean 0.214 played 0.020 max 0.611 self 0.046 | X 0.13 (0.56/0.55) B5141 0.23 (0.07/0.08) A6623 0.28 (0.37/0.38)
-f79-Ts  turn X,B759,C,dTs     reach 1.00/1.00 err mean 0.236 played 0.008 max 0.791 self 0.016 | X 0.00 (0.93/0.95) B2864 0.19 (0.07/0.05) A8141 0.52 (0.00/0.00)
-f79-Ts  turn X,B759,R2277,C,dTs reach 1.00/1.00 err mean 0.160 played 0.012 max 0.689 self 0.023 | X 0.04 (0.67/0.67) B5141 0.23 (0.08/0.05) A6623 0.21 (0.26/0.27)
-{"id":"f79","name":"SB vs BU 3bet · 4s7c4c · flop","board":"4s 7c 4c","potType":"3BP","precision":"f32","bytes":583085486,"iterations":130,"exploitability":0.2777419354536116,"seconds":76.745187208,"reached":true,"summary":{"flopMeanError":0.33536122159829695,"flopPlayedError":0.017147171352837318,"flopWorstPlayed":0.0723544547293213,"turnPlayedError":0.022087423626644193,"turnWorstPlayed":0.09476604330302911,"flopMaxError":3.393608487924664,"turnMeanError":0.22884781394115308,"turnMaxError":1.2707497741616895,"rootOop":{"id":"f79","path":"","street":"flop","reach":[1,1],"meanError":0.46552988741989904,"maxError":1.5363630297176771,"playedError":0.024793082505819634,"selfLoss":0.055869561877927756,"byAction":[{"action":"X","meanError":0.02661560405772964,"ours":0.5347501413884955,"stored":0.5436479004903276},{"action":"B759","meanError":0.08210851534595191,"ours":0.09342500423845485,"stored":0.07255948704747692},{"action":"B1725","meanError":0.04007319329710686,"ours":0.3718096362072992,"stored":0.3838439959141013},{"action":"A8900","meanError":1.7133222369788081,"ours":0.000015218165749185834,"stored":0.00001012141804461463}]},"rootIp":{"id":"f79","path":"X","street":"flop","reach":[1,0.5436],"meanError":0.16306764163599646,"maxError":0.44337139008639853,"playedError":0.01882290441427739,"selfLoss":0.03172680870107664,"byAction":[{"action":"X","meanError":0.010169106596105293,"ours":0.47641468480001464,"stored":0.48190535257112027},{"action":"B759","meanError":0.03359528558518339,"ours":0.5223375213864877,"stored":0.5117509474322481},{"action":"B1725","meanError":0.3784368781306469,"ours":0.001167362332355496,"stored":0.0062916470162200444},{"action":"A8900","meanError":0.23006929623205036,"ours":0.0000804314811428897,"stored":0.000042108099914099486}]},"rootLossOop":0.04418108958986495,"rootLossIp":0.022160143451053417,"rootRefLossOop":0.037474502977584145,"rootRefLossIp":0.026571498363642514}}
+f79-Ks  turn B759,R2277,C,dKs reach 1.00/1.00 err mean 0.224 played 0.096 max 0.874 self 0.107 | X 0.19 (0.26/0.27) B5141 0.30 (0.39/0.36) A6623 0.18 (0.35/0.37)
+f79-Ks  turn X,B759,C,dKs     reach 1.00/1.00 err mean 0.888 played 0.016 max 1.372 self 0.025 | X 0.03 (0.64/0.65) B2864 0.08 (0.36/0.35) A8141 2.56 (0.00/0.00)
+f79-Ks  turn X,B759,R2277,C,dKs reach 1.00/1.00 err mean 0.185 played 0.015 max 1.266 self 0.035 | X 0.09 (0.30/0.30) B5141 0.24 (0.31/0.29) A6623 0.23 (0.39/0.41)
+f79-Ts  turn B1725,C,dTs      reach 1.00/1.00 err mean 0.100 played 0.015 max 0.239 self 0.022 | X 0.12 (0.25/0.24) B4313 0.09 (0.29/0.28) A7175 0.09 (0.45/0.47)
+f79-Ts  turn B759,C,dTs       reach 1.00/1.00 err mean 0.179 played 0.032 max 0.635 self 0.041 | X 0.09 (0.45/0.43) B2864 0.13 (0.48/0.48) A8141 0.32 (0.07/0.09)
+f79-Ts  turn X,X,dTs          reach 1.00/1.00 err mean 0.180 played 0.029 max 0.482 self 0.067 | X 0.07 (0.50/0.50) B1725 0.08 (0.46/0.47) A8900 0.40 (0.04/0.03)
+f79-Ts  turn B1725,R5175,C,dTs reach 1.00/1.00 err mean 0.011 played 0.003 max 0.114 self 0.001 | X 0.02 (0.01/0.00) A3725 0.00 (0.99/1.00)
+f79-Ts  turn B759,R2277,C,dTs reach 1.00/1.00 err mean 0.216 played 0.021 max 0.622 self 0.046 | X 0.14 (0.56/0.55) B5141 0.24 (0.07/0.08) A6623 0.27 (0.37/0.38)
+f79-Ts  turn X,B759,C,dTs     reach 1.00/1.00 err mean 0.200 played 0.009 max 0.671 self 0.017 | X 0.00 (0.93/0.95) B2864 0.18 (0.07/0.05) A8141 0.42 (0.00/0.00)
+f79-Ts  turn X,B759,R2277,C,dTs reach 1.00/1.00 err mean 0.119 played 0.012 max 0.429 self 0.024 | X 0.04 (0.67/0.67) B5141 0.16 (0.08/0.05) A6623 0.16 (0.26/0.27)
+{"id":"f79","name":"SB vs BU 3bet · 4s7c4c · flop","board":"4s 7c 4c","potType":"3BP","precision":"f32","bytes":583085486,"iterations":130,"exploitability":0.2777419354536116,"seconds":58.941810722,"reached":true,"summary":{"flopMeanError":0.33536122159829695,"flopPlayedError":0.017147171352837318,"flopWorstPlayed":0.0723544547293213,"turnPlayedError":0.022676891026555932,"turnWorstPlayed":0.09581578670640345,"flopMaxError":3.393608487924664,"turnMeanError":0.23114590866787887,"turnMaxError":1.3723031509324952,"rootOop":{"id":"f79","path":"","street":"flop","reach":[1,1],"meanError":0.46552988741989904,"maxError":1.5363630297176771,"playedError":0.024793082505819634,"selfLoss":0.055869561877927756,"byAction":[{"action":"X","meanError":0.02661560405772964,"ours":0.5347501413884955,"stored":0.5436479004903276},{"action":"B759","meanError":0.08210851534595191,"ours":0.09342500423845485,"stored":0.07255948704747692},{"action":"B1725","meanError":0.04007319329710686,"ours":0.3718096362072992,"stored":0.3838439959141013},{"action":"A8900","meanError":1.7133222369788081,"ours":0.000015218165749185834,"stored":0.00001012141804461463}]},"rootIp":{"id":"f79","path":"X","street":"flop","reach":[1,0.5436],"meanError":0.16306764163599646,"maxError":0.44337139008639853,"playedError":0.01882290441427739,"selfLoss":0.03172680870107664,"byAction":[{"action":"X","meanError":0.010169106596105293,"ours":0.47641468480001464,"stored":0.48190535257112027},{"action":"B759","meanError":0.03359528558518339,"ours":0.5223375213864877,"stored":0.5117509474322481},{"action":"B1725","meanError":0.3784368781306469,"ours":0.001167362332355496,"stored":0.0062916470162200444},{"action":"A8900","meanError":0.23006929623205036,"ours":0.0000804314811428897,"stored":0.000042108099914099486}]},"rootLossOop":0.04418108958986495,"rootLossIp":0.022160143451053417,"rootRefLossOop":0.037474502977584145,"rootRefLossIp":0.026571498363642514}}
