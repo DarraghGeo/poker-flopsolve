@@ -38,5 +38,5 @@
 {"url":null,"title":"Multithreaded chanceSampling (it ignores workers today)","issue":99,"state":"active","updated":"2026-11-09T03:29:23.783Z"}
 {"url":null,"title":"Recover turn re-solve quality from a shared blueprint (2-3% vs 0.5-0.7% of subgame pot)","issue":101,"state":"active","updated":"2026-11-09T03:29:31.574Z"}
 {"url":"https://claude.ai/code/session_014RSNFksdqupPWm88fCe8qz","title":"Scorer and combination test matrix against the napkinpoker references","issue":103,"state":"active","updated":"2026-11-09T04:00:38.900Z"}
-{"url":null,"title":"Whole three-size tree in 1-2 GiB: diagnose the thinSizes + shareHistories stall, then find the best combination","issue":102,"state":"active","updated":"2026-11-09T03:29:38.655Z"}
+{"url":"https://claude.ai/code/session_014RSNFkcGPPrhBuRuFmUKjX","title":"Whole three-size tree in 1-2 GiB: diagnose the thinSizes + shareHistories stall, then find the best combination","issue":102,"state":"active","updated":"2026-11-09T04:00:38.900Z"}
 {"url":null,"title":"Lite mode: one opt-in for the three-size-flop blueprint, sharing, sampling and turn re-solves, tuned for speed","issue":100,"state":"active","updated":"2026-11-09T04:00:37.086Z"}
