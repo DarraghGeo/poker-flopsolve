@@ -1,0 +1,1 @@
+{"id":"f03","name":"SB vs BU 3bet · 7c6sJc · flop","engine":"wasm","storageMiB":522.6,"seconds":107,"exploitability":0.433,"decisions":[{"at":"OOP root","loss":0.069,"storedOwn":0.0692},{"at":"IP after check","loss":0.08,"storedOwn":0.0608}]}

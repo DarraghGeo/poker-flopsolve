@@ -5,7 +5,9 @@
  *   node --import tsx bench/combos/napkin.ts <combination> [iterations] [spot ids]
  *
  * Each spot is solved with the combination (`spots.ts`) on 4 threads for
- * `iterations` (default 300), then OOP's play at the root and IP's after a
+ * `iterations` (default 300): by default the 3-bet pots (single-raised
+ * ones are 2.8–7.7 GiB exact, too slow for a 20-minute run) and the small
+ * monotone single-raised f85. Then OOP's play at the root and IP's after a
  * check are valued at the stored postflop-solver EVs: each hand's best stored
  * action minus the stored EV of the mix this solve plays, weighted by the
  * hand's stored reach, % of pot. Stored EVs are relative to the node, but
@@ -23,7 +25,7 @@ import { matchLabel, napkinNodes, napkinSpots, nodeAt } from '../reference/napki
 import type { NapkinNode } from '../reference/napkinpoker.ts';
 import { combination } from './spots.ts';
 
-const DEFAULT_SPOTS = ['f06', 'f15', 'f20', 'f02', 'f42', 'f00', 'f85'];
+const DEFAULT_SPOTS = ['f03', 'f11', 'f15', 'f19', 'f35', 'f63', 'f85'];
 const [comboName, iterArg, spotArg] = process.argv.slice(2);
 const iterations = Number(iterArg ?? 300);
 const ids = spotArg ? spotArg.split(',') : DEFAULT_SPOTS;

@@ -922,6 +922,22 @@ function updateI16(
 		}
 		store<i32>(mark, iteration);
 	}
+	if (dcfrRule && sampleRounds !== 0) {
+		// A subtree chance sampling skipped missed those iterations'
+		// discounts, as in the 32-bit update in `traverse`.
+		const at = lastUpdate + (block << 2);
+		if (catchUp) {
+			for (let t = load<i32>(at) + 1; t < iteration; t++) {
+				const age: f64 = t > 2 ? <f64>(t - 2) : 0;
+				const grown = age * Math.sqrt(age);
+				const kept = <f64>(t - 1) / <f64>t;
+				positive *= grown / (grown + 1);
+				negative *= 0.5;
+				keep *= kept * kept * kept;
+			}
+		}
+		store<i32>(at, iteration);
+	}
 	const oldRegret = <f32>load<f64>(regretAt);
 	const oldSum = <f32>(load<f64>(sumAt) * keep);
 	const w = <f32>factorWeight();

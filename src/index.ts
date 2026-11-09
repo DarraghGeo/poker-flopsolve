@@ -1362,6 +1362,44 @@ export interface Approximations {
 	 *   is choice-free, and those call frequencies are mixed bluff-catching
 	 *   choices that a best response recomputed each iteration does not
 	 *   converge to.
+	 *
+	 * Combinations of the memory levers on the round's target T (As Kh 7d,
+	 * 17.2 GiB at 32 bits) were measured by issue #102 (`bench/combos/`), and
+	 * one is offered as `largeTree` in `poker-flopsolve/wasm-storage`:
+	 * `thinSizes`, 16-bit storage on the WebAssembly engine and
+	 * `chanceSampling`. Measured on 4 threads against `thinSizes` alone at 32
+	 * bits (600 iterations, 0.154% of pot), as the EV OOP's root play and
+	 * IP's after a check lose at its per-action values: the preset settled in
+	 * 155 s at the reference's own floor (0.031 / 0.020% of pot) in 1.97 GiB
+	 * peak. These were left out:
+	 *
+	 * - `shareHistories` on top of `thinSizes` (0.42 GiB at 16 bits): its
+	 *   exploitability stalls near 5% of pot (on T₀ 4.4%, where sharing
+	 *   alone sits at 8%: sharing's own floor, not a bug; it shares only
+	 *   rivers whose subtrees are identical, so thinning cannot make it
+	 *   share mismatched ones, and the threads split by runout, so a shared
+	 *   block is one thread's). Root play lost 0.048% of pot against 0.031%,
+	 *   per-hand root EVs 0.5% off against 0.05%, and it ran no faster, at
+	 *   1.7 s an iteration against 1.56 unsampled. With `runoutBuckets: 3`
+	 *   too, 0.25 GiB: the same root loss, 0.7–1.0% EV error, 5.1% at worst.
+	 * - `shareHistories` without `thinSizes` (1.48 GiB at 16 bits): it saves
+	 *   storage only, so an iteration costs the full tree's, 2.7 s on T₀
+	 *   where the thinned tree takes 0.6; T itself would take far beyond the
+	 *   15 minutes asked.
+	 * - `runoutBuckets: 3` on top (0.86 GiB, 87 s to settle with sampling,
+	 *   0.14 s an iteration): the same root play, but per-hand root EVs 0.2%
+	 *   of pot off on average and 2.3% at worst against 0.05 and 0.3. Left
+	 *   to the caller, who can add it to the preset's config.
+	 * - `compactStorage` in place of 16 bits: the same root play in 1.48 GiB
+	 *   peak instead of 1.97, about 10% slower, exploitability 0.53% of pot
+	 *   at 1600 iterations against 0.35. Offered as `storage: 'compact'`.
+	 * - `lineRunouts` (JavaScript engine only) was not measured on T: the
+	 *   round asked for the WebAssembly engine on 4 threads.
+	 *
+	 * What `thinSizes` itself costs against the full tree was measured on T₀
+	 * against an exact solve (561 iterations, 0.22% of pot): root play 0.04%
+	 * of pot with or without the storage levers and sampling, per-hand root
+	 * EVs about 1.5% of pot off on average, 5.5% at worst.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
@@ -1385,7 +1423,9 @@ export interface Approximations {
 	 *
 	 * Costs: one float per hand per stored deal per chance node, 6–31 MB on
 	 * those flops (about 12–20% beside their storage), counted against
-	 * `maxBytes`; 32- or 64-bit storage, or `compactStorage` over either.
+	 * `maxBytes`. Any storage: 32-, 64- or 16-bit, or `compactStorage`
+	 * over 32 or 16 bits (16-bit since issue #102, with the same DCFR
+	 * catch-up, in both engines).
 	 *
 	 * Threads (issue #99): it runs on `workers` threads, in the JavaScript
 	 * pool and on the WebAssembly engine's threads alike. Threads split the
@@ -1653,7 +1693,6 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 
 	const active = buildActiveLists(spot.runouts, spot.players, showdown);
 	const hands = buildHandSpace(spot.runouts, spot.players, active);
-	if (samplingOptions && quantised) throw new Error('chanceSampling needs 32- or 64-bit storage');
 	const samplingPlan = samplingOptions ? planSampling(spot.tree, spot.runouts, active, layout, samplingOptions) : undefined;
 	// Measured as the precision choice above measures storage: by the estimate;
 	// with compact storage, which that estimate does not know, by the layout.

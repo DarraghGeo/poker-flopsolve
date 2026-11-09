@@ -1,0 +1,70 @@
+== T0 thin+i16 10,20,40,80,120,160,200,250,300,400,500,600
+T0-thin+i16: 207 nodes, 2352 runouts; estimate f32 1.30 GiB, i16 0.67, compact -
+  engine wasm, 4 threads, storage 0.648 GiB, setup 0.5 s
+  {"iterations":10,"seconds":8.4,"perIteration":0.844,"exploitability":78.182,"evError":[{"mean":27.5251,"max":156.962},{"mean":15.6358,"max":209.599}],"loss":[{"mean":4.0465,"max":18.177}],"peakRssGiB":0.92}
+  {"iterations":20,"seconds":15.3,"perIteration":0.763,"exploitability":34.479,"evError":[{"mean":9.4662,"max":51.449},{"mean":8.4909,"max":103.445}],"loss":[{"mean":0.9216,"max":6.975}],"drift":0.1827,"peakRssGiB":0.92}
+  {"iterations":40,"seconds":29,"perIteration":0.726,"exploitability":11.098,"evError":[{"mean":3.5912,"max":12.969},{"mean":4.6002,"max":28.33}],"loss":[{"mean":0.5156,"max":3.393}],"drift":0.1562,"peakRssGiB":0.92}
+  {"iterations":80,"seconds":56.4,"perIteration":0.706,"exploitability":3.485,"evError":[{"mean":1.6696,"max":8.696},{"mean":2.8708,"max":8.73}],"loss":[{"mean":0.2555,"max":1.473}],"drift":0.1843,"peakRssGiB":0.92}
+  {"iterations":120,"seconds":83.6,"perIteration":0.696,"exploitability":1.668,"evError":[{"mean":1.5182,"max":5.445},{"mean":2.3021,"max":5.366}],"loss":[{"mean":0.1128,"max":0.527}],"drift":0.1262,"peakRssGiB":0.92}
+  {"iterations":160,"seconds":111.2,"perIteration":0.695,"exploitability":1.121,"evError":[{"mean":1.5273,"max":5.549},{"mean":2.1043,"max":5.9}],"loss":[{"mean":0.068,"max":0.239}],"drift":0.0571,"peakRssGiB":0.92}
+  {"iterations":200,"seconds":138.8,"perIteration":0.694,"exploitability":0.757,"evError":[{"mean":1.4987,"max":5.598},{"mean":1.9929,"max":6.099}],"loss":[{"mean":0.0532,"max":0.215}],"drift":0.0315,"peakRssGiB":0.92}
+  {"iterations":250,"seconds":173.1,"perIteration":0.692,"exploitability":0.49,"evError":[{"mean":1.4707,"max":5.642},{"mean":1.8685,"max":6.194}],"loss":[{"mean":0.0453,"max":0.192}],"drift":0.0258,"peakRssGiB":0.92}
+  {"iterations":300,"seconds":207.1,"perIteration":0.69,"exploitability":0.342,"evError":[{"mean":1.4552,"max":5.686},{"mean":1.7606,"max":6.276}],"loss":[{"mean":0.0412,"max":0.202}],"drift":0.0183,"peakRssGiB":0.92}
+  {"iterations":400,"seconds":275.3,"perIteration":0.688,"exploitability":0.545,"evError":[{"mean":1.3385,"max":5.154},{"mean":1.6032,"max":6.159}],"loss":[{"mean":0.0508,"max":0.203}],"drift":0.0241,"peakRssGiB":0.92}
+  {"iterations":500,"seconds":343,"perIteration":0.686,"exploitability":0.242,"evError":[{"mean":1.3934,"max":5.085},{"mean":1.5826,"max":6.314}],"loss":[{"mean":0.0416,"max":0.204}],"drift":0.0149,"peakRssGiB":0.92}
+  {"iterations":600,"seconds":410.6,"perIteration":0.684,"exploitability":0.158,"evError":[{"mean":1.4179,"max":5.514},{"mean":1.5479,"max":6.386}],"loss":[{"mean":0.0377,"max":0.222}],"drift":0.0098,"peakRssGiB":0.92}
+{"spot":"T0","combination":"thin+i16","engine":"wasm","workers":4,"estimate":{"f32":1398516384,"i16":714887408,"compact":null},"storageGiB":0.648,"setupSeconds":0.5,"peakRssGiB":0.92,"settled":{"within002":{"iterations":200,"seconds":138.8},"within005":{"iterations":160,"seconds":111.2}},"reference":"bench/adaptive/results/rainbow-T0.json"}
+== T0 thin+i16+sample 10,20,40,80,120,160,200,300,400,600,800,1000,1200,1600
+T0-thin+i16+sample: 207 nodes, 2352 runouts; estimate f32 1.30 GiB, i16 0.67, compact -
+  engine wasm, 4 threads, storage 0.648 GiB, setup 0.5 s
+  {"iterations":10,"seconds":3.3,"perIteration":0.327,"exploitability":291.57,"evError":[{"mean":94.7998,"max":229.738},{"mean":90.0373,"max":403.46}],"loss":[{"mean":5.4137,"max":19.776}],"peakRssGiB":1.02}
+  {"iterations":20,"seconds":4.3,"perIteration":0.216,"exploitability":240.895,"evError":[{"mean":42.4668,"max":184.026},{"mean":31.6056,"max":320.679}],"loss":[{"mean":5.3876,"max":27.982}],"drift":0.2415,"peakRssGiB":1.02}
+  {"iterations":40,"seconds":6.5,"perIteration":0.162,"exploitability":141.112,"evError":[{"mean":21.883,"max":101.646},{"mean":19.626,"max":230.89}],"loss":[{"mean":1.3055,"max":10.316}],"drift":0.2043,"peakRssGiB":1.02}
+  {"iterations":80,"seconds":10.4,"perIteration":0.131,"exploitability":57.494,"evError":[{"mean":12.6418,"max":63.429},{"mean":10.6353,"max":115.816}],"loss":[{"mean":0.7099,"max":8.596}],"drift":0.1207,"peakRssGiB":1.02}
+  {"iterations":120,"seconds":14.6,"perIteration":0.121,"exploitability":33.718,"evError":[{"mean":7.762,"max":31.052},{"mean":7.6875,"max":61.1}],"loss":[{"mean":0.6243,"max":7.026}],"drift":0.0743,"peakRssGiB":1.02}
+  {"iterations":160,"seconds":18.7,"perIteration":0.117,"exploitability":22.301,"evError":[{"mean":4.7825,"max":13.438},{"mean":5.8629,"max":34.667}],"loss":[{"mean":0.5588,"max":5.319}],"drift":0.0642,"peakRssGiB":1.02}
+  {"iterations":200,"seconds":22.8,"perIteration":0.114,"exploitability":15.644,"evError":[{"mean":3.4344,"max":10.143},{"mean":4.7216,"max":22.604}],"loss":[{"mean":0.4927,"max":3.683}],"drift":0.0621,"peakRssGiB":1.02}
+  {"iterations":300,"seconds":33.2,"perIteration":0.111,"exploitability":7.797,"evError":[{"mean":2.2311,"max":9.635},{"mean":3.6997,"max":13.694}],"loss":[{"mean":0.3603,"max":2.285}],"drift":0.1069,"peakRssGiB":1.02}
+  {"iterations":400,"seconds":43.6,"perIteration":0.109,"exploitability":4.482,"evError":[{"mean":1.7894,"max":8.916},{"mean":3.2742,"max":8.516}],"loss":[{"mean":0.2513,"max":1.72}],"drift":0.0907,"peakRssGiB":1.02}
+  {"iterations":600,"seconds":64.5,"perIteration":0.107,"exploitability":2.4,"evError":[{"mean":1.6129,"max":7.374},{"mean":2.9374,"max":5.513}],"loss":[{"mean":0.1102,"max":0.5}],"drift":0.1348,"peakRssGiB":1.02}
+  {"iterations":800,"seconds":85.9,"perIteration":0.107,"exploitability":1.621,"evError":[{"mean":1.6001,"max":6.183},{"mean":2.6209,"max":5.893}],"loss":[{"mean":0.0719,"max":0.189}],"drift":0.0636,"peakRssGiB":1.02}
+  {"iterations":1000,"seconds":106.3,"perIteration":0.106,"exploitability":1.138,"evError":[{"mean":1.5963,"max":5.54},{"mean":2.4012,"max":6.189}],"loss":[{"mean":0.0579,"max":0.169}],"drift":0.0398,"peakRssGiB":1.02}
+  {"iterations":1200,"seconds":127.1,"perIteration":0.106,"exploitability":0.843,"evError":[{"mean":1.5663,"max":5.612},{"mean":2.2188,"max":6.315}],"loss":[{"mean":0.0508,"max":0.154}],"drift":0.028,"peakRssGiB":1.02}
+  {"iterations":1600,"seconds":168.4,"perIteration":0.105,"exploitability":0.522,"evError":[{"mean":1.4826,"max":5.354},{"mean":1.94,"max":6.308}],"loss":[{"mean":0.0435,"max":0.179}],"drift":0.0372,"peakRssGiB":1.02}
+{"spot":"T0","combination":"thin+i16+sample","engine":"wasm","workers":4,"estimate":{"f32":1398516384,"i16":714887408,"compact":null},"storageGiB":0.648,"setupSeconds":0.5,"peakRssGiB":1.02,"settled":{"within002":{"iterations":1000,"seconds":106.3},"within005":{"iterations":800,"seconds":85.9}},"reference":"bench/adaptive/results/rainbow-T0.json"}
+== T0 thin+b3+i16+sample 10,20,40,80,120,160,200,300,400,600,800,1000,1200,1600
+T0-thin+b3+i16+sample: 207 nodes, 1396 runouts; estimate f32 0.76 GiB, i16 0.39, compact -
+  engine wasm, 4 threads, storage 0.381 GiB, setup 0.4 s
+  {"iterations":10,"seconds":1.8,"perIteration":0.184,"exploitability":305.524,"evError":[{"mean":103.6691,"max":277.432},{"mean":93.5171,"max":346.809}],"loss":[{"mean":3.5413,"max":14.82}],"peakRssGiB":0.67}
+  {"iterations":20,"seconds":2.4,"perIteration":0.122,"exploitability":253.2,"evError":[{"mean":57.6919,"max":219.293},{"mean":42.4716,"max":372.83}],"loss":[{"mean":7.5081,"max":24.911}],"drift":0.2926,"peakRssGiB":0.67}
+  {"iterations":40,"seconds":3.8,"perIteration":0.094,"exploitability":153.01,"evError":[{"mean":27.3535,"max":139.852},{"mean":20.7424,"max":264.015}],"loss":[{"mean":1.7304,"max":9.789}],"drift":0.2145,"peakRssGiB":0.67}
+  {"iterations":80,"seconds":6.3,"perIteration":0.079,"exploitability":60.688,"evError":[{"mean":13.8501,"max":80.02},{"mean":10.8767,"max":130.741}],"loss":[{"mean":0.7596,"max":8.303}],"drift":0.1328,"peakRssGiB":0.67}
+  {"iterations":120,"seconds":8.9,"perIteration":0.074,"exploitability":35.719,"evError":[{"mean":8.8678,"max":41.627},{"mean":7.8531,"max":73.593}],"loss":[{"mean":0.6372,"max":7.832}],"drift":0.0753,"peakRssGiB":0.67}
+  {"iterations":160,"seconds":11.3,"perIteration":0.071,"exploitability":23.834,"evError":[{"mean":5.7211,"max":19.911},{"mean":6.0874,"max":43.654}],"loss":[{"mean":0.5612,"max":6.487}],"drift":0.0612,"peakRssGiB":0.67}
+  {"iterations":200,"seconds":13.9,"perIteration":0.07,"exploitability":16.972,"evError":[{"mean":3.8682,"max":13.347},{"mean":4.8561,"max":29.336}],"loss":[{"mean":0.485,"max":4.769}],"drift":0.0589,"peakRssGiB":0.67}
+  {"iterations":300,"seconds":20.1,"perIteration":0.067,"exploitability":8.482,"evError":[{"mean":2.3866,"max":10.745},{"mean":3.6733,"max":18.165}],"loss":[{"mean":0.3324,"max":2.236}],"drift":0.1097,"peakRssGiB":0.67}
+  {"iterations":400,"seconds":26.3,"perIteration":0.066,"exploitability":4.833,"evError":[{"mean":1.8208,"max":9.886},{"mean":3.1573,"max":11.85}],"loss":[{"mean":0.23,"max":1.446}],"drift":0.0905,"peakRssGiB":0.67}
+  {"iterations":600,"seconds":39.2,"perIteration":0.065,"exploitability":2.456,"evError":[{"mean":1.584,"max":7.362},{"mean":2.7771,"max":5.44}],"loss":[{"mean":0.1134,"max":0.548}],"drift":0.116,"peakRssGiB":0.67}
+  {"iterations":800,"seconds":52.1,"perIteration":0.065,"exploitability":1.608,"evError":[{"mean":1.6003,"max":6.363},{"mean":2.6396,"max":5.751}],"loss":[{"mean":0.0736,"max":0.196}],"drift":0.0533,"peakRssGiB":0.67}
+  {"iterations":1000,"seconds":64.9,"perIteration":0.065,"exploitability":1.125,"evError":[{"mean":1.5937,"max":5.465},{"mean":2.5162,"max":5.924}],"loss":[{"mean":0.0602,"max":0.169}],"drift":0.0317,"peakRssGiB":0.67}
+  {"iterations":1200,"seconds":77.9,"perIteration":0.065,"exploitability":0.842,"evError":[{"mean":1.55,"max":5.529},{"mean":2.3671,"max":6.02}],"loss":[{"mean":0.0531,"max":0.156}],"drift":0.0267,"peakRssGiB":0.67}
+  {"iterations":1600,"seconds":103.3,"perIteration":0.065,"exploitability":0.502,"evError":[{"mean":1.4805,"max":5.587},{"mean":2.1998,"max":6.109}],"loss":[{"mean":0.047,"max":0.203}],"drift":0.0303,"peakRssGiB":0.67}
+{"spot":"T0","combination":"thin+b3+i16+sample","engine":"wasm","workers":4,"estimate":{"f32":821344232,"i16":419952512,"compact":null},"storageGiB":0.381,"setupSeconds":0.4,"peakRssGiB":0.67,"settled":{"within002":{"iterations":1000,"seconds":64.9},"within005":{"iterations":800,"seconds":52.1}},"reference":"bench/adaptive/results/rainbow-T0.json"}
+== T0 thin+compact+sample 10,20,40,80,120,160,200,300,400,600,800,1000,1200,1600
+T0-thin+compact+sample: 207 nodes, 2352 runouts; estimate f32 1.30 GiB, i16 0.67, compact 0.46
+  engine wasm, 4 threads, storage 0.443 GiB, setup 0.5 s
+  {"iterations":10,"seconds":3.2,"perIteration":0.319,"exploitability":292.286,"evError":[{"mean":100.9701,"max":233.173},{"mean":94.2526,"max":407.086}],"loss":[{"mean":5.6146,"max":20.769}],"peakRssGiB":0.81}
+  {"iterations":20,"seconds":4.5,"perIteration":0.223,"exploitability":239.245,"evError":[{"mean":44.4382,"max":181.23},{"mean":32.0735,"max":317.775}],"loss":[{"mean":5.606,"max":30.704}],"drift":0.2486,"peakRssGiB":0.81}
+  {"iterations":40,"seconds":6.9,"perIteration":0.173,"exploitability":138.43,"evError":[{"mean":23.7308,"max":112.492},{"mean":19.6632,"max":225.937}],"loss":[{"mean":1.3284,"max":10.39}],"drift":0.2139,"peakRssGiB":0.81}
+  {"iterations":80,"seconds":11.9,"perIteration":0.148,"exploitability":55.455,"evError":[{"mean":12.5555,"max":60.573},{"mean":10.6104,"max":112.952}],"loss":[{"mean":0.6878,"max":8.533}],"drift":0.1169,"peakRssGiB":0.81}
+  {"iterations":120,"seconds":16.7,"perIteration":0.139,"exploitability":32.412,"evError":[{"mean":7.421,"max":28.119},{"mean":7.6171,"max":58.711}],"loss":[{"mean":0.5962,"max":7.129}],"drift":0.07,"peakRssGiB":0.81}
+  {"iterations":160,"seconds":21.4,"perIteration":0.134,"exploitability":21.509,"evError":[{"mean":4.6042,"max":12.447},{"mean":5.7749,"max":33.001}],"loss":[{"mean":0.5327,"max":5.342}],"drift":0.0645,"peakRssGiB":0.81}
+  {"iterations":200,"seconds":26.3,"perIteration":0.132,"exploitability":14.933,"evError":[{"mean":3.3428,"max":9.056},{"mean":4.6929,"max":21.568}],"loss":[{"mean":0.4696,"max":3.657}],"drift":0.0614,"peakRssGiB":0.81}
+  {"iterations":300,"seconds":38.7,"perIteration":0.129,"exploitability":7.36,"evError":[{"mean":2.2016,"max":8.84},{"mean":3.7976,"max":13.258}],"loss":[{"mean":0.3507,"max":2.221}],"drift":0.1027,"peakRssGiB":0.81}
+  {"iterations":400,"seconds":51.1,"perIteration":0.128,"exploitability":4.294,"evError":[{"mean":1.8349,"max":8.932},{"mean":3.4699,"max":8.96}],"loss":[{"mean":0.244,"max":1.743}],"drift":0.0918,"peakRssGiB":0.81}
+  {"iterations":600,"seconds":76,"perIteration":0.127,"exploitability":2.35,"evError":[{"mean":1.6566,"max":7.389},{"mean":3.1102,"max":5.721}],"loss":[{"mean":0.1124,"max":0.572}],"drift":0.1309,"peakRssGiB":0.81}
+  {"iterations":800,"seconds":102.2,"perIteration":0.128,"exploitability":1.593,"evError":[{"mean":1.6635,"max":6.624},{"mean":2.7514,"max":5.954}],"loss":[{"mean":0.0757,"max":0.214}],"drift":0.0661,"peakRssGiB":0.81}
+  {"iterations":1000,"seconds":128.7,"perIteration":0.129,"exploitability":1.163,"evError":[{"mean":1.6429,"max":5.405},{"mean":2.5372,"max":6.161}],"loss":[{"mean":0.0619,"max":0.178}],"drift":0.0422,"peakRssGiB":0.81}
+  {"iterations":1200,"seconds":154.4,"perIteration":0.129,"exploitability":0.898,"evError":[{"mean":1.577,"max":5.572},{"mean":2.3179,"max":6.249}],"loss":[{"mean":0.0538,"max":0.179}],"drift":0.0323,"peakRssGiB":0.81}
+  {"iterations":1600,"seconds":207.1,"perIteration":0.129,"exploitability":0.627,"evError":[{"mean":1.5264,"max":5.472},{"mean":2.0268,"max":6.445}],"loss":[{"mean":0.0457,"max":0.159}],"drift":0.0428,"peakRssGiB":0.81}
+{"spot":"T0","combination":"thin+compact+sample","engine":"wasm","workers":4,"estimate":{"f32":1398516384,"i16":714887408,"compact":494460594},"storageGiB":0.443,"setupSeconds":0.5,"peakRssGiB":0.81,"settled":{"within002":{"iterations":1000,"seconds":128.7},"within005":{"iterations":800,"seconds":102.2}},"reference":"bench/adaptive/results/rainbow-T0.json"}

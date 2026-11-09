@@ -127,7 +127,7 @@ function drift(a: Vec[], b: Vec[], reach: ArrayLike<number>): number {
 	return sum / mass;
 }
 
-function score(sol: Solution): Record<string, unknown> {
+function score(sol: Solution): { row: Record<string, unknown>; evs: Vec[]; decisions: ActionEvs[] } {
 	const evs = rootEvs(sol);
 	const decisions = rootActionEvs(sol);
 	const row: Record<string, unknown> = {};

@@ -1456,6 +1456,20 @@ function updateQuantised(
 			if (discounted[block] === iterWeight) keepPositive = keepNegative = keepSum = 1;
 			discounted[block] = iterWeight;
 		}
+		const sampling = ctx.sampling;
+		if (sampling !== undefined && sampling !== null) {
+			// A subtree chance sampling skipped missed those iterations'
+			// discounts, as in the 32-bit update.
+			if (sampling.catchUp) {
+				for (let s = sampling.lastUpdate[block] + 1; s < iterWeight; s++) {
+					const f = cachedFactors(s);
+					keepPositive *= f.keepPositive;
+					keepNegative *= f.keepNegative;
+					keepSum *= f.keepSum;
+				}
+			}
+			sampling.lastUpdate[block] = iterWeight;
+		}
 	}
 
 	let largestRegret = 0;

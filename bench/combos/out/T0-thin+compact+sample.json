@@ -1,0 +1,362 @@
+{
+ "spot": "T0",
+ "combination": "thin+compact+sample",
+ "engine": "wasm",
+ "workers": 4,
+ "estimate": {
+  "f32": 1398516384,
+  "i16": 714887408,
+  "compact": 494460594
+ },
+ "storageGiB": 0.443,
+ "setupSeconds": 0.5,
+ "peakRssGiB": 0.81,
+ "settled": {
+  "within002": {
+   "iterations": 1000,
+   "seconds": 128.7
+  },
+  "within005": {
+   "iterations": 800,
+   "seconds": 102.2
+  }
+ },
+ "reference": "bench/adaptive/results/rainbow-T0.json",
+ "rows": [
+  {
+   "iterations": 10,
+   "seconds": 3.2,
+   "perIteration": 0.319,
+   "exploitability": 292.286,
+   "evError": [
+    {
+     "mean": 100.9701,
+     "max": 233.173
+    },
+    {
+     "mean": 94.2526,
+     "max": 407.086
+    }
+   ],
+   "loss": [
+    {
+     "mean": 5.6146,
+     "max": 20.769
+    }
+   ],
+   "peakRssGiB": 0.81
+  },
+  {
+   "iterations": 20,
+   "seconds": 4.5,
+   "perIteration": 0.223,
+   "exploitability": 239.245,
+   "evError": [
+    {
+     "mean": 44.4382,
+     "max": 181.23
+    },
+    {
+     "mean": 32.0735,
+     "max": 317.775
+    }
+   ],
+   "loss": [
+    {
+     "mean": 5.606,
+     "max": 30.704
+    }
+   ],
+   "drift": 0.2486,
+   "peakRssGiB": 0.81
+  },
+  {
+   "iterations": 40,
+   "seconds": 6.9,
+   "perIteration": 0.173,
+   "exploitability": 138.43,
+   "evError": [
+    {
+     "mean": 23.7308,
+     "max": 112.492
+    },
+    {
+     "mean": 19.6632,
+     "max": 225.937
+    }
+   ],
+   "loss": [
+    {
+     "mean": 1.3284,
+     "max": 10.39
+    }
+   ],
+   "drift": 0.2139,
+   "peakRssGiB": 0.81
+  },
+  {
+   "iterations": 80,
+   "seconds": 11.9,
+   "perIteration": 0.148,
+   "exploitability": 55.455,
+   "evError": [
+    {
+     "mean": 12.5555,
+     "max": 60.573
+    },
+    {
+     "mean": 10.6104,
+     "max": 112.952
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.6878,
+     "max": 8.533
+    }
+   ],
+   "drift": 0.1169,
+   "peakRssGiB": 0.81
+  },
+  {
+   "iterations": 120,
+   "seconds": 16.7,
+   "perIteration": 0.139,
+   "exploitability": 32.412,
+   "evError": [
+    {
+     "mean": 7.421,
+     "max": 28.119
+    },
+    {
+     "mean": 7.6171,
+     "max": 58.711
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.5962,
+     "max": 7.129
+    }
+   ],
+   "drift": 0.07,
+   "peakRssGiB": 0.81
+  },
+  {
+   "iterations": 160,
+   "seconds": 21.4,
+   "perIteration": 0.134,
+   "exploitability": 21.509,
+   "evError": [
+    {
+     "mean": 4.6042,
+     "max": 12.447
+    },
+    {
+     "mean": 5.7749,
+     "max": 33.001
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.5327,
+     "max": 5.342
+    }
+   ],
+   "drift": 0.0645,
+   "peakRssGiB": 0.81
+  },
+  {
+   "iterations": 200,
+   "seconds": 26.3,
+   "perIteration": 0.132,
+   "exploitability": 14.933,
+   "evError": [
+    {
+     "mean": 3.3428,
+     "max": 9.056
+    },
+    {
+     "mean": 4.6929,
+     "max": 21.568
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.4696,
+     "max": 3.657
+    }
+   ],
+   "drift": 0.0614,
+   "peakRssGiB": 0.81
+  },
+  {
+   "iterations": 300,
+   "seconds": 38.7,
+   "perIteration": 0.129,
+   "exploitability": 7.36,
+   "evError": [
+    {
+     "mean": 2.2016,
+     "max": 8.84
+    },
+    {
+     "mean": 3.7976,
+     "max": 13.258
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.3507,
+     "max": 2.221
+    }
+   ],
+   "drift": 0.1027,
+   "peakRssGiB": 0.81
+  },
+  {
+   "iterations": 400,
+   "seconds": 51.1,
+   "perIteration": 0.128,
+   "exploitability": 4.294,
+   "evError": [
+    {
+     "mean": 1.8349,
+     "max": 8.932
+    },
+    {
+     "mean": 3.4699,
+     "max": 8.96
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.244,
+     "max": 1.743
+    }
+   ],
+   "drift": 0.0918,
+   "peakRssGiB": 0.81
+  },
+  {
+   "iterations": 600,
+   "seconds": 76,
+   "perIteration": 0.127,
+   "exploitability": 2.35,
+   "evError": [
+    {
+     "mean": 1.6566,
+     "max": 7.389
+    },
+    {
+     "mean": 3.1102,
+     "max": 5.721
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.1124,
+     "max": 0.572
+    }
+   ],
+   "drift": 0.1309,
+   "peakRssGiB": 0.81
+  },
+  {
+   "iterations": 800,
+   "seconds": 102.2,
+   "perIteration": 0.128,
+   "exploitability": 1.593,
+   "evError": [
+    {
+     "mean": 1.6635,
+     "max": 6.624
+    },
+    {
+     "mean": 2.7514,
+     "max": 5.954
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0757,
+     "max": 0.214
+    }
+   ],
+   "drift": 0.0661,
+   "peakRssGiB": 0.81
+  },
+  {
+   "iterations": 1000,
+   "seconds": 128.7,
+   "perIteration": 0.129,
+   "exploitability": 1.163,
+   "evError": [
+    {
+     "mean": 1.6429,
+     "max": 5.405
+    },
+    {
+     "mean": 2.5372,
+     "max": 6.161
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0619,
+     "max": 0.178
+    }
+   ],
+   "drift": 0.0422,
+   "peakRssGiB": 0.81
+  },
+  {
+   "iterations": 1200,
+   "seconds": 154.4,
+   "perIteration": 0.129,
+   "exploitability": 0.898,
+   "evError": [
+    {
+     "mean": 1.577,
+     "max": 5.572
+    },
+    {
+     "mean": 2.3179,
+     "max": 6.249
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0538,
+     "max": 0.179
+    }
+   ],
+   "drift": 0.0323,
+   "peakRssGiB": 0.81
+  },
+  {
+   "iterations": 1600,
+   "seconds": 207.1,
+   "perIteration": 0.129,
+   "exploitability": 0.627,
+   "evError": [
+    {
+     "mean": 1.5264,
+     "max": 5.472
+    },
+    {
+     "mean": 2.0268,
+     "max": 6.445
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0457,
+     "max": 0.159
+    }
+   ],
+   "drift": 0.0428,
+   "peakRssGiB": 0.81
+  }
+ ]
+}
