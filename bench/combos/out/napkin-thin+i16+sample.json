@@ -1,0 +1,146 @@
+{
+ "combination": "thin+i16+sample",
+ "iterations": 1000,
+ "results": [
+  {
+   "id": "f03",
+   "name": "SB vs BU 3bet · 7c6sJc · flop",
+   "engine": "wasm",
+   "storageMiB": 384.5,
+   "seconds": 44.4,
+   "exploitability": 0.135,
+   "decisions": [
+    {
+     "at": "OOP root",
+     "loss": 0.0665,
+     "storedOwn": 0.0692
+    },
+    {
+     "at": "IP after check",
+     "loss": 0.3734,
+     "storedOwn": 0.0608
+    }
+   ]
+  },
+  {
+   "id": "f11",
+   "name": "SB vs BU 3bet · 2h6sJc · flop",
+   "engine": "wasm",
+   "storageMiB": 731.2,
+   "seconds": 81,
+   "exploitability": 0.184,
+   "decisions": [
+    {
+     "at": "OOP root",
+     "loss": 0.0109,
+     "storedOwn": 0.0731
+    },
+    {
+     "at": "IP after check",
+     "loss": 1.1389,
+     "storedOwn": 0.7813
+    }
+   ]
+  },
+  {
+   "id": "f15",
+   "name": "SB vs BU 3bet · AsKc3d · flop",
+   "engine": "wasm",
+   "storageMiB": 670,
+   "seconds": 64.5,
+   "exploitability": 0.161,
+   "decisions": [
+    {
+     "at": "OOP root",
+     "loss": 0.0404,
+     "storedOwn": 0.0618
+    },
+    {
+     "at": "IP after check",
+     "loss": 0.2373,
+     "storedOwn": 0.1087
+    }
+   ]
+  },
+  {
+   "id": "f19",
+   "name": "SB vs BU 3bet · Kh8cQh · flop",
+   "engine": "wasm",
+   "storageMiB": 364.6,
+   "seconds": 40.5,
+   "exploitability": 0.15,
+   "decisions": [
+    {
+     "at": "OOP root",
+     "loss": 0.0728,
+     "storedOwn": 0.0693
+    },
+    {
+     "at": "IP after check",
+     "loss": 0.4125,
+     "storedOwn": 0.2249
+    }
+   ]
+  },
+  {
+   "id": "f35",
+   "name": "SB vs BU 3bet · TcKhAs · flop",
+   "engine": "wasm",
+   "storageMiB": 639.4,
+   "seconds": 64.6,
+   "exploitability": 0.154,
+   "decisions": [
+    {
+     "at": "OOP root",
+     "loss": 0.033,
+     "storedOwn": 0.0682
+    },
+    {
+     "at": "IP after check",
+     "loss": 0.0388,
+     "storedOwn": 0.0568
+    }
+   ]
+  },
+  {
+   "id": "f63",
+   "name": "SB vs BU 3bet · JcQs3s · flop",
+   "engine": "wasm",
+   "storageMiB": 373,
+   "seconds": 40.1,
+   "exploitability": 0.139,
+   "decisions": [
+    {
+     "at": "OOP root",
+     "loss": 0.0745,
+     "storedOwn": 0.0908
+    },
+    {
+     "at": "IP after check",
+     "loss": 0.1235,
+     "storedOwn": 0.0943
+    }
+   ]
+  },
+  {
+   "id": "f85",
+   "name": "UTG vs BB · 5sJs6s · flop",
+   "engine": "wasm",
+   "storageMiB": 523.3,
+   "seconds": 60.4,
+   "exploitability": 0.429,
+   "decisions": [
+    {
+     "at": "OOP root",
+     "loss": 0.0022,
+     "storedOwn": 0.0029
+    },
+    {
+     "at": "IP after check",
+     "loss": 0.0566,
+     "storedOwn": 0.0083
+    }
+   ]
+  }
+ ]
+}

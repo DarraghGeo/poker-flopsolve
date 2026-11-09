@@ -1,0 +1,8 @@
+T exact            nodes   2578  runouts   2352  f32 17.16  i16 8.67  compact 5.90
+T thin             nodes    495  runouts   2352  f32 2.93  i16 1.49  compact 1.04
+T share            nodes   2578  runouts   2352  f32 2.92  i16 1.48  compact 1.01
+T thin+share       nodes    495  runouts   2352  f32 0.85  i16 0.44  compact 0.31
+T b3               nodes   2578  runouts   1396  f32 10.08  i16 5.09  compact 3.47
+T thin+b3          nodes    495  runouts   1396  f32 1.72  i16 0.87  compact 0.61
+T thin+share+b3    nodes    495  runouts   1396  f32 0.50  i16 0.26  compact 0.18
+T share+b3         nodes   2578  runouts   1396  f32 1.72  i16 0.87  compact 0.59

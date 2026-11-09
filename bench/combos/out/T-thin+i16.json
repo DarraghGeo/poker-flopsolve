@@ -1,0 +1,362 @@
+{
+ "spot": "T",
+ "combination": "thin+i16",
+ "engine": "wasm",
+ "workers": 4,
+ "estimate": {
+  "f32": 3146535360,
+  "i16": 1597594656,
+  "compact": null
+ },
+ "storageGiB": 1.47,
+ "setupSeconds": 0.5,
+ "peakRssGiB": 1.75,
+ "settled": {
+  "within002": {
+   "iterations": 200,
+   "seconds": 316.6
+  },
+  "within005": {
+   "iterations": 120,
+   "seconds": 194.6
+  }
+ },
+ "reference": "bench/combos/out/T-thin.root.json",
+ "rows": [
+  {
+   "iterations": 10,
+   "seconds": 18.6,
+   "perIteration": 1.863,
+   "exploitability": 105.175,
+   "evError": [
+    {
+     "mean": 33.3591,
+     "max": 131.568
+    },
+    {
+     "mean": 14.1614,
+     "max": 195.807
+    }
+   ],
+   "loss": [
+    {
+     "mean": 4.7371,
+     "max": 17.934
+    },
+    {
+     "mean": 0.2962,
+     "max": 3.354
+    }
+   ],
+   "peakRssGiB": 1.75
+  },
+  {
+   "iterations": 20,
+   "seconds": 33.9,
+   "perIteration": 1.696,
+   "exploitability": 32.832,
+   "evError": [
+    {
+     "mean": 9.5698,
+     "max": 54.056
+    },
+    {
+     "mean": 5.853,
+     "max": 68.311
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.4768,
+     "max": 1.866
+    },
+    {
+     "mean": 0.1697,
+     "max": 1.899
+    }
+   ],
+   "drift": 0.1593,
+   "peakRssGiB": 1.75
+  },
+  {
+   "iterations": 40,
+   "seconds": 64.7,
+   "perIteration": 1.617,
+   "exploitability": 12.62,
+   "evError": [
+    {
+     "mean": 3.1642,
+     "max": 16.632
+    },
+    {
+     "mean": 3.057,
+     "max": 31.007
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.1655,
+     "max": 1.741
+    },
+    {
+     "mean": 0.049,
+     "max": 1.595
+    }
+   ],
+   "drift": 0.1344,
+   "peakRssGiB": 1.75
+  },
+  {
+   "iterations": 80,
+   "seconds": 127.4,
+   "perIteration": 1.592,
+   "exploitability": 3.061,
+   "evError": [
+    {
+     "mean": 1.6228,
+     "max": 4.386
+    },
+    {
+     "mean": 0.9956,
+     "max": 4.769
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0901,
+     "max": 0.255
+    },
+    {
+     "mean": 0.0272,
+     "max": 0.838
+    }
+   ],
+   "drift": 0.1706,
+   "peakRssGiB": 1.75
+  },
+  {
+   "iterations": 120,
+   "seconds": 194.6,
+   "perIteration": 1.622,
+   "exploitability": 1.575,
+   "evError": [
+    {
+     "mean": 0.7438,
+     "max": 2.761
+    },
+    {
+     "mean": 0.6811,
+     "max": 3.23
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.071,
+     "max": 0.216
+    },
+    {
+     "mean": 0.0218,
+     "max": 0.171
+    }
+   ],
+   "drift": 0.0836,
+   "peakRssGiB": 1.75
+  },
+  {
+   "iterations": 160,
+   "seconds": 255.6,
+   "perIteration": 1.597,
+   "exploitability": 0.927,
+   "evError": [
+    {
+     "mean": 0.4721,
+     "max": 1.903
+    },
+    {
+     "mean": 0.5896,
+     "max": 2.318
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0605,
+     "max": 0.188
+    },
+    {
+     "mean": 0.0205,
+     "max": 0.066
+    }
+   ],
+   "drift": 0.0494,
+   "peakRssGiB": 1.75
+  },
+  {
+   "iterations": 200,
+   "seconds": 316.6,
+   "perIteration": 1.583,
+   "exploitability": 0.677,
+   "evError": [
+    {
+     "mean": 0.2821,
+     "max": 1.119
+    },
+    {
+     "mean": 0.4195,
+     "max": 1.428
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0511,
+     "max": 0.158
+    },
+    {
+     "mean": 0.0201,
+     "max": 0.068
+    }
+   ],
+   "drift": 0.0417,
+   "peakRssGiB": 1.75
+  },
+  {
+   "iterations": 250,
+   "seconds": 396.5,
+   "perIteration": 1.586,
+   "exploitability": 0.567,
+   "evError": [
+    {
+     "mean": 0.1817,
+     "max": 0.682
+    },
+    {
+     "mean": 0.2926,
+     "max": 0.815
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0444,
+     "max": 0.128
+    },
+    {
+     "mean": 0.02,
+     "max": 0.067
+    }
+   ],
+   "drift": 0.0311,
+   "peakRssGiB": 1.75
+  },
+  {
+   "iterations": 300,
+   "seconds": 473.3,
+   "perIteration": 1.578,
+   "exploitability": 0.44,
+   "evError": [
+    {
+     "mean": 0.1322,
+     "max": 0.45
+    },
+    {
+     "mean": 0.2204,
+     "max": 0.597
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0402,
+     "max": 0.123
+    },
+    {
+     "mean": 0.0198,
+     "max": 0.066
+    }
+   ],
+   "drift": 0.0196,
+   "peakRssGiB": 1.75
+  },
+  {
+   "iterations": 400,
+   "seconds": 628.2,
+   "perIteration": 1.571,
+   "exploitability": 0.261,
+   "evError": [
+    {
+     "mean": 0.0651,
+     "max": 0.352
+    },
+    {
+     "mean": 0.1249,
+     "max": 0.438
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.035,
+     "max": 0.117
+    },
+    {
+     "mean": 0.0197,
+     "max": 0.064
+    }
+   ],
+   "drift": 0.0259,
+   "peakRssGiB": 1.75
+  },
+  {
+   "iterations": 500,
+   "seconds": 784.9,
+   "perIteration": 1.57,
+   "exploitability": 0.18,
+   "evError": [
+    {
+     "mean": 0.0244,
+     "max": 0.204
+    },
+    {
+     "mean": 0.0544,
+     "max": 0.223
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0326,
+     "max": 0.113
+    },
+    {
+     "mean": 0.0197,
+     "max": 0.063
+    }
+   ],
+   "drift": 0.015,
+   "peakRssGiB": 1.75
+  },
+  {
+   "iterations": 600,
+   "seconds": 937.8,
+   "perIteration": 1.563,
+   "exploitability": 0.133,
+   "evError": [
+    {
+     "mean": 0.0393,
+     "max": 0.253
+    },
+    {
+     "mean": 0.0159,
+     "max": 0.21
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0312,
+     "max": 0.11
+    },
+    {
+     "mean": 0.0197,
+     "max": 0.063
+    }
+   ],
+   "drift": 0.0106,
+   "peakRssGiB": 1.75
+  }
+ ]
+}

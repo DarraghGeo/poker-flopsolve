@@ -1,0 +1,18 @@
+== T0 thin+i16+sample 10,20,40,80,120,160,200,300,400,600,800,1000,1200,1600
+T0-thin+i16+sample: 207 nodes, 2352 runouts; estimate f32 1.30 GiB, i16 0.67, compact -
+  engine wasm, 4 threads, storage 0.648 GiB, setup 0.5 s
+  {"iterations":10,"seconds":3.3,"perIteration":0.327,"exploitability":291.57,"evError":[{"mean":94.7998,"max":229.738},{"mean":90.0373,"max":403.46}],"loss":[{"mean":5.4137,"max":19.776}],"peakRssGiB":1.02}
+  {"iterations":20,"seconds":4.3,"perIteration":0.216,"exploitability":240.895,"evError":[{"mean":42.4668,"max":184.026},{"mean":31.6056,"max":320.679}],"loss":[{"mean":5.3876,"max":27.982}],"drift":0.2415,"peakRssGiB":1.02}
+  {"iterations":40,"seconds":6.5,"perIteration":0.162,"exploitability":141.112,"evError":[{"mean":21.883,"max":101.646},{"mean":19.626,"max":230.89}],"loss":[{"mean":1.3055,"max":10.316}],"drift":0.2043,"peakRssGiB":1.02}
+  {"iterations":80,"seconds":10.4,"perIteration":0.131,"exploitability":57.494,"evError":[{"mean":12.6418,"max":63.429},{"mean":10.6353,"max":115.816}],"loss":[{"mean":0.7099,"max":8.596}],"drift":0.1207,"peakRssGiB":1.02}
+  {"iterations":120,"seconds":14.6,"perIteration":0.121,"exploitability":33.718,"evError":[{"mean":7.762,"max":31.052},{"mean":7.6875,"max":61.1}],"loss":[{"mean":0.6243,"max":7.026}],"drift":0.0743,"peakRssGiB":1.02}
+  {"iterations":160,"seconds":18.7,"perIteration":0.117,"exploitability":22.301,"evError":[{"mean":4.7825,"max":13.438},{"mean":5.8629,"max":34.667}],"loss":[{"mean":0.5588,"max":5.319}],"drift":0.0642,"peakRssGiB":1.02}
+  {"iterations":200,"seconds":22.8,"perIteration":0.114,"exploitability":15.644,"evError":[{"mean":3.4344,"max":10.143},{"mean":4.7216,"max":22.604}],"loss":[{"mean":0.4927,"max":3.683}],"drift":0.0621,"peakRssGiB":1.02}
+  {"iterations":300,"seconds":33.2,"perIteration":0.111,"exploitability":7.797,"evError":[{"mean":2.2311,"max":9.635},{"mean":3.6997,"max":13.694}],"loss":[{"mean":0.3603,"max":2.285}],"drift":0.1069,"peakRssGiB":1.02}
+  {"iterations":400,"seconds":43.6,"perIteration":0.109,"exploitability":4.482,"evError":[{"mean":1.7894,"max":8.916},{"mean":3.2742,"max":8.516}],"loss":[{"mean":0.2513,"max":1.72}],"drift":0.0907,"peakRssGiB":1.02}
+  {"iterations":600,"seconds":64.5,"perIteration":0.107,"exploitability":2.4,"evError":[{"mean":1.6129,"max":7.374},{"mean":2.9374,"max":5.513}],"loss":[{"mean":0.1102,"max":0.5}],"drift":0.1348,"peakRssGiB":1.02}
+  {"iterations":800,"seconds":85.9,"perIteration":0.107,"exploitability":1.621,"evError":[{"mean":1.6001,"max":6.183},{"mean":2.6209,"max":5.893}],"loss":[{"mean":0.0719,"max":0.189}],"drift":0.0636,"peakRssGiB":1.02}
+  {"iterations":1000,"seconds":106.3,"perIteration":0.106,"exploitability":1.138,"evError":[{"mean":1.5963,"max":5.54},{"mean":2.4012,"max":6.189}],"loss":[{"mean":0.0579,"max":0.169}],"drift":0.0398,"peakRssGiB":1.02}
+  {"iterations":1200,"seconds":127.1,"perIteration":0.106,"exploitability":0.843,"evError":[{"mean":1.5663,"max":5.612},{"mean":2.2188,"max":6.315}],"loss":[{"mean":0.0508,"max":0.154}],"drift":0.028,"peakRssGiB":1.02}
+  {"iterations":1600,"seconds":168.4,"perIteration":0.105,"exploitability":0.522,"evError":[{"mean":1.4826,"max":5.354},{"mean":1.94,"max":6.308}],"loss":[{"mean":0.0435,"max":0.179}],"drift":0.0372,"peakRssGiB":1.02}
+{"spot":"T0","combination":"thin+i16+sample","engine":"wasm","workers":4,"estimate":{"f32":1398516384,"i16":714887408,"compact":null},"storageGiB":0.648,"setupSeconds":0.5,"peakRssGiB":1.02,"settled":{"within002":{"iterations":1000,"seconds":106.3},"within005":{"iterations":800,"seconds":85.9}},"reference":"bench/adaptive/results/rainbow-T0.json"}

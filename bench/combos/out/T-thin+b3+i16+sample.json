@@ -1,0 +1,418 @@
+{
+ "spot": "T",
+ "combination": "thin+b3+i16+sample",
+ "engine": "wasm",
+ "workers": 4,
+ "estimate": {
+  "f32": 1848247896,
+  "i16": 938573656,
+  "compact": null
+ },
+ "storageGiB": 0.864,
+ "setupSeconds": 0.4,
+ "peakRssGiB": 1.25,
+ "settled": {
+  "within002": {
+   "iterations": 600,
+   "seconds": 87.1
+  },
+  "within005": {
+   "iterations": 300,
+   "seconds": 45.1
+  }
+ },
+ "reference": "bench/combos/out/T-thin.root.json",
+ "rows": [
+  {
+   "iterations": 10,
+   "seconds": 4.5,
+   "perIteration": 0.446,
+   "exploitability": 312.727,
+   "evError": [
+    {
+     "mean": 71.3622,
+     "max": 126.656
+    },
+    {
+     "mean": 59.7947,
+     "max": 238.551
+    }
+   ],
+   "loss": [
+    {
+     "mean": 4.5151,
+     "max": 27.184
+    },
+    {
+     "mean": 0.1035,
+     "max": 3.276
+    }
+   ],
+   "peakRssGiB": 1.25
+  },
+  {
+   "iterations": 20,
+   "seconds": 5.9,
+   "perIteration": 0.293,
+   "exploitability": 210.616,
+   "evError": [
+    {
+     "mean": 37.1881,
+     "max": 123.167
+    },
+    {
+     "mean": 30.2153,
+     "max": 243.528
+    }
+   ],
+   "loss": [
+    {
+     "mean": 4.8618,
+     "max": 18.705
+    },
+    {
+     "mean": 0.1169,
+     "max": 2.264
+    }
+   ],
+   "drift": 0.2596,
+   "peakRssGiB": 1.25
+  },
+  {
+   "iterations": 40,
+   "seconds": 8.8,
+   "perIteration": 0.219,
+   "exploitability": 113.606,
+   "evError": [
+    {
+     "mean": 18.5609,
+     "max": 97.711
+    },
+    {
+     "mean": 17.9044,
+     "max": 190.566
+    }
+   ],
+   "loss": [
+    {
+     "mean": 1.3096,
+     "max": 5.827
+    },
+    {
+     "mean": 0.1999,
+     "max": 2.804
+    }
+   ],
+   "drift": 0.1709,
+   "peakRssGiB": 1.25
+  },
+  {
+   "iterations": 80,
+   "seconds": 14.2,
+   "perIteration": 0.178,
+   "exploitability": 54.723,
+   "evError": [
+    {
+     "mean": 15.7544,
+     "max": 99.968
+    },
+    {
+     "mean": 8.5151,
+     "max": 103.336
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.2289,
+     "max": 1.256
+    },
+    {
+     "mean": 0.1682,
+     "max": 3.025
+    }
+   ],
+   "drift": 0.1262,
+   "peakRssGiB": 1.25
+  },
+  {
+   "iterations": 120,
+   "seconds": 20,
+   "perIteration": 0.166,
+   "exploitability": 32.336,
+   "evError": [
+    {
+     "mean": 9.6723,
+     "max": 59.091
+    },
+    {
+     "mean": 3.9701,
+     "max": 52.791
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.1392,
+     "max": 0.603
+    },
+    {
+     "mean": 0.0984,
+     "max": 1.876
+    }
+   ],
+   "drift": 0.1147,
+   "peakRssGiB": 1.25
+  },
+  {
+   "iterations": 160,
+   "seconds": 25.6,
+   "perIteration": 0.16,
+   "exploitability": 20.971,
+   "evError": [
+    {
+     "mean": 4.8318,
+     "max": 23.546
+    },
+    {
+     "mean": 2.8493,
+     "max": 29.889
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.1153,
+     "max": 0.632
+    },
+    {
+     "mean": 0.0619,
+     "max": 1.133
+    }
+   ],
+   "drift": 0.08,
+   "peakRssGiB": 1.25
+  },
+  {
+   "iterations": 200,
+   "seconds": 31.4,
+   "perIteration": 0.157,
+   "exploitability": 14.335,
+   "evError": [
+    {
+     "mean": 2.3271,
+     "max": 9.371
+    },
+    {
+     "mean": 2.0402,
+     "max": 19.647
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.1027,
+     "max": 0.535
+    },
+    {
+     "mean": 0.0507,
+     "max": 1.035
+    }
+   ],
+   "drift": 0.0594,
+   "peakRssGiB": 1.25
+  },
+  {
+   "iterations": 300,
+   "seconds": 45.1,
+   "perIteration": 0.15,
+   "exploitability": 6.785,
+   "evError": [
+    {
+     "mean": 1.4925,
+     "max": 3.902
+    },
+    {
+     "mean": 1.467,
+     "max": 9.987
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0807,
+     "max": 0.264
+    },
+    {
+     "mean": 0.0309,
+     "max": 0.566
+    }
+   ],
+   "drift": 0.1107,
+   "peakRssGiB": 1.25
+  },
+  {
+   "iterations": 400,
+   "seconds": 59,
+   "perIteration": 0.147,
+   "exploitability": 3.819,
+   "evError": [
+    {
+     "mean": 1.1909,
+     "max": 3.285
+    },
+    {
+     "mean": 1.0489,
+     "max": 5.5
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.066,
+     "max": 0.244
+    },
+    {
+     "mean": 0.0238,
+     "max": 0.204
+    }
+   ],
+   "drift": 0.0782,
+   "peakRssGiB": 1.25
+  },
+  {
+   "iterations": 600,
+   "seconds": 87.1,
+   "perIteration": 0.145,
+   "exploitability": 1.793,
+   "evError": [
+    {
+     "mean": 0.614,
+     "max": 2.782
+    },
+    {
+     "mean": 0.636,
+     "max": 2.794
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0463,
+     "max": 0.154
+    },
+    {
+     "mean": 0.0205,
+     "max": 0.068
+    }
+   ],
+   "drift": 0.0914,
+   "peakRssGiB": 1.25
+  },
+  {
+   "iterations": 800,
+   "seconds": 115.6,
+   "perIteration": 0.145,
+   "exploitability": 1.126,
+   "evError": [
+    {
+     "mean": 0.4324,
+     "max": 2.588
+    },
+    {
+     "mean": 0.5072,
+     "max": 2.673
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.04,
+     "max": 0.129
+    },
+    {
+     "mean": 0.02,
+     "max": 0.065
+    }
+   ],
+   "drift": 0.0336,
+   "peakRssGiB": 1.25
+  },
+  {
+   "iterations": 1000,
+   "seconds": 143.4,
+   "perIteration": 0.143,
+   "exploitability": 0.797,
+   "evError": [
+    {
+     "mean": 0.2836,
+     "max": 2.519
+    },
+    {
+     "mean": 0.3685,
+     "max": 2.569
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0364,
+     "max": 0.123
+    },
+    {
+     "mean": 0.0198,
+     "max": 0.065
+    }
+   ],
+   "drift": 0.0234,
+   "peakRssGiB": 1.25
+  },
+  {
+   "iterations": 1200,
+   "seconds": 171.7,
+   "perIteration": 0.143,
+   "exploitability": 0.595,
+   "evError": [
+    {
+     "mean": 0.2145,
+     "max": 2.453
+    },
+    {
+     "mean": 0.262,
+     "max": 2.464
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0341,
+     "max": 0.119
+    },
+    {
+     "mean": 0.0198,
+     "max": 0.066
+    }
+   ],
+   "drift": 0.019,
+   "peakRssGiB": 1.25
+  },
+  {
+   "iterations": 1600,
+   "seconds": 227.7,
+   "perIteration": 0.142,
+   "exploitability": 0.384,
+   "evError": [
+    {
+     "mean": 0.2012,
+     "max": 2.344
+    },
+    {
+     "mean": 0.1692,
+     "max": 2.294
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0312,
+     "max": 0.113
+    },
+    {
+     "mean": 0.0198,
+     "max": 0.066
+    }
+   ],
+   "drift": 0.0267,
+   "peakRssGiB": 1.25
+  }
+ ]
+}

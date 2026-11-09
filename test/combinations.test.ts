@@ -72,7 +72,6 @@ const REFUSED: Record<string, RegExp> = {
 	'compactStorage + lineRunouts': /lineRunouts does not combine with shareHistories or compactStorage/,
 	'chanceSampling + lineRunouts': /lineRunouts does not combine with chanceSampling, coarseStart/,
 	'coarseStart + lineRunouts': /lineRunouts does not combine with chanceSampling, coarseStart/,
-	'chanceSampling + wasmStorage i16': /chanceSampling needs 32- or 64-bit storage/,
 };
 
 const ITERATIONS = 12;
@@ -148,7 +147,7 @@ const maxDiff = (a: ArrayLike<number>, b: ArrayLike<number>): number => {
 };
 
 describe.runIf(engineAvailable())('opt-in options in pairs', () => {
-	it('lists every pair once: 36 of them, 5 refused', () => {
+	it('lists every pair once: 36 of them, 4 refused', () => {
 		expect(pairs).toHaveLength(36);
 		for (const name of Object.keys(REFUSED)) expect(pairs.map(([a, b]) => key(a, b))).toContain(name);
 	});
