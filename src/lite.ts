@@ -220,11 +220,14 @@ function nearest(row: readonly BetSize[], target: number): BetSize[] {
  * - napkinpoker's postflop-solver solves (issue #87; two flop sizes, 75% on
  *   the turn and river with 3× raises and all-in, weighted BU/CO/SB ranges,
  *   SRP and 3-bet pots, 0.3% of pot), 8 spots across textures, one thread in
- *   Node: root play lost NAPKIN at the stored per-action values, where the
- *   stored solve's own play lost NAPKIN_OWN; settled in NAPKIN_TIME. Wide
- *   single-raised ranges need up to NAPKIN_MIB of storage, over a browser's
- *   default `maxBytes`: give it room, or `compactStorage` with
- *   `wasmStorage` (300 MiB peak on rainbow, 27% slower).
+ *   Node: root play lost 0.034 / 0.135% of pot on average at the stored
+ *   per-action values, where the stored solve's own play lost 0.027 /
+ *   0.131; settled in 38-176 s. Wide single-raised ranges took up to
+ *   452 MiB of storage, near a browser's default `maxBytes` of 512: give it
+ *   room, or `compactStorage` with `wasmStorage` (on rainbow, 300 MiB peak
+ *   in Node against 411, 27% slower). `minWeight: 0.05` there cut 2-5% of
+ *   storage and up to 15% of the time, root play unchanged; it edits the
+ *   ranges, so it is the caller's to set.
  *
  * `laterRaise`'s cost is on it; the trims `flopMaxRaises` and `noDonk`, and
  * what was rejected, are in `Approximations`' notes in `index.ts`.

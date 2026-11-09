@@ -388,10 +388,10 @@ solves of the full game:
   play lost 0.072% of pot at T₀'s values. The same simplified tree, unshared and
   converged, lost 0.057, so most of the cost is the simplification.
 - **Eight of napkinpoker's postflop-solver spots** (real weighted ranges, SRP and 3-bet
-  pots): root play lost NAPKIN of pot, against NAPKIN_OWN for the stored solves' own play.
-  Wide single-raised ranges need up to NAPKIN_MIB of storage, over a browser's default
-  `maxBytes`. Give it room, or add `compactStorage` and `wasmStorage`: 300 MiB on
-  rainbow, 27% slower.
+  pots): root play lost 0.034 / 0.135% of pot on average, against 0.027 / 0.131 for the
+  stored solves' own play, settling in 38–176 s on one thread. Wide single-raised ranges
+  needed up to 452 MiB of storage, near a browser's default `maxBytes` of 512. For more
+  headroom add `compactStorage` and `wasmStorage`: 300 MiB on rainbow, 27% slower.
 
 `laterRaise: true` keeps a turn and river raise: 1.74 times the time and 546 MiB.
 `noDonk` and `flopMaxRaises: 2` save 44% an iteration together, but on Ts 9s 4h they

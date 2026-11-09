@@ -4,13 +4,13 @@
   "name": "BU vs BB · KcKs7h · flop",
   "potType": "SRP",
   "texture": "paired rainbow",
-  "storageMiB": 422.4257583618164,
-  "iterations": 340,
+  "storageMiB": 320.12220001220703,
+  "iterations": 360,
   "stoppedAt": "settled",
-  "seconds": 92.819573722,
+  "seconds": 123.44469848199999,
   "loss": [
-   0.0006983901258657613,
-   0.0128514296803226
+   0.0008434571307513717,
+   0.02223032098756225
   ],
   "storedLoss": [
    0.0011781303331769163,
@@ -22,13 +22,13 @@
   "name": "CO vs BB · 7hJd9h · flop",
   "potType": "SRP",
   "texture": "two-tone",
-  "storageMiB": 319.8593120574951,
+  "storageMiB": 242.67790031433105,
   "iterations": 440,
   "stoppedAt": "settled",
-  "seconds": 96.45330982900002,
+  "seconds": 117.7366855,
   "loss": [
-   0.00027453605027106935,
-   0.01279008898895284
+   0.006666505551748356,
+   0.01699357043103589
   ],
   "storedLoss": [
    0.0008448261978056564,
@@ -40,13 +40,13 @@
   "name": "SB vs BU 3bet · 7c6sJc · flop",
   "potType": "3BP",
   "texture": "two-tone",
-  "storageMiB": 149.51139640808105,
+  "storageMiB": 116.65238761901855,
   "iterations": 300,
   "stoppedAt": "settled",
-  "seconds": 34.72343351,
+  "seconds": 38.42747920800004,
   "loss": [
-   0.05445327815523157,
-   0.06027074462609052
+   0.07316052215350914,
+   0.04401762111967384
   ],
   "storedLoss": [
    0.06917274072068437,
@@ -58,13 +58,13 @@
   "name": "CO vs BB · Kh9s6c · flop",
   "potType": "SRP",
   "texture": "rainbow",
-  "storageMiB": 597.2946472167969,
-  "iterations": 420,
+  "storageMiB": 452.3818054199219,
+  "iterations": 400,
   "stoppedAt": "settled",
-  "seconds": 139.14646477399998,
+  "seconds": 175.87324559500004,
   "loss": [
-   0.00029716334725868933,
-   0.02455230389371469
+   0.0048699652189066545,
+   0.026234493874251637
   ],
   "storedLoss": [
    0.002298507434741264,
@@ -76,13 +76,13 @@
   "name": "SB vs BU 3bet · 2h6sJc · flop",
   "potType": "3BP",
   "texture": "rainbow",
-  "storageMiB": 282.52296447753906,
+  "storageMiB": 219.60911560058594,
   "iterations": 340,
   "stoppedAt": "settled",
-  "seconds": 57.45851878300001,
+  "seconds": 73.22975991299998,
   "loss": [
-   0.13954979051827054,
-   0.7949389241413524
+   0.09081786872889683,
+   0.8024917484829664
   ],
   "storedLoss": [
    0.07305587887001405,
@@ -94,13 +94,13 @@
   "name": "SB vs BU 3bet · 2d3h2c · flop",
   "potType": "3BP",
   "texture": "paired rainbow",
-  "storageMiB": 165.57585906982422,
-  "iterations": 320,
+  "storageMiB": 128.90196990966797,
+  "iterations": 380,
   "stoppedAt": "settled",
-  "seconds": 35.290513113000024,
+  "seconds": 51.69638554599997,
   "loss": [
-   0.04726225362052317,
-   0.1079067486276824
+   0.03992405243776041,
+   0.08588494881769895
   ],
   "storedLoss": [
    0.02646962041287482,
@@ -112,13 +112,13 @@
   "name": "BU vs BB · 3sQh3h · flop",
   "potType": "SRP",
   "texture": "paired two-tone",
-  "storageMiB": 441.6682720184326,
-  "iterations": 440,
+  "storageMiB": 334.67884635925293,
+  "iterations": 380,
   "stoppedAt": "settled",
-  "seconds": 117.27626660799991,
+  "seconds": 135.08771400400008,
   "loss": [
-   0.0006502169708080968,
-   0.04182669075067559
+   0.006132462032973945,
+   0.03835486122640037
   ],
   "storedLoss": [
    0.0018201771530979092,
@@ -130,13 +130,13 @@
   "name": "SB vs BU 3bet · 4s7c4c · flop",
   "potType": "3BP",
   "texture": "paired two-tone",
-  "storageMiB": 158.7807445526123,
+  "storageMiB": 123.57792472839355,
   "iterations": 320,
   "stoppedAt": "settled",
-  "seconds": 34.21132688999991,
+  "seconds": 45.47189234300004,
   "loss": [
-   0.07074700272266361,
-   0.03255432523074266
+   0.04700687274849933,
+   0.04620347850411736
   ],
   "storedLoss": [
    0.03747450297758415,

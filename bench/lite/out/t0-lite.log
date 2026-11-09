@@ -1,0 +1,3 @@
+T0 lite base: 112 MiB f32, 1 thread(s)
+  stopped at 400 it, 46.6 s solving, 2.820% of pot (own game)
+  OOP root play loss at T0's values: 0.0715% of pot; root EV error OOP mean 3.851 max 40.818, IP mean 2.879 max 30.651
