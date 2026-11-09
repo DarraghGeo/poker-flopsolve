@@ -64,6 +64,18 @@ jobs:
             echo "$name@$version is new; publishing."
           fi
 
+      # A prerelease (1.2.0-beta.0) goes out under its own dist-tag (beta), so
+      # `npm install poker-flopsolve` keeps getting the latest stable version.
       - name: Publish
         if: steps.version.outputs.published == 'false'
-        run: npm publish --provenance --access public
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          case "$VERSION" in
+            *-*) tag=$(printf '%s' "${VERSION#*-}" | cut -d. -f1) ;;
+            *) tag=latest ;;
+          esac
+          # npm refuses a tag that reads as a version range (1.0.0-0 gives "0").
+          case "$tag" in ''|*[!a-zA-Z0-9_-]*|[0-9]*) [ "$tag" = latest ] || tag=next ;; esac
+          echo "Publishing $VERSION under the '$tag' tag."
+          npm publish --provenance --access public --tag "$tag"

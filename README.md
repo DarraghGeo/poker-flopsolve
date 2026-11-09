@@ -1335,6 +1335,11 @@ linted, type-checked, tested and built; if the `version` in `package.json` is no
 is published, with provenance. So a release is: bump `version`, merge to `main`. A push
 that leaves the version alone publishes nothing.
 
+A prerelease version (`0.5.0-beta.0`) is published under its own dist-tag, the word after the
+`-` (`beta`), so `npm install poker-flopsolve` keeps getting the latest stable release and the
+beta is installed by name: `npm install poker-flopsolve@beta`. A plain version is published as
+`latest`.
+
 It publishes by npm trusted publishing: npm trusts this repository's `publish.yml`
 (set up under the package's settings on npmjs.com), the job proves who it is with GitHub's
 OpenID Connect token, and no npm token is stored anywhere.
