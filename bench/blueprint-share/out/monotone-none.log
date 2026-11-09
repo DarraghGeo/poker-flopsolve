@@ -1,0 +1,19 @@
+monotone-none: 306 nodes, 478 runouts, 187 MiB f32
+  20 it, 15.839%, 4 s
+  40 it, 3.425%, 7 s
+  80 it, 0.951%, 13 s
+  120 it, 0.531%, 19 s
+  160 it, 0.460%, 26 s
+  200 it, 0.314%, 32 s
+  240 it, 0.221%, 38 s
+  280 it, 0.156%, 45 s
+  320 it, 0.112%, 53 s
+  360 it, 0.084%, 62 s
+  400 it, 0.066%, 69 s
+  440 it, 0.053%, 76 s
+  480 it, 0.043%, 83 s
+blueprint: 480 it, 0.043% (best 0.043%), 83 s, engine wasm, peak RSS 358 MiB
+root EV error, % pot: OOP mean 0.000 max 0.000; IP mean 0.000 max 0.000
+  OOP at root: root play loses 0.0468% pot at reference values (max 0.392); the reference's own 0.0468%
+  IP after check: root play loses 0.0248% pot at reference values (max 0.203); the reference's own 0.0248%
+re-solve gain, weighted by line reach: OOP refined NaN%, IP refined NaN%
