@@ -197,6 +197,56 @@ export function setIteration(t: i32, dcfr: i32): void {
 	dcfrRule = dcfr !== 0;
 }
 
+// What DCFR has a block keep this iteration, set by `blockFactors`.
+let blockPositive: f64 = 1;
+let blockNegative: f64 = 0;
+let blockSum: f64 = 1;
+
+/**
+ * `blockFactors` in src/cfr.ts: what DCFR has block `block` keep as the
+ * iteration updates it, from the iteration's own factors, into
+ * `blockPositive`, `blockNegative` and `blockSum`. The order matters: first,
+ * a shared block another history already discounted this iteration keeps
+ * everything; then, with chance sampling, the discounts of the iterations a
+ * skipped block missed are multiplied in. Marks the block discounted and
+ * updated. Under CFR+ the factors pass through unchanged.
+ */
+function blockFactors(block: usize, positive: f64, negative: f64, sum: f64): void {
+	if (dcfrRule && discounted !== 0) {
+		// Another history already discounted this shared block this iteration.
+		const mark = discounted + (block << 2);
+		if (load<i32>(mark) === iteration) {
+			positive = 1;
+			negative = 1;
+			sum = 1;
+		}
+		store<i32>(mark, iteration);
+	}
+	if (dcfrRule && sampleRounds !== 0) {
+		// A subtree sampling skipped missed those iterations' discounts;
+		// nothing was added meanwhile, so each sign held.
+		const at = lastUpdate + (block << 2);
+		if (catchUp) {
+			for (let t = load<i32>(at) + 1; t < iteration; t++) {
+				// `dcfrFactors` in src/cfr.ts at its α 1.5, β 0, γ 3 (`DCFR_ALPHA`,
+				// `DCFR_BETA`, `DCFR_GAMMA` there), the only copy in this module:
+				// s^1.5 as s·√s, s^0 / (s^0 + 1) as 0.5, and a cube, without
+				// pulling a general power function into the module.
+				const age: f64 = t > 2 ? <f64>(t - 2) : 0;
+				const grown = age * Math.sqrt(age);
+				const kept = <f64>(t - 1) / <f64>t;
+				positive *= grown / (grown + 1);
+				negative *= 0.5;
+				sum *= kept * kept * kept;
+			}
+		}
+		store<i32>(at, iteration);
+	}
+	blockPositive = positive;
+	blockNegative = negative;
+	blockSum = sum;
+}
+
 /** Whether a deal is walked on an iteration, as `sampled` in src/cfr.ts. */
 function sampled(node: i32, board: i32, t: i32): bool {
 	let h: u32 = (<u32>node ^ (<u32>board * 0x9e3779b1)) * 0x85ebca6b;
@@ -593,44 +643,13 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 	} else if (STORAGE && isTraverser && mode === TRAIN && applyUpdates && regretKind === I16) {
 		updateI16(<usize>(i32At(blockOffset, node) + board), node, slot, base, sumBase, actions, n, reachMe, strategy, actionValues, out);
 	} else if (isTraverser && mode === TRAIN && applyUpdates && (sampleRounds !== 0 || discounted !== 0) && dcfrRule) {
-		const index = <usize>(i32At(blockOffset, node) + board) << 2;
 		const savedPositive = keepPositive;
 		const savedNegative = keepNegative;
 		const savedSum = keepSum;
-		let positive = <f64>keepPositive;
-		let negative = <f64>keepNegative;
-		let sum = <f64>keepSum;
-		if (discounted !== 0) {
-			// Another history already discounted this shared block this iteration.
-			const mark = discounted + index;
-			if (load<i32>(mark) === iteration) {
-				positive = 1;
-				negative = 1;
-				sum = 1;
-			}
-			store<i32>(mark, iteration);
-		}
-		if (sampleRounds !== 0) {
-			// A subtree sampling skipped missed those iterations' discounts;
-			// nothing was added meanwhile, so each sign held.
-			const block = lastUpdate + index;
-			if (catchUp) {
-				for (let t = load<i32>(block) + 1; t < iteration; t++) {
-					// `dcfrFactors` in src/cfr.ts at α 1.5, β 0, γ 3, without
-					// pulling a general power function into the module.
-					const age: f64 = t > 2 ? <f64>(t - 2) : 0;
-					const grown = age * Math.sqrt(age);
-					const kept = <f64>(t - 1) / <f64>t;
-					positive *= grown / (grown + 1);
-					negative *= 0.5;
-					sum *= kept * kept * kept;
-				}
-			}
-			store<i32>(block, iteration);
-		}
-		keepPositive = <f32>positive;
-		keepNegative = <f32>negative;
-		keepSum = <f32>sum;
+		blockFactors(<usize>(i32At(blockOffset, node) + board), <f64>keepPositive, <f64>keepNegative, <f64>keepSum);
+		keepPositive = <f32>blockPositive;
+		keepNegative = <f32>blockNegative;
+		keepSum = <f32>blockSum;
 		update(base, sumBase, actions, n, reachMe, strategy, actionValues, out);
 		keepPositive = savedPositive;
 		keepNegative = savedNegative;
@@ -909,35 +928,10 @@ function updateI16(
 ): void {
 	const regretAt = regretScale + (block << 3);
 	const sumAt = sumScale + (block << 3);
-	let positive = factorPositive();
-	let negative = factorNegative();
-	let keep = factorSum();
-	if (dcfrRule && discounted !== 0) {
-		// Another history already discounted this shared block this iteration.
-		const mark = discounted + (block << 2);
-		if (load<i32>(mark) === iteration) {
-			positive = 1;
-			negative = 1;
-			keep = 1;
-		}
-		store<i32>(mark, iteration);
-	}
-	if (dcfrRule && sampleRounds !== 0) {
-		// A subtree chance sampling skipped missed those iterations'
-		// discounts, as in the 32-bit update in `traverse`.
-		const at = lastUpdate + (block << 2);
-		if (catchUp) {
-			for (let t = load<i32>(at) + 1; t < iteration; t++) {
-				const age: f64 = t > 2 ? <f64>(t - 2) : 0;
-				const grown = age * Math.sqrt(age);
-				const kept = <f64>(t - 1) / <f64>t;
-				positive *= grown / (grown + 1);
-				negative *= 0.5;
-				keep *= kept * kept * kept;
-			}
-		}
-		store<i32>(at, iteration);
-	}
+	blockFactors(block, factorPositive(), factorNegative(), factorSum());
+	const positive = blockPositive;
+	const negative = blockNegative;
+	const keep = blockSum;
 	const oldRegret = <f32>load<f64>(regretAt);
 	const oldSum = <f32>(load<f64>(sumAt) * keep);
 	const w = <f32>factorWeight();
@@ -1070,35 +1064,11 @@ function updateCompact(
 	block: usize, node: i32, chunk: i32, slot: i32, handBase: i32, base: usize, sumBase: usize, actions: i32, n: i32,
 	reachMe: usize, strategy: usize, actionValues: usize, value: usize,
 ): void {
-	let positive = factorPositive();
-	let negative = factorNegative();
-	let keep = factorSum();
 	const w = factorWeight();
-	if (dcfrRule && discounted !== 0) {
-		// Another history already discounted this shared block this iteration.
-		const mark = discounted + (block << 2);
-		if (load<i32>(mark) === iteration) {
-			positive = 1;
-			negative = 1;
-			keep = 1;
-		}
-		store<i32>(mark, iteration);
-	}
-	if (dcfrRule && sampleRounds !== 0) {
-		// As the 32-bit update does, in `traverse`.
-		const at = lastUpdate + (block << 2);
-		if (catchUp) {
-			for (let t = load<i32>(at) + 1; t < iteration; t++) {
-				const age: f64 = t > 2 ? <f64>(t - 2) : 0;
-				const grown = age * Math.sqrt(age);
-				const kept = <f64>(t - 1) / <f64>t;
-				positive *= grown / (grown + 1);
-				negative *= 0.5;
-				keep *= kept * kept * kept;
-			}
-		}
-		store<i32>(at, iteration);
-	}
+	blockFactors(block, factorPositive(), factorNegative(), factorSum());
+	const positive = blockPositive;
+	const negative = blockNegative;
+	const keep = blockSum;
 	const total = actions * n;
 	const rowStride = <usize>n << 2;
 
