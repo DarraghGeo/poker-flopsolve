@@ -489,13 +489,20 @@ combination, % of pot, OOP / IP:
 | `thinSizes` | 0.29 GiB | 2.10 / 1.90, max 6.2 / 5.9 | 96% |
 | 3 sizes on flop opening bets, 1 elsewhere | 0.19 GiB | 1.47 / 1.64, max 4.2 / 5.8 | 70% |
 | The issue's rule | 0.43 GiB | 1.33 / 1.15, max 3.3 / 6.7 | 89% |
+| Ks 9s 4s, T exact (0.75 raise, 3 aggressions) | 3.75 GiB | — | — |
+| `thinSizes` | 0.64 GiB | 1.26 / 1.01, max 4.4 / 2.1 | 100% |
 
 "Root size agrees" is the share of OOP's range whose best root bet size by EV is the same
 as in the exact solve. The max is over combinations weighing at least 1%. On As Kh 7d the
 rule is the most accurate per byte measured: two thirds of the issue's rule's memory, and
 less than half its worst error. On Ks 9s 4s, where the flop's in-position sizes matter
 more, three flop sizes alone did better for less. Peak memory in Node is the tree's: 1.41
-GiB for the first.
+GiB for the first, 0.76 GiB for Ks 9s 4s T.
+
+In headless Chromium (WebAssembly engine), an iteration of the thinned As Kh 7d T₀ takes
+1.9 s on one thread and 0.89 s on four; Ks 9s 4s T₀ 0.66 s and 0.30 s; Ks 9s 4s T 1.44 s
+and 0.64 s. Each reached about 0.2% of pot in 331 iterations, so a solve takes about 11, 4
+and 8 minutes on one thread, and 5, 2 and 3.5 on four.
 
 The growth itself is not offered. It found the shape, and grown trees were more accurate
 again (1.0 / 1.2% mean, 3.9% max, 90% agreement in 1.7 GiB on As Kh 7d). But each round
