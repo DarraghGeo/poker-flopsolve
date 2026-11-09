@@ -587,7 +587,7 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 	}
 	if (STORAGE && isTraverser && mode === TRAIN && applyUpdates && chunk >= 0) {
 		updateCompact(
-			<usize>(i32At(blockOffset, node) + board), chunk, slot, i32At(handOffset, node) + i32At(rowStart, listSlot),
+			<usize>(i32At(blockOffset, node) + board), node, chunk, slot, i32At(handOffset, node) + i32At(rowStart, listSlot),
 			base, sumBase, actions, n, reachMe, strategy, actionValues, out,
 		);
 	} else if (STORAGE && isTraverser && mode === TRAIN && applyUpdates && regretKind === I16) {
@@ -1021,9 +1021,9 @@ function scaleExponent(largest: f64, top: f64): i32 {
 	return exponent < 1 ? 0 : exponent > 255 ? 255 : exponent;
 }
 
-/** `streamSeed` in src/cfr.ts: the start of a slot's random stream on an iteration. */
-@inline function streamSeed(slot: u32, t: i32): u32 {
-	return ((slot ^ (<u32>t * 0x9e3779b1) ^ 0x5bd1e995) * 0x85ebca6b) | 1;
+/** `streamSeed` in src/cfr.ts: the start of a slot's random stream on an iteration, for one history. */
+@inline function streamSeed(slot: u32, t: i32, salt: u32): u32 {
+	return ((slot ^ (<u32>t * 0x9e3779b1) ^ (salt * 0x7feb352d) ^ 0x5bd1e995) * 0x85ebca6b) | 1;
 }
 
 /** `nextState` in src/cfr.ts. */
@@ -1038,10 +1038,11 @@ function scaleExponent(largest: f64, top: f64): i32 {
  * updated in float64 as the rule says and re-encoded, in whichever mode
  * compact storage runs; with chance sampling, the DCFR discounts a skipped
  * block missed first. Values are worked out twice rather than staged, as in
- * `updateI16`.
+ * `updateI16`. With shared storage the history's `node` salts the rounding
+ * streams, as there.
  */
 function updateCompact(
-	block: usize, chunk: i32, slot: i32, handBase: i32, base: usize, sumBase: usize, actions: i32, n: i32,
+	block: usize, node: i32, chunk: i32, slot: i32, handBase: i32, base: usize, sumBase: usize, actions: i32, n: i32,
 	reachMe: usize, strategy: usize, actionValues: usize, value: usize,
 ): void {
 	let positive = factorPositive();
@@ -1078,6 +1079,8 @@ function updateCompact(
 	}
 
 	const hashBase = load<u32>(chunkStart + (<usize>chunk << 2)) + <u32>slot;
+	// Which history is re-encoding a shared block; 0 keeps unshared streams as they were.
+	const salt: u32 = discounted !== 0 ? <u32>node : 0;
 	if (compactMode === BLOCK_SCALE) {
 		// One scale for the block, as 16-bit storage keeps.
 		const scaleAt = compactScale + (block << 3);
@@ -1088,7 +1091,7 @@ function updateCompact(
 			for (let a = 0; a < actions; a++) {
 				const row = a * n;
 				// One hash per row, stepped on for each hand.
-				let h: u32 = stochastic ? streamSeed(hashBase + <u32>row, iteration) : 0;
+				let h: u32 = stochastic ? streamSeed(hashBase + <u32>row, iteration, salt) : 0;
 				for (let i = 0; i < n; i++) {
 					const q = base + <usize>(row + i);
 					const accumulated = <f64>load<i8>(q) * old;
@@ -1146,7 +1149,7 @@ function updateCompact(
 		v128.store32_lane(shifts + <usize>i, bytesOf(exponent), 0);
 		const inverse = inversesOf(exponent);
 		// One stream per hand, stepped on for each action.
-		let h = stochastic || compactSums ? seedsOf(hashBase + <u32>i, iteration) : zero;
+		let h = stochastic || compactSums ? seedsOf(hashBase + <u32>i, iteration, salt) : zero;
 		for (let a = 0; a < actions; a++) {
 			const v = f32x4.mul(v128.load(actionValues + <usize>a * rowStride + o), inverse);
 			let rounded: v128;
@@ -1202,7 +1205,7 @@ function updateCompact(
 		store<u8>(shifts + <usize>i, <u8>exponent);
 		const inverse: f64 = exponent === 0 ? 0 : shiftInverse(exponent);
 		// One hash per hand, stepped on for each action.
-		let h: u32 = stochastic || compactSums ? streamSeed(hashBase + <u32>i, iteration) : 0;
+		let h: u32 = stochastic || compactSums ? streamSeed(hashBase + <u32>i, iteration, salt) : 0;
 		for (let a = 0; a < actions; a++) {
 			const q = base + <usize>(a * n + i);
 			const accumulated = <f64>load<i8>(q) * scale;
@@ -1292,9 +1295,9 @@ function updateCompact(
 }
 
 /** `streamSeed` for four slots from `slot`. */
-@inline function seedsOf(slot: u32, t: i32): v128 {
+@inline function seedsOf(slot: u32, t: i32, salt: u32): v128 {
 	const slots = i32x4.add(i32x4.splat(<i32>slot), i32x4(0, 1, 2, 3));
-	const mixed = v128.xor(v128.xor(slots, i32x4.splat(t * <i32>0x9e3779b1)), i32x4.splat(0x5bd1e995));
+	const mixed = v128.xor(v128.xor(slots, i32x4.splat(t * <i32>0x9e3779b1)), i32x4.splat(<i32>(salt * 0x7feb352d) ^ 0x5bd1e995));
 	return v128.or(i32x4.mul(mixed, i32x4.splat(<i32>0x85ebca6b)), i32x4.splat(1));
 }
 
