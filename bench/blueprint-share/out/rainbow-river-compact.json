@@ -1,0 +1,106 @@
+{
+ "tag": "rainbow-river-compact",
+ "storageBytes": 74846552,
+ "peakRss": 296337408,
+ "engine": "wasm",
+ "seconds": 300.116467837,
+ "iterations": 400,
+ "exploitability": 2.5265750268733744,
+ "best": 2.5265750268733744,
+ "history": [
+  {
+   "iterations": 20,
+   "seconds": 14.191820324999998,
+   "exploitability": 14.293823790450068
+  },
+  {
+   "iterations": 40,
+   "seconds": 27.756073272000002,
+   "exploitability": 8.043116715029855
+  },
+  {
+   "iterations": 80,
+   "seconds": 57.801804485,
+   "exploitability": 3.821269310657223
+  },
+  {
+   "iterations": 120,
+   "seconds": 87.053642502,
+   "exploitability": 3.1082854327761678
+  },
+  {
+   "iterations": 160,
+   "seconds": 118.780189505,
+   "exploitability": 2.8754234394425238
+  },
+  {
+   "iterations": 200,
+   "seconds": 149.068940921,
+   "exploitability": 2.8963304858563452
+  },
+  {
+   "iterations": 240,
+   "seconds": 179.908799166,
+   "exploitability": 3.017161073882599
+  },
+  {
+   "iterations": 280,
+   "seconds": 210.610857275,
+   "exploitability": 2.651420671212254
+  },
+  {
+   "iterations": 320,
+   "seconds": 240.367187733,
+   "exploitability": 2.541437922593979
+  },
+  {
+   "iterations": 360,
+   "seconds": 270.727688521,
+   "exploitability": 2.528827680685469
+  },
+  {
+   "iterations": 400,
+   "seconds": 300.116314418,
+   "exploitability": 2.5265750268733744
+  }
+ ],
+ "rootError": [
+  {
+   "mae": 0.5574543696550568,
+   "max": 1.9915042333262605
+  },
+  {
+   "mae": 0.47637085453186107,
+   "max": 1.855791688249056
+  }
+ ],
+ "loss": [
+  {
+   "decision": "OOP at root",
+   "blueprint": {
+    "mean": 0.016229000467596493,
+    "max": 0.08398339755977702
+   },
+   "reference": {
+    "mean": 0.008871218779525755,
+    "max": 0.04991630740054376
+   }
+  },
+  {
+   "decision": "IP after check",
+   "blueprint": {
+    "mean": 0.010579540512471397,
+    "max": 0.09425546088939285
+   },
+   "reference": {
+    "mean": 0.00831599431394231,
+    "max": 0.039456157042288
+   }
+  }
+ ],
+ "resolves": [],
+ "resolveGain": [
+  null,
+  null
+ ]
+}
