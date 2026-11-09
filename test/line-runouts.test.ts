@@ -193,5 +193,7 @@ describe('line runouts', () => {
 		expect(() => createRun(spot, { approximations: { chanceSampling: {} } })).toThrow(/lineRunouts/);
 		expect(() => createRun(spot, { approximations: { coarseStart: { iterations: 5 } } })).toThrow(/lineRunouts/);
 		expect(() => defineSpot({ ...turn, lineRunouts: { raises: 1, band: 0 } })).toThrow(/band/);
+		expect(() => defineSpot({ ...flop, shareHistories: true, lineRunouts: { raises: 1 } })).toThrow(/shareHistories/);
+		expect(() => defineSpot({ ...flop, compactStorage: {}, lineRunouts: { raises: 1 } })).toThrow(/compactStorage/);
 	});
 });
