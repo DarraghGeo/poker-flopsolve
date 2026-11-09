@@ -1,0 +1,52 @@
+rainbow-nosample-4t-none: 306 nodes, 1396 runouts, 173 MiB f32
+  50 it, 24.7 s, 6.372%, loss 0.1698 / 0.0879
+  100 it, 49.8 s, 3.540%, loss 0.0690 / 0.0334
+  150 it, 73.4 s, 2.835%, loss 0.0403 / 0.0258
+  200 it, 98.5 s, 3.327%, loss 0.0304 / 0.0347
+  250 it, 121.0 s, 2.796%, loss 0.0244 / 0.0256
+  300 it, 143.8 s, 2.619%, loss 0.0194 / 0.0187
+  350 it, 168.0 s, 2.617%, loss 0.0164 / 0.0150
+  400 it, 191.2 s, 2.645%, loss 0.0145 / 0.0136
+  450 it, 213.5 s, 2.689%, loss 0.0132 / 0.0132
+  500 it, 236.3 s, 2.735%, loss 0.0124 / 0.0126
+blueprint: cap at 500 it, 236.3 s solving (473 ms/it), 2.735%, engine wasm, 4 thread(s), peak RSS 436 MiB
+final loss 0.0124 / 0.0126 at 500 it
+  loss settled (±0.01% of final) at 270 it, 130.0 s
+  rule 10:0.005:1: 410 it, 195.8 s, loss 0.0142 / 0.0135
+  rule 10:0.005:2: 420 it, 200.2 s, loss 0.0139 / 0.0135
+  rule 10:0.005:3: 430 it, 204.6 s, loss 0.0137 / 0.0134
+  rule 10:0.01:1: 210 it, 103.1 s, loss 0.0295 / 0.0345
+  rule 10:0.01:2: 220 it, 107.6 s, loss 0.0283 / 0.0320
+  rule 10:0.01:3: 230 it, 112.2 s, loss 0.0270 / 0.0297
+  rule 10:0.02:1: 130 it, 63.6 s, loss 0.0491 / 0.0283
+  rule 10:0.02:2: 140 it, 68.2 s, loss 0.0443 / 0.0271
+  rule 10:0.02:3: 150 it, 73.4 s, loss 0.0403 / 0.0258
+  rule 10:0.03:1: 100 it, 49.8 s, loss 0.0690 / 0.0334
+  rule 10:0.03:2: 110 it, 54.6 s, loss 0.0608 / 0.0316
+  rule 10:0.03:3: 120 it, 59.2 s, loss 0.0544 / 0.0298
+  rule 20:0.005:1: never
+  rule 20:0.005:2: never
+  rule 20:0.005:3: never
+  rule 20:0.01:1: 420 it, 200.2 s, loss 0.0139 / 0.0135
+  rule 20:0.01:2: 440 it, 209.1 s, loss 0.0134 / 0.0133
+  rule 20:0.01:3: 460 it, 218.1 s, loss 0.0130 / 0.0130
+  rule 20:0.02:1: 220 it, 107.6 s, loss 0.0283 / 0.0320
+  rule 20:0.02:2: 240 it, 116.6 s, loss 0.0257 / 0.0275
+  rule 20:0.02:3: 260 it, 125.5 s, loss 0.0233 / 0.0238
+  rule 20:0.03:1: 180 it, 88.3 s, loss 0.0316 / 0.0220
+  rule 20:0.03:2: 200 it, 98.5 s, loss 0.0304 / 0.0347
+  rule 20:0.03:3: 220 it, 107.6 s, loss 0.0283 / 0.0320
+  rule 40:0.005:1: never
+  rule 40:0.005:2: never
+  rule 40:0.005:3: never
+  rule 40:0.01:1: never
+  rule 40:0.01:2: never
+  rule 40:0.01:3: never
+  rule 40:0.02:1: 440 it, 209.1 s, loss 0.0134 / 0.0133
+  rule 40:0.02:2: 480 it, 227.3 s, loss 0.0127 / 0.0128
+  rule 40:0.02:3: never
+  rule 40:0.03:1: 240 it, 116.6 s, loss 0.0257 / 0.0275
+  rule 40:0.03:2: 280 it, 134.8 s, loss 0.0212 / 0.0209
+  rule 40:0.03:3: 320 it, 153.1 s, loss 0.0180 / 0.0170
+root EV error, % pot: OOP mean 0.523 max 3.420; IP mean 0.386 max 2.836
+root play loss at reference values, % pot: 0.0124 / 0.0126 (reference's own 0.0089 / 0.0083)

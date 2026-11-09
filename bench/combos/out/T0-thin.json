@@ -1,0 +1,290 @@
+{
+ "spot": "T0",
+ "combination": "thin",
+ "engine": "wasm",
+ "workers": 4,
+ "estimate": {
+  "f32": 1398516384,
+  "i16": 714887408,
+  "compact": null
+ },
+ "storageGiB": 1.285,
+ "setupSeconds": 0.6,
+ "peakRssGiB": 1.55,
+ "settled": {
+  "within002": {
+   "iterations": 250,
+   "seconds": 150.9
+  },
+  "within005": {
+   "iterations": 160,
+   "seconds": 98.6
+  }
+ },
+ "reference": "bench/adaptive/results/rainbow-T0.json",
+ "rows": [
+  {
+   "iterations": 10,
+   "seconds": 8.4,
+   "perIteration": 0.842,
+   "exploitability": 78.79,
+   "evError": [
+    {
+     "mean": 27.5234,
+     "max": 156.569
+    },
+    {
+     "mean": 15.9728,
+     "max": 211.298
+    }
+   ],
+   "loss": [
+    {
+     "mean": 4.0452,
+     "max": 18.383
+    }
+   ],
+   "peakRssGiB": 1.55
+  },
+  {
+   "iterations": 20,
+   "seconds": 14.2,
+   "perIteration": 0.712,
+   "exploitability": 34.735,
+   "evError": [
+    {
+     "mean": 9.6238,
+     "max": 51.835
+    },
+    {
+     "mean": 8.5574,
+     "max": 105.485
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.9251,
+     "max": 7.031
+    }
+   ],
+   "drift": 0.1846,
+   "peakRssGiB": 1.55
+  },
+  {
+   "iterations": 40,
+   "seconds": 26.2,
+   "perIteration": 0.656,
+   "exploitability": 11.213,
+   "evError": [
+    {
+     "mean": 3.5588,
+     "max": 13.874
+    },
+    {
+     "mean": 4.4921,
+     "max": 29.632
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.5178,
+     "max": 3.373
+    }
+   ],
+   "drift": 0.1573,
+   "peakRssGiB": 1.55
+  },
+  {
+   "iterations": 60,
+   "seconds": 38.3,
+   "perIteration": 0.638,
+   "exploitability": 5.371,
+   "evError": [
+    {
+     "mean": 2.8621,
+     "max": 14.26
+    },
+    {
+     "mean": 3.624,
+     "max": 18.35
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.362,
+     "max": 1.742
+    }
+   ],
+   "drift": 0.11,
+   "peakRssGiB": 1.55
+  },
+  {
+   "iterations": 80,
+   "seconds": 49.4,
+   "perIteration": 0.618,
+   "exploitability": 3.225,
+   "evError": [
+    {
+     "mean": 2.0891,
+     "max": 11.208
+    },
+    {
+     "mean": 2.9585,
+     "max": 11.555
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.2298,
+     "max": 1.074
+    }
+   ],
+   "drift": 0.0991,
+   "peakRssGiB": 1.55
+  },
+  {
+   "iterations": 120,
+   "seconds": 75.2,
+   "perIteration": 0.627,
+   "exploitability": 1.862,
+   "evError": [
+    {
+     "mean": 1.3331,
+     "max": 5.934
+    },
+    {
+     "mean": 2.1834,
+     "max": 5.012
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.1417,
+     "max": 0.951
+    }
+   ],
+   "drift": 0.0947,
+   "peakRssGiB": 1.55
+  },
+  {
+   "iterations": 160,
+   "seconds": 98.6,
+   "perIteration": 0.616,
+   "exploitability": 1.177,
+   "evError": [
+    {
+     "mean": 1.4522,
+     "max": 5.163
+    },
+    {
+     "mean": 2.0877,
+     "max": 5.671
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0787,
+     "max": 0.302
+    }
+   ],
+   "drift": 0.0676,
+   "peakRssGiB": 1.55
+  },
+  {
+   "iterations": 200,
+   "seconds": 121.4,
+   "perIteration": 0.607,
+   "exploitability": 0.814,
+   "evError": [
+    {
+     "mean": 1.4704,
+     "max": 5.178
+    },
+    {
+     "mean": 2.0002,
+     "max": 5.992
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0579,
+     "max": 0.227
+    }
+   ],
+   "drift": 0.0365,
+   "peakRssGiB": 1.55
+  },
+  {
+   "iterations": 250,
+   "seconds": 150.9,
+   "perIteration": 0.604,
+   "exploitability": 0.527,
+   "evError": [
+    {
+     "mean": 1.4604,
+     "max": 5.482
+    },
+    {
+     "mean": 1.8802,
+     "max": 6.135
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0475,
+     "max": 0.204
+    }
+   ],
+   "drift": 0.0273,
+   "peakRssGiB": 1.55
+  },
+  {
+   "iterations": 300,
+   "seconds": 180.6,
+   "perIteration": 0.602,
+   "exploitability": 0.368,
+   "evError": [
+    {
+     "mean": 1.4534,
+     "max": 5.599
+    },
+    {
+     "mean": 1.7787,
+     "max": 6.235
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0424,
+     "max": 0.198
+    }
+   ],
+   "drift": 0.0188,
+   "peakRssGiB": 1.55
+  },
+  {
+   "iterations": 400,
+   "seconds": 241.6,
+   "perIteration": 0.604,
+   "exploitability": 0.214,
+   "evError": [
+    {
+     "mean": 1.4464,
+     "max": 5.697
+    },
+    {
+     "mean": 1.6421,
+     "max": 6.364
+    }
+   ],
+   "loss": [
+    {
+     "mean": 0.0377,
+     "max": 0.221
+    }
+   ],
+   "drift": 0.023,
+   "peakRssGiB": 1.55
+  }
+ ]
+}

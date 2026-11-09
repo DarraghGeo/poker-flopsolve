@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { createRun, defineSpot } from '../src/index.ts';
 import type { SolveOptions, SpotConfig } from '../src/index.ts';
 import { SPOTS } from '../bench/compare/spots.ts';
+import { wasmStorage } from '../src/wasm-storage.ts';
 
 const flop: SpotConfig = {
 	board: 'Ts 9s 4h', pot: 60, stack: 100,
@@ -113,14 +114,74 @@ describe('chance sampling', () => {
 		second.close();
 	});
 
-	it('refuses 16-bit storage and a p outside (0, 1]', () => {
-		expect(() => createRun(defineSpot(SPOTS.turn), { precision: 'i16', ...sampling({ p: 0.5 }) })).toThrow(/16|32/);
+	it('refuses a p outside (0, 1]', () => {
 		expect(() => createRun(defineSpot(SPOTS.turn), sampling({ p: 0 }))).toThrow(/p must/);
 		expect(() => createRun(defineSpot(SPOTS.turn), sampling({ p: 1.5 }))).toThrow(/p must/);
 		// The baselines count against maxBytes beside the storage.
 		const tight = defineSpot({ ...flop, maxBytes: defineSpot(flop).estimate.bytes + 16 });
 		expect(() => createRun(tight, { precision: 'f32', ...sampling({ p: 0.5 }) })).toThrow(/maxBytes/);
 		createRun(tight, { precision: 'f32' }).close();
+	});
+
+	describe('with 16-bit storage (issue #102)', () => {
+		const engines: [string, SolveOptions][] = [['js', { engine: 'js' }], ['wasm', { wasmStorage }]];
+		for (const [name, engine] of engines) {
+			for (const algorithm of ['dcfr', 'cfr+'] as const) {
+				it(`at p = 1 is the exact 16-bit solve, bit for bit (${name}, ${algorithm})`, () => {
+					const options: SolveOptions = { ...engine, precision: 'i16', algorithm };
+					const exact = solveWith(flop, 12, options);
+					const sampled = solveWith(flop, 12, { ...options, ...sampling({ p: 1, rounds: [1, 2] }) });
+					expect(sampled.engine).toBe(name);
+					expect(firstDifference(sampled.regret, exact.regret)).toBe(-1);
+					expect(firstDifference(sampled.sums, exact.sums)).toBe(-1);
+				});
+			}
+			it(`catches up the discounts a skipped subtree missed, as 32-bit storage does (${name})`, () => {
+				// Without the catch-up a 16-bit block keeps regrets DCFR would
+				// have halved while it was skipped, and drifts from the 32-bit solve.
+				const options = sampling({ p: 0.3, rounds: [1, 2] });
+				const wide = solveWith(flop, 80, { ...options, ...(name === 'js' ? { engine: 'js' as const } : {}) });
+				const narrow = solveWith(flop, 80, { ...options, ...engine, precision: 'i16' });
+				expect(narrow.engine).toBe(name);
+				expect(narrow.lastUpdate.some((t) => t > 0)).toBe(true);
+				expect(Math.abs(narrow.exploitability - wide.exploitability)).toBeLessThan(0.05 * wide.exploitability + 0.01);
+			});
+		}
+		it('counts 16-bit storage, not 32-bit, beside the baselines', () => {
+			// Room for the 16-bit storage and the baselines, not for 32 bits.
+			const spot = defineSpot(flop);
+			const probe = createRun(spot, { workers: 1, precision: 'i16', ...sampling({ p: 0.5 }) });
+			const baselines = probe.solver.ctx.sampling!.bytes;
+			probe.close();
+			const maxBytes = Math.ceil(spot.estimate.compressedBytes + baselines + 1024);
+			expect(maxBytes).toBeLessThan(spot.estimate.bytes);
+			const tight = defineSpot({ ...flop, maxBytes });
+			for (const options of [{ precision: 'i16' as const }, {}, { precision: 'i16' as const, wasmStorage }]) {
+				const run = createRun(tight, { workers: 1, ...options, ...sampling({ p: 0.5 }) });
+				expect(run.solver.ctx.regretScale).toBeTruthy();
+				run.close();
+			}
+		});
+
+		it('picks the same deals on the JavaScript engine as on the WebAssembly one', () => {
+			const options: SolveOptions = { precision: 'i16', ...sampling({ p: 0.4, rounds: [1, 2] }) };
+			const js = solveWith(flop, 3, { ...options, engine: 'js' });
+			const wasm = solveWith(flop, 3, { ...options, wasmStorage });
+			expect(wasm.engine).toBe('wasm');
+			expect(firstDifference(wasm.lastWalk, js.lastWalk)).toBe(-1);
+			expect(wasm.exploitability).toBeCloseTo(js.exploitability, 2);
+		});
+		it('is bitwise repeatable on threads', () => {
+			const options: SolveOptions = { precision: 'i16', wasmStorage, workers: 3, ...sampling({ p: 0.4 }) };
+			const a = solveWith(flop, 30, options);
+			const b = solveWith(flop, 30, options);
+			expect(a.workers).toBe(3);
+			expect(firstDifference(a.regret, b.regret)).toBe(-1);
+			expect(firstDifference(a.sums, b.sums)).toBe(-1);
+			// And it converges as the 32-bit sampled solve on as many threads does.
+			const wide = solveWith(flop, 30, { workers: 3, ...sampling({ p: 0.4 }) });
+			expect(Math.abs(a.exploitability - wide.exploitability)).toBeLessThan(0.05 * wide.exploitability + 0.01);
+		});
 	});
 
 	describe('on threads (issue #99)', () => {

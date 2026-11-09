@@ -1,0 +1,9 @@
+T0 unshared base: 230 MiB f32, 4 thread(s)
+  100 it, 0.664%
+  200 it, 0.242%
+  300 it, 0.120%
+  400 it, 0.075%
+  500 it, 0.051%
+  600 it, 0.036%
+  stopped at 600 it, 95.6 s solving, 0.036% of pot (own game)
+  OOP root play loss at T0's values: 0.0535% of pot; root EV error OOP mean 4.869 max 41.903, IP mean 3.528 max 31.151

@@ -28,6 +28,8 @@ import { createEngine } from './engine.ts';
 import type { WasmStorage } from './engine.ts';
 import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
+import type { SettleOptions } from './settle.ts';
+import { settlePlan, trackSettle } from './settle.ts';
 import { aliasHistories } from './history-merge.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
@@ -54,6 +56,8 @@ export { activeCombos, parseRange, rangeWeight } from './range.ts';
 export type { ResolvedBoard } from './runouts.ts';
 export type { WarmStartReport } from './warm.ts';
 export { resolveSubgame } from './resolve.ts';
+export { rootPlay, rootPlayMovement, rootPlayNodes, trackSettle } from './settle.ts';
+export type { RootPlay, SettleOptions, SettleTracker } from './settle.ts';
 export { linesWithin, turnLineReach } from './hybrid.ts';
 export type { LineReach, LinesWithinOptions } from './hybrid.ts';
 export type { Gadget, ResolvedSubgame, ResolveOptions } from './resolve.ts';
@@ -879,6 +883,24 @@ export interface SolveOptions {
 	 * `nextCheck`. Setting this forces a fixed cadence instead.
 	 */
 	readonly exploitEvery?: number;
+	/**
+	 * Stop once the root play stops moving (issue #100): every `every`
+	 * iterations (default 20) read the average strategy at the root and at in
+	 * position's decision after a check, and stop once it has moved less than
+	 * `tolerance` (default 0.01: 1% of the range's mass, total variation
+	 * weighted by range) at `patience` checks in a row (default 2).
+	 * `stoppedAt` is then 'settled'. `rootPlayMovement` defines the measure.
+	 *
+	 * For solves that never reach an exploitability target, such as a
+	 * blueprint with `shareHistories`, which plateaus several percent of the
+	 * pot out while its first decisions go on settling (issue #85). A check
+	 * reads two nodes' strategies and no best-response pass, so it costs
+	 * almost nothing; with it, `Progress.exploitability` is NaN unless
+	 * `targetPercent` is set too, which then measures at every check and
+	 * stops on whichever comes first. `exploitEvery` is ignored. Measured
+	 * costs are in `solveLite`'s notes. Unset, off.
+	 */
+	readonly settle?: SettleOptions;
 	readonly onProgress?: (info: Progress) => void;
 	/**
 	 * Accumulator storage. Unset, 'f32' — what the WebAssembly engine runs —
@@ -1474,6 +1496,73 @@ export interface Approximations {
 	 *   choices that a best response recomputed each iteration does not
 	 *   converge to.
 	 *
+	 * Lite mode (issue #100) measured these speed trims of its blueprint and
+	 * left them off or out. Rainbow As Kh 7d, issue #47's betting, in Node,
+	 * against the unshared blueprint, `settle` at its defaults; `bench/lite/out/`
+	 * has the logs:
+	 *
+	 * - A wider `runoutBuckets` gap than 3 (6, 13): the same 1396 runouts on
+	 *   the bench ranges, whose suited connectors keep low cards apart.
+	 * - `allInThreshold: 0.67`: the same tree; at SPR 18 no bet commits two
+	 *   thirds of a stack.
+	 * - Sampling `p` 0.2: 92 ms an iteration against 0.35's 251, but the root
+	 *   play wandered, and the settle rule fired with it losing 0.043% of pot
+	 *   and per-hand EVs 1.5% off. p 0.5, 0.7 and 0.9 gave closer per-hand
+	 *   EVs (0.42-0.44% of pot against 0.44-0.50) for 1.8, 3.5 and 5.4 times
+	 *   the time an iteration, and no earlier settled root play per second.
+	 * - `noDonk` on the turn and river, and a flop capped at two aggressions:
+	 *   together 44% cheaper an iteration on rainbow, settled in 63 s instead
+	 *   of 100 with the root play still within 0.01% of pot. But they change
+	 *   the game. On Ts 9s 4h turn re-solves at the full betting gave the
+	 *   opponent 16% of the subgame pot instead of 4% (14% from the trimmed
+	 *   tree unshared and converged), and per-hand EVs were three times as far
+	 *   off. Each alone cost less but still too much: `noDonk` 6.7 / 12.9%
+	 *   (OOP / IP refined), the cap 7.6 / 3.8%, for 6-18% less time to settle.
+	 *   Both stay as `LiteOptions` for callers who want the speed.
+	 * - Warm-starting turn re-solves from the blueprint's regrets below the
+	 *   node (`copySubtree` before the first iteration): the opponent's gain
+	 *   moved by under 0.15% of the subgame pot at 100 and 300 iterations
+	 *   with DCFR's count restarted, and doubled with the blueprint's count
+	 *   kept. One turn/river size says little about the full betting's.
+	 *
+	 * Combinations of the memory levers on the round's target T (As Kh 7d,
+	 * 17.2 GiB at 32 bits) were measured by issue #102 (`bench/combos/`), and
+	 * one is offered as `largeTree` in `poker-flopsolve/wasm-storage`:
+	 * `thinSizes`, 16-bit storage on the WebAssembly engine and
+	 * `chanceSampling`. Measured on 4 threads against `thinSizes` alone at 32
+	 * bits (600 iterations, 0.154% of pot), as the EV OOP's root play and
+	 * IP's after a check lose at its per-action values: the preset settled in
+	 * 155 s at the reference's own floor (0.031 / 0.020% of pot) in 1.97 GiB
+	 * peak. These were left out:
+	 *
+	 * - `shareHistories` on top of `thinSizes` (0.42 GiB at 16 bits): its
+	 *   exploitability stalls near 5% of pot (on T₀ 4.4%, where sharing
+	 *   alone sits at 8%: sharing's own floor, not a bug; it shares only
+	 *   rivers whose subtrees are identical, so thinning cannot make it
+	 *   share mismatched ones, and the threads split by runout, so a shared
+	 *   block is one thread's). Root play lost 0.048% of pot against 0.031%,
+	 *   per-hand root EVs 0.5% off against 0.05%, and it ran no faster, at
+	 *   1.7 s an iteration against 1.56 unsampled. With `runoutBuckets: 3`
+	 *   too, 0.25 GiB: the same root loss, 0.7–1.0% EV error, 5.1% at worst.
+	 * - `shareHistories` without `thinSizes` (1.48 GiB at 16 bits): it saves
+	 *   storage only, so an iteration costs the full tree's, 2.7 s on T₀
+	 *   where the thinned tree takes 0.6; T itself would take far beyond the
+	 *   15 minutes asked.
+	 * - `runoutBuckets: 3` on top (0.86 GiB, 87 s to settle with sampling,
+	 *   0.14 s an iteration): the same root play, but per-hand root EVs 0.2%
+	 *   of pot off on average and 2.3% at worst against 0.05 and 0.3. Left
+	 *   to the caller, who can add it to the preset's config.
+	 * - `compactStorage` in place of 16 bits: the same root play in 1.48 GiB
+	 *   peak instead of 1.97, about 10% slower, exploitability 0.53% of pot
+	 *   at 1600 iterations against 0.35. Offered as `storage: 'compact'`.
+	 * - `lineRunouts` (JavaScript engine only) was not measured on T: the
+	 *   round asked for the WebAssembly engine on 4 threads.
+	 *
+	 * What `thinSizes` itself costs against the full tree was measured on T₀
+	 * against an exact solve (561 iterations, 0.22% of pot): root play 0.04%
+	 * of pot with or without the storage levers and sampling, per-hand root
+	 * EVs about 1.5% of pot off on average, 5.5% at worst.
+	 *
 	 * Recovering turn re-solves from a `shareHistories` blueprint (#101):
 	 * `ShareHistories.keepLines` is what is offered. Measured and left out,
 	 * on AsKh7d (`bench/blueprint-share/recover.ts`, numbers in % of the
@@ -1519,7 +1608,9 @@ export interface Approximations {
 	 *
 	 * Costs: one float per hand per stored deal per chance node, 6–31 MB on
 	 * those flops (about 12–20% beside their storage), counted against
-	 * `maxBytes`; 32- or 64-bit storage, or `compactStorage` over either.
+	 * `maxBytes`. Any storage: 32-, 64- or 16-bit, or `compactStorage`
+	 * over 32 or 16 bits (16-bit since issue #102, with the same DCFR
+	 * catch-up, in both engines).
 	 *
 	 * Threads (issue #99): it runs on `workers` threads, in the JavaScript
 	 * pool and on the WebAssembly engine's threads alike. Threads split the
@@ -1562,9 +1653,15 @@ export const PRECISION_BYTES = { f64: 8, f32: 4, i16: 2 } as const;
 
 export interface Progress {
 	readonly iteration: number;
+	/** In chips; NaN at a `settle` check made without `targetPercent`. */
 	readonly exploitability: number;
 	readonly elapsedMs: number;
+	/** With `settle`: how far the root play moved since the last check (`rootPlayMovement`), NaN at the first. */
+	readonly movement?: number;
 }
+
+/** Which stopping rule ended a solve: see `Solution.stoppedAt`. */
+export type StopReason = 'target' | 'iterations' | 'settled';
 
 /** A solved spot. */
 export interface Solution {
@@ -1576,9 +1673,10 @@ export interface Solution {
 	/**
 	 * Which stopping rule ended the solve. 'iterations' with a `targetPercent`
 	 * set means the target was NOT reached and the answer is looser than asked
-	 * for — worth surfacing rather than swallowing.
+	 * for — worth surfacing rather than swallowing. 'settled' is
+	 * `SolveOptions.settle`'s: the root play stopped moving.
 	 */
-	readonly stoppedAt: 'target' | 'iterations';
+	readonly stoppedAt: StopReason;
 	/** Worker threads the solve actually used, which 'auto' does not tell you. */
 	readonly workers: number;
 	/** The solver behind this solution, for analysis and warm starts. */
@@ -1695,7 +1793,7 @@ export interface SolveRun {
 	 */
 	trueExploitabilityPercent(): number;
 	/** A view of the strategy as it stands; cheap, take a fresh one each time. */
-	snapshot(history?: readonly Progress[], stoppedAt?: 'target' | 'iterations'): Solution;
+	snapshot(history?: readonly Progress[], stoppedAt?: StopReason): Solution;
 	/** Release worker threads. Snapshots taken before this stay usable. */
 	close(): void;
 	/** Worker threads actually in use; 1 when single-threaded. */
@@ -1787,11 +1885,13 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 
 	const active = buildActiveLists(spot.runouts, spot.players, showdown);
 	const hands = buildHandSpace(spot.runouts, spot.players, active);
-	if (samplingOptions && quantised) throw new Error('chanceSampling needs 32- or 64-bit storage');
 	const samplingPlan = samplingOptions ? planSampling(spot.tree, spot.runouts, active, layout, samplingOptions) : undefined;
-	// Measured as the precision choice above measures storage: by the estimate;
-	// with compact storage, which that estimate does not know, by the layout.
-	const storageBytes = compact ? layout.bytes : Math.max(bytes, layout.bytes);
+	// Measured as the precision choice above measures storage: by the estimate
+	// at the precision chosen (16-bit storage by its own); with compact
+	// storage, which that estimate does not know, by the layout.
+	const storageBytes = compact
+		? layout.bytes
+		: Math.max(quantised ? spot.estimate.compressedBytes : bytes, layout.bytes);
 	if (samplingPlan && storageBytes + samplingBytes(samplingPlan) > maxBytes) {
 		throw new Error(
 			`chanceSampling needs ${Math.ceil(samplingBytes(samplingPlan) / 2 ** 20)} MiB of baselines beside ` +
@@ -2186,6 +2286,8 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 	const iterations = options.iterations ?? 500;
 	const target = options.targetPercent ?? 0;
 	const fixed = options.exploitEvery ?? 0;
+	// Validated before any storage is taken.
+	const settle = options.settle ? settlePlan(options.settle) : null;
 	const run = createRun(spot, options);
 	const history: Progress[] = [];
 	// A coarse start solves inside createRun, and that is solving time too.
@@ -2202,13 +2304,14 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 	}
 
 	function runAll(): Solution {
+		if (settle) return runSettled(settle);
 		// Nothing to measure for: run straight through in one call.
 		if (fixed <= 0 && target <= 0) {
 			run.step(iterations);
 			return run.snapshot(history, 'iterations');
 		}
 
-		let stoppedAt: 'target' | 'iterations' = 'iterations';
+		let stoppedAt: StopReason = 'iterations';
 		let done = 0;
 		let next = fixed > 0 ? fixed : Math.min(iterations, FIRST_CHECK);
 		let prevIteration = 0;
@@ -2252,6 +2355,39 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 				next = Math.max(done + 1, Math.ceil(bounded));
 				prevIteration = done;
 				prevExploitability = info.exploitability;
+			}
+		}
+		return run.snapshot(history, stoppedAt);
+	}
+
+	/** `settle`'s loop: a cheap root-play check every `every` iterations. */
+	function runSettled(plan: Required<SettleOptions>): Solution {
+		const tracker = trackSettle(plan);
+		let stoppedAt: StopReason = 'iterations';
+		let done = 0;
+		while (done < iterations) {
+			const until = Math.min(done + plan.every, iterations);
+			// A short last step moves the play less; it is not a check.
+			const full = until - done === plan.every;
+			run.step(until - done);
+			done = until;
+			const measured = run.snapshot();
+			const settled = full && tracker.check(measured, done);
+			const info: Progress = {
+				iteration: done,
+				exploitability: target > 0 ? measured.exploitability() : Number.NaN,
+				elapsedMs: Date.now() - started,
+				movement: full ? tracker.movement : Number.NaN,
+			};
+			history.push(info);
+			options.onProgress?.(info);
+			if (target > 0 && measured.exploitabilityPercent() <= target) {
+				stoppedAt = 'target';
+				break;
+			}
+			if (settled) {
+				stoppedAt = 'settled';
+				break;
 			}
 		}
 		return run.snapshot(history, stoppedAt);
@@ -2301,7 +2437,7 @@ function makeSolution(
 	iterations: number,
 	totalIterations: number,
 	history: Progress[],
-	stoppedAt: 'target' | 'iterations',
+	stoppedAt: StopReason,
 	workers: number,
 	currentProfileEv: boolean,
 ): Solution {
@@ -2475,3 +2611,5 @@ function makeSolution(
 }
 
 export { formatCards, parseCards };
+export { bettingFrom, liteConfig, solveLite } from './lite.ts';
+export type { LiteOptions, LiteResolveOptions, LiteSolution, SolveLiteOptions } from './lite.ts';
