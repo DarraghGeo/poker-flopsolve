@@ -437,6 +437,10 @@ How each row was measured, all on 4 threads:
 - **Exact**: the bench ranges and betting to 0.3% of pot (two-tone and monotone, Node), and the bench
   `flop` spot to 0.2% in Chromium.
 
+Every napkinpoker figure on this page (the goal table's notes and the inventory's costs) is an
+aggregate score against napkinpoker's reference solves, whose fixtures are private (issue #119; see
+[Every option on napkinpoker's reference solves](#every-option-on-napkinpokers-reference-solves)).
+
 What the numbers mean:
 - **`solveLite`**: decisions near-exact against an equilibrium opponent. Root play loses 0.072% of pot
   at an exact full-game solve's values (issue #51's T₀, rainbow). On eight napkinpoker spots it lost
@@ -1227,7 +1231,9 @@ for any rule, and the measurements.
 ### Every option on napkinpoker's reference solves
 
 `bench/reference/` scores any solution against 70 full-hand solves by postflop-solver
-(every flop texture, realistic weighted ranges; see its `napkinpoker/README.md`). At each
+(every flop texture, realistic weighted ranges; see its `napkinpoker/README.md`). The fixtures are
+private and not in this repository (issue #119): `bench/reference/napkinpoker.ts` reads them from
+`NAPKIN_REFERENCE` or a napkinpoker checkout beside this one. Only aggregate scores are published here. At each
 stored flop node, and the first turn decision after each stored turn card, it values our
 strategy at the stored per-action EVs. Those are exact action against action. The EV our
 play gives up against each hand's best stored action is the regret we leave in that game.
@@ -1309,7 +1315,8 @@ every pair of the nine opt-ins and the two presets on a small spot. Each pair ei
 on two threads, matching one thread and the JavaScript engine, or is refused with an
 error: `lineRunouts` with `shareHistories`, `compactStorage`, `chanceSampling`,
 `coarseStart` or either preset. `test/presets-score.test.ts` scores both presets on f03 against the
-stored EVs, so a regression in any option they use fails `npm test`.
+stored EVs, so a regression in any option they use fails `npm test` wherever the fixtures are
+checked out; elsewhere it skips.
 
 ## Verification
 
