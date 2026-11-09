@@ -19,7 +19,8 @@ the `Approximations` notes in `src/index.ts`.
 
 - `trim-*.log`: the speed trims, one at a time, on rainbow (`RULE=none`, 700
   iterations, rules tabulated).
-- `acc-*.log`, `browser-*.log`, `t0-*.log`, `napkin-base.log`: the final defaults.
+- `acc-*.log`, `browser-*.log`, `t0-*.log`, `napkin-base.log`: the final defaults;
+  `browser-*.log` after #99 made `chanceSampling` threaded.
 - `trimmed/`: the same runs from the round when `noDonk` and a flop cap of two
   aggressions were defaults, before the two-tone re-solves showed what they cost.
 - `diag-two-tone-*.log`: that round's diagnostics. Their names describe the defaults

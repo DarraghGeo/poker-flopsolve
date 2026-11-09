@@ -353,7 +353,7 @@ import { solveLite } from 'poker-flopsolve';
 
 const spot = { board: 'As Kh 7d', pot: 55, stack: 975, oop, ip,
 	betSizes: [[0.33, 0.75, 1.5]], raiseSizes: [[0.75]], maxRaises: 3, allowAllIn: true };
-const lite = solveLite(spot, { workers: 4 }); // threads speed the re-solves
+const lite = solveLite(spot, { workers: 4 }); // after enableThreads(4) in a browser
 lite.solution.strategyAt(0, 0);               // the flop root
 const turn = lite.resolve(node, board, { player: 0, iterations: 300 });
 ```
@@ -377,13 +377,11 @@ by how often each turn is reached:
 
 | flop | settled, 1 / 2 / 4 threads | peak memory | root play loss, % pot (floor) | re-solve gain, % (unshared) | a re-solve, 1 / 2 / 4 threads |
 |---|---|---|---|---|---|
-| As Kh 7d | 107 / 116 / 104 s | 506 MiB | 0.023 / 0.014 (0.009 / 0.008) | 3.1 / 2.7 (0.67 / 0.50) | 42 / 25 / 12 s |
-| Ts 9s 4h | 65 / 67 / 73 s | 420 MiB | 0.118 / 0.076 (0.116 / 0.052) | 4.0 / 3.3 (0.48 / 0.55) | 40 / 25 / 14 s |
-| Ks 9s 4s | 34 / 33 / 34 s | 247 MiB | 0.059 / 0.037 (0.047 / 0.025) | 3.6 / 3.6 (0.44 / 0.47) | 28 / 18 / 10 s |
+| As Kh 7d | 103 / 59 / 35 s | 511 MiB | 0.023 / 0.014 (0.009 / 0.008) | 3.1 / 2.7 (0.67 / 0.50) | 38 / 22 / 14 s |
+| Ts 9s 4h | 64 / 38 / 21 s | 426 MiB | 0.118 / 0.076 (0.116 / 0.052) | 4.0 / 3.3 (0.48 / 0.55) | 42 / 23 / 13 s |
+| Ks 9s 4s | 31 / 19 / 12 s | 253 MiB | 0.059 / 0.037 (0.047 / 0.025) | 3.6 / 3.6 (0.44 / 0.47) | 28 / 17 / 10 s |
 
-Sampling runs on one thread, so the blueprint takes the same time on any thread count. On
-four, unsampled was slower (473 ms an iteration against 251 in Node). Against exact
-solves of the full game:
+Peak memory includes a re-solve. Against exact solves of the full game:
 - **Issue #51's T₀ on As Kh 7d** (three sizes and a shove on every street): OOP's root
   play lost 0.072% of pot at T₀'s values. The same simplified tree, unshared and
   converged, lost 0.057, so most of the cost is the simplification.
@@ -395,8 +393,10 @@ solves of the full game:
 
 `laterRaise: true` keeps a turn and river raise: 1.74 times the time and 546 MiB.
 `noDonk` and `flopMaxRaises: 2` save 44% an iteration together, but on Ts 9s 4h they
-quadrupled the re-solve gain. So they are off unless asked for. `bench/lite/` has the
-scripts and logs.
+quadrupled the re-solve gain. So they are off unless asked for. To recover turn
+re-solves instead, keep the most-reached flop lines unshared: `shareHistories:
+{ keepLines: linesWithin(...) }` (issue #101; see [History sharing](#history-sharing-approximate-for-memory)). `bench/lite/` has the scripts and
+logs.
 
 ## In a browser
 

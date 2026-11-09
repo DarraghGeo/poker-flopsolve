@@ -65,7 +65,7 @@ export interface SolveLiteOptions
 	readonly settle?: SettleOptions | false;
 	/**
 	 * `Approximations.chanceSampling` for the blueprint, or false for none.
-	 * Default {}: sampled, which runs on one thread whatever `workers` says.
+	 * Default {}: sampled at p 0.35, on `workers` threads.
 	 */
 	readonly sampling?: SamplingOptions | false;
 }
@@ -196,15 +196,15 @@ function nearest(row: readonly BetSize[], target: number): BetSize[] {
  *
  * | flop | settled | Chromium, 1 / 2 / 4 threads | peak RSS | root play loss (floor) | per-hand EV error | re-solve gain (unshared) | re-solve, 1 / 2 / 4 threads |
  * |---|---|---|---|---|---|---|---|
- * | As Kh 7d | 400 it | 107 / 116 / 104 s | 506 MiB | 0.023 / 0.014 (0.009 / 0.008) | 0.75 / 0.85 | 3.1 / 2.7 (0.67 / 0.50) | 42 / 25 / 12 s |
- * | Ts 9s 4h | 320 it | 65 / 67 / 73 s | 420 MiB | 0.118 / 0.076 (0.116 / 0.052) | 0.54 / 0.60 | 4.0 / 3.3 (0.48 / 0.55) | 40 / 25 / 14 s |
- * | Ks 9s 4s | 360 it | 34 / 33 / 34 s | 247 MiB | 0.059 / 0.037 (0.047 / 0.025) | 1.5 / 1.9 | 3.6 / 3.6 (0.44 / 0.47) | 28 / 18 / 10 s |
+ * | As Kh 7d | 400 it | 103 / 59 / 35 s | 511 MiB | 0.023 / 0.014 (0.009 / 0.008) | 0.75 / 0.85 | 3.1 / 2.7 (0.67 / 0.50) | 38 / 22 / 14 s |
+ * | Ts 9s 4h | 320 it | 64 / 38 / 21 s | 426 MiB | 0.118 / 0.076 (0.116 / 0.052) | 0.54 / 0.60 | 4.0 / 3.3 (0.48 / 0.55) | 42 / 23 / 13 s |
+ * | Ks 9s 4s | 360 it | 31 / 19 / 12 s | 253 MiB | 0.059 / 0.037 (0.047 / 0.025) | 1.5 / 1.9 | 3.6 / 3.6 (0.44 / 0.47) | 28 / 17 / 10 s |
  *
- * `chanceSampling` runs on one thread whatever `workers` says, so the
- * blueprint takes the same time on any count; threads speed the re-solves.
- * Unsampled on 4 threads the rainbow blueprint took 473 ms an iteration
- * against 251 sampled on one (Node), and settled later. Peak memory counts
- * the page, the blueprint and a re-solve. The rainbow root play's loss is
+ * Sampling runs on the threads (issue #99): the same iterations settle the
+ * root on every count, within 0.002% of pot. Unsampled, the rainbow
+ * blueprint took 473 ms an iteration on 4 threads in Node against 251
+ * sampled on one, and settled later. Peak memory counts the page, the
+ * blueprint and a re-solve; it is the most a phone must give. The rainbow root play's loss is
  * 0.014% of pot over its floor for OOP; `settle: { every: 40, tolerance:
  * 0.02, patience: 3 }` brings it to 0.009 in 120 s instead of 104 (Node).
  *
