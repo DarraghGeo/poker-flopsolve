@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
-	ActionKind, bettingFrom, checkedDown, createRun, keepWithin, defineSpot, liteConfig, NodeKind, rootPlay, rootPlayMovement, rootPlayNodes, solve, solveLite,
+	ActionKind, bettingFrom, checkedDown, createRun, defineSpot, keepWithin, liteConfig, litePreset, NodeKind, rootPlay, rootPlayMovement, rootPlayNodes, solve, solveLite,
 	storageCost, trackSettle, turnLineReach,
 } from '../src/index.ts';
 import type { SpotConfig } from '../src/index.ts';
@@ -315,6 +315,14 @@ describe('solveLite keepBudget', () => {
 		const budget = { ...options, keepBudget: (sharedBytes + unsharedBytes) / 2 };
 		expect(solveLite(small, budget).blueprint).toEqual(keepWithin(blueprint, budget));
 		expect(keepWithin(blueprint, { ...budget, sampling: false })).toEqual(keepWithin(blueprint, budget));
+	});
+
+	it('litePreset picks the same lines and reports them', () => {
+		const budget = { ...options, keepBudget: (sharedBytes + unsharedBytes) / 2 };
+		const preset = litePreset(small, budget);
+		const lite = solveLite(small, budget);
+		expect(preset.config).toEqual(lite.blueprint);
+		expect(lite.changes.notes.some((n) => n.includes(`but for ${lite.kept.length} line`))).toBe(true);
 	});
 
 	it('refuses a budget the shared tree does not fit, a spot that shares nothing, and bad settings', () => {

@@ -19,7 +19,7 @@ blueprint, the re-solve (`GC=1` collects garbage after the pick, a diagnostic no
 can do).
 
 The results are in `src/lite.ts` (`solveLite`'s notes), the README's "Lite mode" and
-the `Approximations` notes in `src/index.ts`.
+`docs/APPROXIMATIONS.md` (once the `Approximations` notes in `src/index.ts`).
 
 `out/` holds what they printed:
 
@@ -35,7 +35,7 @@ the `Approximations` notes in `src/index.ts`.
 - `*.json`: the scripts' structured output, overwritten by later runs of the same name.
 
 The re-solve warm-start numbers in `trimmed/acc-rainbow.log` come from a prototype
-since removed (see the `Approximations` notes).
+since removed (see `docs/APPROXIMATIONS.md`).
 
 `out/keep/` is issue #113, `keepBudget` at 150 MiB with `i16`:
 

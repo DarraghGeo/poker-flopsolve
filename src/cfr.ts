@@ -996,6 +996,46 @@ function normalise(
 	}
 }
 
+/**
+ * How near, relative to the larger of the two, an action's value must be to
+ * the hand's value at the node to count as tied with it: 2^-20, 8 to 16
+ * float32 ulps of the larger. One tolerance for both engines, so they snap
+ * alike; under `precision: 'f64'` it also drops real gaps that small, which
+ * moves an answer by at most a millionth of the hand's value. Mirrored in
+ * assembly/engine.ts. See `snapTies`.
+ */
+export const TIE_TOLERANCE = 2 ** -20;
+
+/**
+ * Snap each action value that ties the hand's node value onto it, so the
+ * regret it adds is exactly 0 (issue #117).
+ *
+ * Where a hand's actions are worth the same, its regrets are analytically
+ * zero, but the node value is a strategy-weighted sum of the action values
+ * and comes out an ulp or so off them, by a sign that depends on the order
+ * of every sum beneath: thread count, engine, float width. Regret matching is
+ * discontinuous at zero — one positive ulp plays that action purely, none
+ * plays uniformly — so those ulps grew into percents of the strategy. A
+ * difference within `TIE_TOLERANCE` of the values is rounding, not regret:
+ * snapped, tied actions stay uniform whatever the summation order. Both
+ * engines snap the same way, before any update reads the values.
+ *
+ * Laid out as `traverse` keeps them: `actionValues[a * count + i]`.
+ */
+export function snapTies(actionValues: Float64Array, out: Float64Array, actions: number, count: number): void {
+	for (let a = 0; a < actions; a++) {
+		const offset = a * count;
+		for (let i = 0; i < count; i++) {
+			const v = actionValues[offset + i];
+			const value = out[i];
+			const gap = v < value ? value - v : v - value;
+			const size = v < 0 ? -v : v;
+			const valueSize = value < 0 ? -value : value;
+			if (gap <= TIE_TOLERANCE * (size > valueSize ? size : valueSize)) actionValues[offset + i] = value;
+		}
+	}
+}
+
 /** Current strategy from positive regrets; uniform where there is none. */
 export function regretMatch(regret: AnyRegrets, base: number, actions: number, count: number, strategy: Float64Array): void {
 	normalise(regret, base, actions, count, strategy);
@@ -1301,6 +1341,7 @@ export function traverse(
 		}
 	}
 
+	if (isTraverser && mode === Mode.Train && ctx.applyUpdates) snapTies(actionValues, out, actions, myCount);
 	const weighted = ctx.layout.reachWeighted;
 	if (weighted !== null && weighted[node] && isTraverser && mode === Mode.Train && ctx.applyUpdates) {
 		// Each history's regret counts as often as this hand plays into it.

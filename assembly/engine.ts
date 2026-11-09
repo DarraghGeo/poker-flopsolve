@@ -624,6 +624,7 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 		}
 	}
 
+	if (isTraverser && mode === TRAIN && applyUpdates) snapTies(actionValues, out, actions, myCount, rowStride);
 	if (weightedNodes !== 0 && isTraverser && mode === TRAIN && applyUpdates && load<u8>(weightedNodes + <usize>node) !== 0) {
 		// Each history's regret counts as often as this hand plays into it.
 		for (let a = 0; a < actions; a++) {
@@ -690,6 +691,36 @@ function sampledValue(
 	}
 	store<i32>(walkAt, iteration);
 	return value;
+}
+
+/** `TIE_TOLERANCE` in src/cfr.ts: 2^-20, 8 to 16 float32 ulps of the larger value. test/ties.test.ts holds the two equal. */
+const TIE_TOLERANCE: f32 = 9.5367431640625e-7;
+
+/**
+ * Snap each action value that ties the hand's node value onto it, so the
+ * regret it adds is exactly 0, as `snapTies` in src/cfr.ts (issue #117).
+ */
+function snapTies(actionValues: usize, value: usize, actions: i32, n: i32, rowStride: usize): void {
+	const tolerance = f32x4.splat(TIE_TOLERANCE);
+	const n4 = n & ~3;
+	for (let a = 0; a < actions; a++) {
+		const row = actionValues + <usize>a * rowStride;
+		let i = 0;
+		for (; i < n4; i += 4) {
+			const o = <usize>i << 2;
+			const v = v128.load(row + o);
+			const w = v128.load(value + o);
+			const size = f32x4.max(f32x4.abs(v), f32x4.abs(w));
+			const tied = f32x4.le(f32x4.abs(f32x4.sub(v, w)), f32x4.mul(tolerance, size));
+			v128.store(row + o, v128.bitselect(w, v, tied));
+		}
+		for (; i < n; i++) {
+			const o = <usize>i << 2;
+			const v = load<f32>(row + o);
+			const w = load<f32>(value + o);
+			if (Mathf.abs(v - w) <= TIE_TOLERANCE * Mathf.max(Mathf.abs(v), Mathf.abs(w))) store<f32>(row + o, w);
+		}
+	}
 }
 
 /** Current strategy: each hand's share of positive regret, uniform where none. */
