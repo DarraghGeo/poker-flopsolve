@@ -40,4 +40,4 @@
 {"url":"https://claude.ai/code/session_014RSNFksdqupPWm88fCe8qz","title":"Scorer and combination test matrix against the napkinpoker references","issue":103,"state":"active","updated":"2026-11-09T04:00:38.900Z"}
 {"url":"https://claude.ai/code/session_014RSNFkcGPPrhBuRuFmUKjX","title":"Whole three-size tree in 1-2 GiB: diagnose the thinSizes + shareHistories stall, then find the best combination","issue":102,"state":"active","updated":"2026-11-09T04:00:38.900Z"}
 {"url":"https://claude.ai/code/session_014RSNFiZEmMbSrpDadKu3nN","title":"Lite mode: one opt-in for the three-size-flop blueprint, sharing, sampling and turn re-solves, tuned for speed","issue":100,"state":"active","updated":"2026-11-09T04:25:32.647Z"}
-{"url":null,"title":"shareHistories: noise in the updates cuts its exploitability plateau several times","issue":105,"state":"active","updated":"2026-11-09T04:29:35.562Z"}
+{"url":"https://claude.ai/code/session_014RSNFgGhHvuMrevLvZFpSd","title":"shareHistories: noise in the updates cuts its exploitability plateau several times","issue":105,"state":"active","updated":"2026-11-09T04:32:54.085Z"}
