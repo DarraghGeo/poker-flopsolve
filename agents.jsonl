@@ -31,3 +31,4 @@
 {"url":"https://claude.ai/code/session_014RSNFh4jV5f8tnSVv4YvXX","title":"Rainbow/phone: run i16 and compactStorage on the WebAssembly engine, and lift compactStorage's clashes","issue":84,"state":"active","updated":"2026-11-09T00:37:32.942Z"}
 {"url":"https://claude.ai/code/session_014RSNFgR5KtzQ8KvjEvL3Ak","title":"Rainbow/phone: shareHistories on the #47 blueprint, to fit a phone on the WebAssembly engine","issue":85,"state":"active","updated":"2026-11-09T00:37:32.942Z"}
 {"url":"https://claude.ai/code/session_014RSNFkKVpewfChN7Q3Hjg7","title":"compactStorage with shareHistories discounts a shared block once per visit under DCFR, not once an iteration","issue":86,"state":"active","updated":"2026-11-09T01:47:57.252Z"}
+{"url":null,"title":"Shared compact blocks round with the same random stream for every history in an iteration","issue":88,"state":"active","updated":"2026-11-09T01:48:55.147Z"}
