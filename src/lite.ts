@@ -35,9 +35,19 @@ export interface LiteOptions {
 	 * measured. A raise nearly doubles the tree.
 	 */
 	readonly laterRaise?: boolean;
-	/** Cap the flop's aggressions (the opening bet the first). Default: the caller's. */
-	readonly flopMaxRaises?: number;
-	/** Forbid donk bets on the turn and river (`SpotConfig.noDonk`). Default: the caller's setting. */
+	/**
+	 * Cap the flop's aggressions, the opening bet the first; false keeps the
+	 * caller's. Default 2: a bet and a raise, no re-raise. On issue #47's
+	 * betting (three aggressions) it made an iteration 26% cheaper and the
+	 * blueprint 17% smaller; see `solveLite`'s notes for what it cost.
+	 */
+	readonly flopMaxRaises?: number | false;
+	/**
+	 * Forbid donk bets on the turn and river (`SpotConfig.noDonk`); false
+	 * keeps the caller's setting. Default true: it made an iteration 21%
+	 * cheaper on issue #47's betting, though it shares less (more storage);
+	 * see `solveLite`'s notes for what it cost.
+	 */
 	readonly noDonk?: boolean;
 	/** `SpotConfig.runoutBuckets` for the blueprint. Default 3. */
 	readonly runoutBuckets?: number;
@@ -99,7 +109,7 @@ export function liteConfig(config: SpotConfig, options: LiteOptions = {}): SpotC
 	if (config.lineRunouts) throw new Error('lineRunouts does not combine with the lite blueprint, which shares histories');
 	const rounds = 6 - parseCards(config.board).length;
 	if (!(rounds >= 1 && rounds <= 3)) throw new Error(`A board has 3, 4 or 5 cards; got ${config.board}`);
-	const flopCap = options.flopMaxRaises;
+	const flopCap = options.flopMaxRaises === false ? undefined : options.flopMaxRaises ?? 2;
 	if (flopCap !== undefined && !(Number.isInteger(flopCap) && flopCap >= 1)) {
 		throw new Error(`flopMaxRaises must be a whole number of at least 1; got ${flopCap}`);
 	}
@@ -133,7 +143,7 @@ export function liteConfig(config: SpotConfig, options: LiteOptions = {}): SpotC
 		...(raiseSizes === undefined ? {} : { raiseSizes: raiseSizes as SpotConfig['raiseSizes'] }),
 		maxRaises: maxRaises as SpotConfig['maxRaises'],
 		allowAllIn: allowAllIn as SpotConfig['allowAllIn'],
-		...(options.noDonk === undefined ? {} : { noDonk: options.noDonk }),
+		...(options.noDonk === false ? {} : { noDonk: true }),
 		...(removeActions === undefined ? {} : { removeActions }),
 		runoutBuckets: Math.max(buckets, given),
 		shareHistories: options.shareHistories ?? true,
