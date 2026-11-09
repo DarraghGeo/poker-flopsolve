@@ -258,8 +258,9 @@ export interface SpotConfig {
 	 * came out 0.4–0.6% of pot from the unshared ones (2–3% at worst), and
 	 * turns re-solved from it with T's betting gave the opponent 2.2–3.0% of
 	 * their pot under the unshared ranges, against 0.5–0.7% from the unshared
-	 * blueprint. `chanceSampling` composes, on one thread: 238 ms an
-	 * iteration, the root settled in 109 s, 453 MiB. `coarseStart` composes
+	 * blueprint. `chanceSampling` composes: on one thread 238 ms an iteration,
+	 * the root settled in 109 s, 453 MiB; on 4 threads (issue #99) 70 ms, the
+	 * root settled in 33 s at the same iteration, 452 MiB. `coarseStart` composes
 	 * but finds no coarser copy at a gap of 3. `bench/blueprint-share/` has
 	 * the scripts and figures.
 	 *
@@ -1397,7 +1398,10 @@ export interface Approximations {
 	 * on the same iterations. A fixed count is then bitwise repeatable, and
 	 * different counts differ only as unsampled ones do (see `workers`). A
 	 * spot sampling a round above the threads' split, which no flop or turn
-	 * spot has, runs on one thread. With `targetPercent`, a sampled solve runs more
+	 * spot has, runs on one thread. Measured in Chromium on issue #47's
+	 * blueprint, 4 threads ran 3.1–3.2 times faster than 1 on three flops,
+	 * and the shared AsKh7d blueprint's root play settled in 33 s against
+	 * 105 s (`bench/blueprint-share/README.md`). With `targetPercent`, a sampled solve runs more
 	 * iterations, so it makes a few more exploitability checks.
 	 * Off, nothing changes; at `p: 1` it is the exact solve, bit for bit.
 	 */

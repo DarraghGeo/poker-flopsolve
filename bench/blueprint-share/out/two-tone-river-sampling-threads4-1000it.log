@@ -1,0 +1,32 @@
+two-tone-river-sampling-threads4-1000it: 306 nodes, 1021 runouts, 122 MiB f32
+  20 it, 46.541%, 3 s
+  40 it, 22.729%, 4 s
+  80 it, 11.719%, 6 s
+  120 it, 7.573%, 9 s
+  160 it, 5.899%, 11 s
+  200 it, 5.199%, 14 s
+  240 it, 4.890%, 16 s
+  280 it, 4.817%, 19 s
+  320 it, 4.815%, 21 s
+  360 it, 4.807%, 24 s
+  400 it, 4.798%, 27 s
+  440 it, 4.785%, 29 s
+  480 it, 4.780%, 32 s
+  520 it, 4.772%, 35 s
+  560 it, 4.759%, 37 s
+  600 it, 4.750%, 40 s
+  640 it, 4.749%, 42 s
+  680 it, 4.751%, 45 s
+  720 it, 4.753%, 47 s
+  760 it, 4.756%, 50 s
+  800 it, 4.762%, 52 s
+  840 it, 4.768%, 54 s
+  880 it, 4.772%, 57 s
+  920 it, 4.775%, 60 s
+  960 it, 4.778%, 62 s
+  1000 it, 4.782%, 64 s
+blueprint: 1000 it, 4.782% (best 4.749%), 64 s, engine wasm, peak RSS 440 MiB
+root EV error, % pot: OOP mean 0.476 max 3.196; IP mean 0.359 max 1.684
+  OOP at root: root play loses 0.1129% pot at reference values (max 0.951); the reference's own 0.1163%
+  IP after check: root play loses 0.0664% pot at reference values (max 0.368); the reference's own 0.0521%
+re-solve gain, weighted by line reach: OOP refined NaN%, IP refined NaN%

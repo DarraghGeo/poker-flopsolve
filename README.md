@@ -718,7 +718,8 @@ third on the others. It runs on `workers` threads wherever the engine threads (i
 the WebAssembly engine in Node and the browser, the JavaScript engine in Node). Each thread
 samples the deals of its own runouts, and whether a deal is walked on an iteration is a hash
 of its chance node, the deal and the iteration, so every thread count walks the same deals
-and a fixed count is bitwise repeatable. The baselines count against `maxBytes`. With `p: 1` it is the exact solve, bit for bit. `rounds: [2]` samples
+and a fixed count is bitwise repeatable. On 4 Chromium threads it ran 3.1–3.2× faster than on
+one (`bench/blueprint-share/README.md`). The baselines count against `maxBytes`. With `p: 1` it is the exact solve, bit for bit. `rounds: [2]` samples
 river deals only.
 
 ### Coarse start (approximate start, exact answer)

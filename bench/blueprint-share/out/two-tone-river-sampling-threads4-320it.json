@@ -1,0 +1,96 @@
+{
+ "tag": "two-tone-river-sampling-threads4-320it",
+ "storageBytes": 128408830,
+ "peakRss": 459304960,
+ "engine": "wasm",
+ "seconds": 21.285787887,
+ "iterations": 320,
+ "exploitability": 4.814765824940566,
+ "best": 4.814765824940566,
+ "history": [
+  {
+   "iterations": 20,
+   "seconds": 2.65588575,
+   "exploitability": 46.54125388943715
+  },
+  {
+   "iterations": 40,
+   "seconds": 4.011377307,
+   "exploitability": 22.72946665459875
+  },
+  {
+   "iterations": 80,
+   "seconds": 6.5913608319999994,
+   "exploitability": 11.719132158104635
+  },
+  {
+   "iterations": 120,
+   "seconds": 9.009219744,
+   "exploitability": 7.57276534334497
+  },
+  {
+   "iterations": 160,
+   "seconds": 11.390830699,
+   "exploitability": 5.8990217181574796
+  },
+  {
+   "iterations": 200,
+   "seconds": 13.721198887,
+   "exploitability": 5.198611619831243
+  },
+  {
+   "iterations": 240,
+   "seconds": 16.197466066,
+   "exploitability": 4.890457489506486
+  },
+  {
+   "iterations": 280,
+   "seconds": 18.651490293,
+   "exploitability": 4.817093164676893
+  },
+  {
+   "iterations": 320,
+   "seconds": 21.28563826,
+   "exploitability": 4.814765824940566
+  }
+ ],
+ "rootError": [
+  {
+   "mae": 0.5305818558812534,
+   "max": 3.8383461998960513
+  },
+  {
+   "mae": 0.591358200374023,
+   "max": 4.525993210253802
+  }
+ ],
+ "loss": [
+  {
+   "decision": "OOP at root",
+   "blueprint": {
+    "mean": 0.11795493017067411,
+    "max": 1.0998465887334703
+   },
+   "reference": {
+    "mean": 0.11633928613058066,
+    "max": 0.7854702485866909
+   }
+  },
+  {
+   "decision": "IP after check",
+   "blueprint": {
+    "mean": 0.07622081387238697,
+    "max": 0.37959325918792075
+   },
+   "reference": {
+    "mean": 0.05205971572284774,
+    "max": 0.3194783625284501
+   }
+  }
+ ],
+ "resolves": [],
+ "resolveGain": [
+  null,
+  null
+ ]
+}
