@@ -284,7 +284,7 @@ const blueprint = solve(
 		allowAllIn: [true, false, false],
 		runoutBuckets: 3,
 	}),
-	{ targetPercent: 0.3, precision: 'i16' }, // in a browser, leave f32 (see below)
+	{ targetPercent: 0.3, precision: 'i16' }, // in a browser, add `wasmStorage` (see below)
 );
 const turn = resolveSubgame(blueprint, node, board, {
 	player: 0, // whose strategy to refine
@@ -332,8 +332,11 @@ from it in turn.
 
 In headless Chromium (`poker-flopsolve/threads`, Ks 9s 4s), the blueprint with buckets at
 f32 solved to 0.3% in 84 s on one thread and 25 s on four, and each re-solved turn took
-21 s and 6.6 s with 40 MiB. Use f32 there: only f32 runs on the WebAssembly engine, so
-the i16 blueprint ran on the JavaScript engine in about 190 s however many threads it had.
+21 s and 6.6 s with 40 MiB. At i16 without `wasmStorage` it runs on the JavaScript engine,
+about 190 s however many threads it has; with `wasmStorage` from
+`poker-flopsolve/wasm-storage` it runs on the WebAssembly engine, threads included, which
+is what brings the rainbow blueprint into a tab: see
+[16-bit and compact storage on the WebAssembly engine](#16-bit-and-compact-storage-on-the-webassembly-engine-opt-in).
 A run holds its engine threads until `close()` (which `solve` calls for you), and
 snapshots stay usable after it, so close the blueprint's run before re-solving.
 
@@ -372,7 +375,8 @@ as Node's threads do, so a fixed thread count gives the same answer as Node at t
 (bit for bit where the browser's V8 agrees with Node's on `Math.pow`, as it did in every
 measurement here). They stay started between solves; a solve borrows them and gives them back on
 `close()`. `enableThreads(1)` stops every thread no open run holds. Only the WebAssembly engine (the default) is
-threaded; `engine: 'js'` or `precision: 'f64'`/`'i16'` solve on one thread.
+threaded; `engine: 'js'` or `precision: 'f64'` solve on one thread, and so do
+`precision: 'i16'` and `compactStorage` unless the solve passes `wasmStorage` (below).
 
 Threads need:
 
@@ -423,8 +427,65 @@ warm start and analysis works unchanged. With threads (Node), all of them share 
 WebAssembly memory and split the runouts as below. It runs wherever it can — 32-bit
 storage, the default, and WebAssembly SIMD, which current Node and browsers have —
 and `run.engine` says which ran. `engine: 'js'` forces the JavaScript traversal;
-`precision: 'f64'` or `'i16'` use it too. Against the JavaScript traversal it is about
-2.4× faster per iteration, and about 3× in Chromium.
+`precision: 'f64'` uses it too, and so do `'i16'` and `compactStorage` unless the solve
+passes `wasmStorage` (below). Against the JavaScript traversal it is about 2.4× faster per
+iteration, and about 3× in Chromium.
+
+#### 16-bit and compact storage on the WebAssembly engine (opt-in)
+
+```ts
+import { createRun, defineSpot } from 'poker-flopsolve';
+import { wasmStorage } from 'poker-flopsolve/wasm-storage';
+
+const run = createRun(defineSpot(config), { precision: 'i16', wasmStorage, workers: threads });
+// or a spot with `compactStorage: {}`, with the same `wasmStorage`
+```
+
+A second build of the engine keeps 16-bit storage and every `compactStorage` mode as the
+JavaScript engine does, update for update: per-block scales, rounding to nearest for 16-bit
+regrets, the same hash for the random rounding, per-hand power-of-two scales, `sums: false`,
+`blockScale`, chance sampling's catch-up. It works in 32-bit floats, four hands to a SIMD
+vector, where JavaScript works in 64-bit, so a stored value differs from JavaScript's only
+where it lies within float32 precision of a rounding boundary (about 0.5% of 16-bit values
+an iteration, 0.01% of compact ones); the solves converge alike. Threads share its memory
+as they do the default engine's. Only `poker-flopsolve/wasm-storage` carries its bytes, so
+without the import a build is unchanged, and a solve that does not pass it gives the same
+results as before.
+
+Issue #47's blueprint (flop betting kept, one turn and river size, `runoutBuckets: 3`) solved
+to 0.3% of pot in headless Chromium on a 4-core container, which ran the monotone f32 blueprint
+about 1.3 times slower than the machine above (`bench/nested/wasm-storage.ts`); peak is the
+tab's resident memory:
+
+| As Kh 7d | storage | peak | 4 threads | 1 thread | turn re-solve, 4 / 1 threads |
+|---|---|---|---|---|---|
+| f32 | 707 MiB | 985 MiB (902) | 106 s, 280 it | 303 s | 8.5 / 29.6 s, 64 MiB |
+| i16, `wasmStorage` | 363 MiB | 577 MiB (526 on 1 thread) | 86 s, 200 it | 288 s | 10.6 / 36.0 s, 32 MiB |
+| compact, `wasmStorage` | 272 MiB | 462 MiB (427) | 106 s, 200 it | 435 s | 12.2 / 40.7 s, 21 MiB |
+
+| Ks 9s 4s | storage | peak | 4 threads | 1 thread | turn re-solve, 4 / 1 threads |
+|---|---|---|---|---|---|
+| f32 | 187 MiB | 394 MiB (346) | 32.5 s, 240 it | 104 s | 7.3 / 21.5 s, 40 MiB |
+| i16, `wasmStorage` | 97 MiB | 264 MiB (236) | 23.8 s, 160 it | 119 s | 7.0 / 23.8 s, 20 MiB |
+| compact, `wasmStorage` | 73 MiB | 223 MiB (205) | 35.1 s, 200 it | 119 s | 8.6 / 30.0 s, 14 MiB |
+
+An iteration costs 1.1–1.15 times f32's at 16 bits and 1.3–1.4 times compact, and the
+quantised solves often reach the target a check sooner, so the rainbow blueprint at i16 is
+faster than at f32 in 0.58 times its peak memory. The i16 blueprint on the JavaScript engine
+took 190 s on one thread or four on monotone. On the bench `flop` spot, to 0.2% of pot
+(peak): f32 28.5 s on one thread and 9.2 s on four (708 MiB), i16 33.3 s and 10.9 s
+(293 MiB), compact 41.6 s and 12.6 s (265 MiB), and i16 on the JavaScript engine 80 s and
+81 s.
+
+Issue #84's pass mark for a phone, the rainbow blueprint at 512 MiB peak or less in 60 s or
+less on four threads, is half met: compact peaks at 462 MiB but takes 106 s, and i16 takes
+86 s at 577 MiB. Even f32 takes 106 s here; scaled by the 1.3 above, i16 would take about
+66 s on the machine #47 measured.
+
+WebAssembly memory is one buffer, but Chromium lets it reach wasm32's whole 4 GiB, plain or
+shared, created at that size or grown to it, while it refuses any ArrayBuffer over 2 GiB less
+2 MiB (Chromium 153, `bin/memory-ceiling.ts`). So the engine's ceiling is 4 GiB in a tab, as
+in Node, and compact storage needs no chunks of its own there.
 
 ### SIMD kernels
 
@@ -589,6 +650,48 @@ Those are memory estimates. The one combined solve tried (As Kh 7d T₀, thinned
 shared) stopped improving at about 4.4% of pot from 250 iterations on, against 0.2% for
 the thinned tree alone, so the two together are not yet measured for accuracy.
 
+### Line runouts (approximate, opt-in)
+
+`lineRunouts: { aggressions: 2 }` deals coarser turn and river cards below every chance
+node whose betting so far holds two bets or raises, and every card elsewhere; `raises: 1`
+picks lines with a raise instead, and either or both may be given. A coarse deal stores
+one card per class of cards that pair, flush and straight the board alike, with ranks folded
+in bands of `band` (default 3), and the class's other cards play as it. It is for trees too big
+to hold otherwise, and it stacks with `runoutBuckets`. There is no default rule, because
+what a rule costs depends on how often its lines are played, and that depends on the board.
+
+Storage, three sizes a street, pot 55, stack 975:
+
+| Spot | Exact | `{ aggressions: 2 }` | with `runoutBuckets: 3` too | `{ raises: 1 }` |
+|---|---|---|---|---|
+| As Kh 7d, raise 0.75 + all-in, 3 aggressions (i16) | 8.67 GiB | 3.91 GiB | 2.66 GiB | 5.53 GiB |
+| Ks 9s 4s, same tree (f32) | 3.75 GiB | 2.66 GiB | 2.18 GiB | |
+
+Accuracy, against exact solves to 0.30% of pot, run as long, 4 threads. Values are in %
+of pot. "Size kept" is the share of the out-of-position range that still prefers the exact
+solve's root bet size:
+
+| Spot | Rule | Storage (f32) | True exploitability | Root EV error, mean (worst) | Size kept |
+|---|---|---|---|---|---|
+| Ks 9s 4s | exact | 3.75 GiB | 0.30 | | |
+| | `{ aggressions: 2 }` | 2.66 GiB | 3.8 | 0.6–0.8 (3.5) | 100% |
+| | the same with `runoutBuckets: 3` | 2.18 GiB | 2.5 | 0.4–0.6 (2.9) | 98% |
+| | `{ aggressions: 2, band: 13 }` | 1.68 GiB | 13.7 | 2.2–2.4 (14.7) | 97% |
+| | `{ raises: 1, band: 13 }` | 2.40 GiB | 8.0 | 1.9–3.1 (11.2) | 100% |
+| | `runoutBuckets: 3` alone | 2.66 GiB | 0.97 | 0.3 (2.0) | 95% |
+| As Kh 7d (all-in raise, 2 aggressions) | exact | 5.78 GiB | 0.30 | | |
+| | `{ aggressions: 2 }` | 3.43 GiB | 16.7 | 3.8–4.0 (19.2) | 29% |
+
+Lines with two aggressions reached 9.8% of river deals on Ks 9s 4s, but 22% on As Kh 7d,
+where they are ordinary play and carry the big pots. Lines with a raise reached 1.3% and
+0.2%, yet even those cost several % of pot, because a best response finds the coarse
+subtrees. `exploitabilityPercent()` measures the coarse game, which is not quite zero-sum
+(a hand holding the stored card misses its class, and values are rescaled for it), so read
+`run.trueExploitabilityPercent()`. Board indices are per line: `spot.resolveBoard(cards,
+node)` finds a real board in a node's line. JavaScript engine only: threaded in Node, one
+thread in the browser. `bench/history-runouts/` has the census, the storage projection
+for any rule, and the measurements.
+
 ### Chance sampling (opt-in)
 
 `approximations: { chanceSampling: {} }` walks each turn and river deal on only some
@@ -698,11 +801,15 @@ It combines with `shareHistories` (one set of storage for betting lines that rea
 pot), and the pair is what brings T under 2 GiB: 0.99 GiB with sums, peaking at 1.5 GB on four
 threads, and 0.37 GiB with `sums: false, blockScale: true`. Sharing is lossy on its own; on
 T₀ at 160 iterations it was 9.5% of pot exploitable in 1.06 GiB at 32 bits, with root EVs
-0.66% of pot off and 97% of clear bet-size choices kept; with compact storage added, 10.5%,
-0.86% and 84%, in 0.36 GiB.
+0.66% of pot off and 97% of clear bet-size choices kept; with compact storage added, 9.0%,
+0.63% and 100%, in 0.36 GiB.
 
 It runs on the JavaScript engine, like 16-bit storage, on Node worker threads but on one
-thread in the browser. In headless Chromium on one thread, monotone T₀ took 10.1 s an
+thread in the browser, unless the solve passes `wasmStorage` (see the WebAssembly engine),
+which runs it on the WebAssembly engine, threads included. It combines with `precision`
+(for the rounds before `from`), warm starts and coarse starts (read and written compactly,
+rounded to nearest), `runoutBuckets` and chance sampling; only `analysisOnly` is refused.
+In headless Chromium on one thread, on the JavaScript engine, monotone T₀ took 10.1 s an
 iteration compact, 8.1 s at 16 bits and 2.3 s at 32 bits on WebAssembly; T itself, at
 `sums: false, blockScale: true`, allocated its 2.2 GiB and ran at 95 s an iteration. Storage is split into buffers under 1 GiB, because Chromium refuses
 an ArrayBuffer of 2 GiB or more. `bench/storage/` has the measurements and the variants

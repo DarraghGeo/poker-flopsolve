@@ -28,14 +28,34 @@ const MODULES = [
 		source: 'assembly/engine.ts', out: 'engine-shared.ts', name: 'ENGINE_SHARED_WASM', what: 'The traversal engine over shared memory',
 		flags: ['--enable', 'threads', '--sharedMemory', '--maximumMemory', '65536'],
 	},
+	// The engine with 16-bit and compact storage, for `poker-flopsolve/wasm-storage`
+	// (issue #84): the same source with its `STORAGE` constant set.
+	{ source: 'assembly/engine.ts', out: 'engine-storage.ts', name: 'ENGINE_STORAGE_WASM', what: 'The traversal engine with 16-bit and compact storage', storage: true },
+	{
+		source: 'assembly/engine.ts', out: 'engine-storage-shared.ts', name: 'ENGINE_STORAGE_SHARED_WASM',
+		what: 'The traversal engine with 16-bit and compact storage, over shared memory', storage: true,
+		flags: ['--enable', 'threads', '--sharedMemory', '--maximumMemory', '65536'],
+	},
 ];
 
+/** The line in assembly/engine.ts a storage build flips. */
+const STORAGE_OFF = 'const STORAGE: bool = false;';
+
 try {
-	for (const { source, out, name, what, flags = [] } of MODULES as { source: string; out: string; name: string; what: string; flags?: string[] }[]) {
+	type Module = { source: string; out: string; name: string; what: string; flags?: string[]; storage?: boolean };
+	for (const { source, out, name, what, flags = [], storage = false } of MODULES as Module[]) {
 		const wasm = join(scratch, `${name}.wasm`);
+		// A storage build compiles a copy with the constant set; the module has no imports to resolve.
+		let input = source;
+		if (storage) {
+			const text = readFileSync(join(root, source), 'utf8');
+			if (!text.includes(STORAGE_OFF)) throw new Error(`${source} no longer has the line \`${STORAGE_OFF}\``);
+			input = join(scratch, `${name}.ts`);
+			writeFileSync(input, text.replace(STORAGE_OFF, 'const STORAGE: bool = true;'));
+		}
 		execFileSync(
 			join(root, 'node_modules', '.bin', 'asc'),
-			[source, ...ASC_FLAGS, ...flags, '-o', wasm],
+			[input, ...ASC_FLAGS, ...flags, '-o', wasm],
 			{ cwd: root, stdio: 'inherit' },
 		);
 		const bytes = readFileSync(wasm);

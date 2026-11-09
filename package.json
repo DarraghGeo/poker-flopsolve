@@ -25,6 +25,10 @@
       "types": "./dist/threads.d.ts",
       "browser": "./dist/browser-threads.js",
       "import": "./dist/threads.js"
+    },
+    "./wasm-storage": {
+      "types": "./dist/wasm-storage.d.ts",
+      "import": "./dist/wasm-storage.js"
     }
   },
   "files": [

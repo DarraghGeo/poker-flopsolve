@@ -61,6 +61,48 @@ let rowBytes: usize = 0;
 let cardSums: usize = 0;
 let chipScale: f64 = 1;
 
+/**
+ * Built twice. False: the default engine, 32-bit storage only. True: the
+ * engine `poker-flopsolve/wasm-storage` ships (issue #84), which adds 16-bit
+ * storage (`precision: 'i16'`) and `compactStorage` as src/cfr.ts keeps
+ * them. scripts/build-wasm.ts sets it; with it false, -O3 drops every path
+ * it guards, so the default module is what it was before they existed.
+ */
+const STORAGE: bool = false;
+
+// Storage kinds of a node's regrets or strategy sums, with STORAGE.
+const F32: i32 = 0;
+const I16: i32 = 1;
+const U16: i32 = 2;
+const I8: i32 = 3;
+const U8: i32 = 4;
+const NONE: i32 = 5;
+
+// Compact storage's modes, as `CompactPlan` in src/cfr.ts.
+const PER_HAND: i32 = 1;
+const BLOCK_SCALE: i32 = 2;
+const FLOAT: i32 = 3;
+
+// The storage settings, read by `init` from the block header slot 37 points
+// to; see `createEngine` in src/engine.ts, which writes them.
+let storageBlock: usize = 0;
+let quantised: bool = false;
+let compactFrom: i32 = 255;
+let compactMode: i32 = 0;
+let compactSums: bool = false;
+let stochastic: bool = false;
+let steps: f64 = 127;
+let regretScale: usize = 0;
+let sumScale: usize = 0;
+let compactChunk: usize = 0;
+let handOffset: usize = 0;
+let chunkRegret: usize = 0;
+let chunkShift: usize = 0;
+let chunkSum: usize = 0;
+let chunkSumShift: usize = 0;
+let chunkStart: usize = 0;
+let compactScale: usize = 0;
+
 // Sharding across threads; see src/parallel.ts for the protocol. At the
 // shard round only boards in [shardStart, shardEnd) are walked. In the
 // collect phase, a chance node feeding that round records the reach the
@@ -220,7 +262,35 @@ export function init(header: usize): void {
 	rowBytes = <usize>load<u32>(header + 136);
 	cardSums = <usize>load<u32>(header + 140);
 	chipScale = <f64>load<u32>(header + 144);
+	if (STORAGE) {
+		const at = <usize>load<u32>(header + 148);
+		storageBlock = at;
+		quantised = load<u32>(at + 0) !== 0;
+		compactFrom = <i32>load<u32>(at + 4);
+		compactMode = <i32>load<u32>(at + 8);
+		compactSums = load<u32>(at + 12) !== 0;
+		stochastic = load<u32>(at + 16) !== 0;
+		steps = <f64>load<u32>(at + 20);
+		regretScale = <usize>load<u32>(at + 24);
+		sumScale = <usize>load<u32>(at + 28);
+		blockOffset = <usize>load<u32>(at + 32);
+		compactChunk = <usize>load<u32>(at + 36);
+		handOffset = <usize>load<u32>(at + 40);
+		chunkRegret = <usize>load<u32>(at + 44);
+		chunkShift = <usize>load<u32>(at + 48);
+		chunkSum = <usize>load<u32>(at + 52);
+		chunkSumShift = <usize>load<u32>(at + 56);
+		chunkStart = <usize>load<u32>(at + 60);
+		compactScale = <usize>load<u32>(at + 64);
+	}
 }
+
+// With STORAGE: the update rule's factors as float64, which src/engine.ts
+// writes into the storage block before each walk, as src/cfr.ts uses them.
+@inline function factorPositive(): f64 { return load<f64>(storageBlock + 80); }
+@inline function factorNegative(): f64 { return load<f64>(storageBlock + 88); }
+@inline function factorSum(): f64 { return load<f64>(storageBlock + 96); }
+@inline function factorWeight(): f64 { return load<f64>(storageBlock + 104); }
 
 // Per-depth buffers, each `rowBytes` apart: value, reach for player 0, reach
 // for player 1, then strategy and action values, `actions` rows each.
@@ -399,12 +469,51 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 	const isTraverser = owner === traverser;
 	const listSlot = isTraverser ? mySlot : oppSlot;
 	const n = isTraverser ? myCount : oppCount;
-	const base = regret + (<usize>(i32At(offset, node) + actions * i32At(rowStart, listSlot)) << 2);
-	const sumBase = sums + (<usize>(i32At(offset, node) + actions * i32At(rowStart, listSlot)) << 2);
+	let base = regret + (<usize>(i32At(offset, node) + actions * i32At(rowStart, listSlot)) << 2);
+	let sumBase = sums + (<usize>(i32At(offset, node) + actions * i32At(rowStart, listSlot)) << 2);
 	const strategy = strategyAt(depth);
 	const rowStride = <usize>n << 2;
 
-	if (mode === TRAIN) matchRegret(base, actions, n, strategy);
+	// With STORAGE, where this node's accumulators are and how they are kept.
+	let regretKind = F32;
+	let sumKind = F32;
+	let slot = 0;
+	let chunk = -1;
+	if (STORAGE) {
+		slot = i32At(offset, node) + actions * i32At(rowStart, listSlot);
+		if (r >= compactFrom) {
+			chunk = i32At(compactChunk, node);
+			const regrets = <usize>load<u32>(chunkRegret + (<usize>chunk << 2));
+			if (compactMode === FLOAT) {
+				base = regrets + (<usize>slot << 2);
+			} else {
+				regretKind = I8;
+				base = regrets + <usize>slot;
+			}
+			if (compactSums) {
+				sumKind = U8;
+				sumBase = <usize>load<u32>(chunkSum + (<usize>chunk << 2)) + <usize>slot;
+			} else {
+				sumKind = NONE;
+			}
+		} else if (quantised) {
+			regretKind = I16;
+			sumKind = U16;
+			base = regret + (<usize>slot << 1);
+			sumBase = sums + (<usize>slot << 1);
+		}
+	}
+
+	if (STORAGE && (regretKind !== F32 || sumKind !== F32)) {
+		// A compactly stored node without sums plays the current profile
+		// wherever a strategy is read, as `traverse` in src/cfr.ts.
+		if (mode === TRAIN || sumKind === NONE) {
+			decode(base, regretKind, actions * n, strategy);
+			matchRegret(strategy, actions, n, strategy);
+		} else {
+			matchAverageStored(sumBase, sumKind, base, regretKind, actions, n, strategy);
+		}
+	} else if (mode === TRAIN) matchRegret(base, actions, n, strategy);
 	else matchAverage(sumBase, base, actions, n, strategy);
 
 	if (isTraverser && mode === BEST_RESPONSE) {
@@ -476,7 +585,14 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 			}
 		}
 	}
-	if (isTraverser && mode === TRAIN && applyUpdates && (sampleRounds !== 0 || discounted !== 0) && dcfrRule) {
+	if (STORAGE && isTraverser && mode === TRAIN && applyUpdates && chunk >= 0) {
+		updateCompact(
+			<usize>(i32At(blockOffset, node) + board), node, chunk, slot, i32At(handOffset, node) + i32At(rowStart, listSlot),
+			base, sumBase, actions, n, reachMe, strategy, actionValues, out,
+		);
+	} else if (STORAGE && isTraverser && mode === TRAIN && applyUpdates && regretKind === I16) {
+		updateI16(<usize>(i32At(blockOffset, node) + board), node, slot, base, sumBase, actions, n, reachMe, strategy, actionValues, out);
+	} else if (isTraverser && mode === TRAIN && applyUpdates && (sampleRounds !== 0 || discounted !== 0) && dcfrRule) {
 		const index = <usize>(i32At(blockOffset, node) + board) << 2;
 		const savedPositive = keepPositive;
 		const savedNegative = keepNegative;
@@ -674,6 +790,546 @@ function update(base: usize, sumBase: usize, actions: i32, n: i32, reachMe: usiz
 			store<f32>(sumBase + row + o, load<f32>(sumBase + row + o) * keepSum + weight * played);
 		}
 	}
+}
+
+// --- 16-bit and compact storage, with STORAGE (issue #84) ---
+
+/** One stored value as a float, by its kind. A stored scale cancels in everything read from it. */
+@inline function loadStored(base: usize, kind: i32, index: i32): f32 {
+	const i = <usize>index;
+	if (kind === I16) return <f32>load<i16>(base + (i << 1));
+	if (kind === U16) return <f32>load<u16>(base + (i << 1));
+	if (kind === I8) return <f32>load<i8>(base + i);
+	if (kind === U8) return <f32>load<u8>(base + i);
+	return load<f32>(base + (i << 2));
+}
+
+/** `count` stored values as floats at `into`, eight at a time where the kind is 16- or 8-bit. */
+function decode(base: usize, kind: i32, count: i32, into: usize): void {
+	let i = 0;
+	if (kind === I16) {
+		const count8 = count & ~7;
+		for (; i < count8; i += 8) {
+			const v = v128.load(base + (<usize>i << 1));
+			const o = into + (<usize>i << 2);
+			v128.store(o, f32x4.convert_i32x4_s(i32x4.extend_low_i16x8_s(v)));
+			v128.store(o + 16, f32x4.convert_i32x4_s(i32x4.extend_high_i16x8_s(v)));
+		}
+	} else if (kind === I8) {
+		const count16 = count & ~15;
+		for (; i < count16; i += 16) {
+			const v = v128.load(base + <usize>i);
+			const low = i16x8.extend_low_i8x16_s(v);
+			const high = i16x8.extend_high_i8x16_s(v);
+			const o = into + (<usize>i << 2);
+			v128.store(o, f32x4.convert_i32x4_s(i32x4.extend_low_i16x8_s(low)));
+			v128.store(o + 16, f32x4.convert_i32x4_s(i32x4.extend_high_i16x8_s(low)));
+			v128.store(o + 32, f32x4.convert_i32x4_s(i32x4.extend_low_i16x8_s(high)));
+			v128.store(o + 48, f32x4.convert_i32x4_s(i32x4.extend_high_i16x8_s(high)));
+		}
+	}
+	for (; i < count; i++) store<f32>(into + (<usize>i << 2), loadStored(base, kind, i));
+}
+
+/** `matchAverage` over stored sums and regrets of any kind. */
+function matchAverageStored(sumBase: usize, sumKind: i32, regretBase: usize, regretKind: i32, actions: i32, n: i32, strategy: usize): void {
+	const rowStride = <usize>n << 2;
+	const total = strategy + <usize>actions * rowStride;
+	memory.fill(total, 0, rowStride);
+	for (let a = 0; a < actions; a++) {
+		const dst = strategy + <usize>a * rowStride;
+		for (let i = 0; i < n; i++) {
+			const o = <usize>i << 2;
+			const v = loadStored(sumBase, sumKind, a * n + i);
+			store<f32>(dst + o, v);
+			store<f32>(total + o, load<f32>(total + o) + v);
+		}
+	}
+	// Hands with no sum here (under CFR+, never reached) fall back to the current strategy.
+	for (let i = 0; i < n; i++) {
+		const o = <usize>i << 2;
+		if (load<f32>(total + o) > 0) continue;
+		let positive: f32 = 0;
+		for (let a = 0; a < actions; a++) {
+			const v = loadStored(regretBase, regretKind, a * n + i);
+			const p: f32 = v > 0 ? v : 0;
+			store<f32>(strategy + <usize>a * rowStride + o, p);
+			positive += p;
+		}
+		store<f32>(total + o, positive);
+	}
+	normaliseRows(strategy, total, actions, n);
+}
+
+/** The largest of a vector's four lanes. */
+@inline function largestLane(v: v128): f32 {
+	const a = Mathf.max(f32x4.extract_lane(v, 0), f32x4.extract_lane(v, 1));
+	const b = Mathf.max(f32x4.extract_lane(v, 2), f32x4.extract_lane(v, 3));
+	return Mathf.max(a, b);
+}
+
+/** `dither`'s iteration and salt (src/cfr.ts), mixed once for a block. */
+@inline function ditherMix(t: i32, salt: i32): i32 {
+	return (t * <i32>0x9e3779b1) ^ (salt * <i32>0x27d4eb2f);
+}
+
+/** Four of `dither`'s hashes, for slots `slot` to `slot + 3` under `ditherMix`, as floats in [0, 1) to 24 bits. */
+@inline function ditherLanes(slot: i32, mix: i32): v128 {
+	const slots = i32x4.add(i32x4.splat(slot), i32x4(0, 1, 2, 3));
+	let h = i32x4.mul(v128.xor(slots, i32x4.splat(mix)), i32x4.splat(<i32>0x85ebca6b));
+	h = v128.xor(h, i32x4.shr_u(h, 13));
+	h = i32x4.mul(h, i32x4.splat(<i32>0xc2b2ae35));
+	h = v128.xor(h, i32x4.shr_u(h, 16));
+	return f32x4.mul(f32x4.convert_i32x4_u(i32x4.shr_u(h, 8)), f32x4.splat(<f32>1 / <f32>16777216));
+}
+
+/** `dither` to 24 bits, as `ditherLanes` gives it. */
+@inline function ditherOne(slot: i32, mix: i32): f32 {
+	let h: u32 = <u32>(slot ^ mix) * 0x85ebca6b;
+	h ^= h >>> 13;
+	h *= 0xc2b2ae35;
+	h ^= h >>> 16;
+	return <f32>(h >>> 8) / <f32>16777216;
+}
+
+/**
+ * `updateQuantised` in src/cfr.ts: the 16-bit update of one block, decoded,
+ * updated as the rule says and re-encoded against the block's new largest
+ * value; regrets rounded to nearest, sums at random by the same hash of slot
+ * and iteration, salted with the history's `node` when storage is shared.
+ * In 32-bit floats, four hands at a time, as the 32-bit update is: a 16-bit
+ * value has far less precision than that, so the stored result differs
+ * from JavaScript's float64 only where a value lies within float32 precision
+ * of a rounding boundary. The new values are staged in the action values and
+ * the strategy, as JavaScript stages them.
+ */
+function updateI16(
+	block: usize, node: i32, slot: i32, base: usize, sumBase: usize, actions: i32, n: i32,
+	reachMe: usize, strategy: usize, actionValues: usize, value: usize,
+): void {
+	const regretAt = regretScale + (block << 3);
+	const sumAt = sumScale + (block << 3);
+	let positive = factorPositive();
+	let negative = factorNegative();
+	let keep = factorSum();
+	if (dcfrRule && discounted !== 0) {
+		// Another history already discounted this shared block this iteration.
+		const mark = discounted + (block << 2);
+		if (load<i32>(mark) === iteration) {
+			positive = 1;
+			negative = 1;
+			keep = 1;
+		}
+		store<i32>(mark, iteration);
+	}
+	const oldRegret = <f32>load<f64>(regretAt);
+	const oldSum = <f32>(load<f64>(sumAt) * keep);
+	const w = <f32>factorWeight();
+	const pos = f32x4.splat(<f32>positive);
+	const neg = f32x4.splat(<f32>negative);
+	const scaleR = f32x4.splat(oldRegret);
+	const scaleS = f32x4.splat(oldSum);
+	const weight = f32x4.splat(w);
+	const zero = f32x4.splat(0);
+	const rowStride = <usize>n << 2;
+	const n4 = n & ~3;
+	let topR = zero;
+	let topS = zero;
+	for (let a = 0; a < actions; a++) {
+		const row = <usize>a * rowStride;
+		const q = base + (<usize>(a * n) << 1);
+		const s = sumBase + (<usize>(a * n) << 1);
+		let i = 0;
+		for (; i < n4; i += 4) {
+			const o = <usize>i << 2;
+			const qv = v128.load64_zero(q + (<usize>i << 1));
+			const r = f32x4.mul(f32x4.convert_i32x4_s(i32x4.extend_low_i16x8_s(qv)), scaleR);
+			let u = f32x4.sub(f32x4.add(f32x4.mul(r, v128.bitselect(pos, neg, f32x4.gt(r, zero))), v128.load(actionValues + row + o)), v128.load(value + o));
+			if (clamp) u = f32x4.max(u, zero);
+			v128.store(actionValues + row + o, u);
+			topR = f32x4.max(topR, f32x4.abs(u));
+			// DCFR adds the strategy unweighted by own reach (issue #8); CFR+ keeps the weight.
+			let added = f32x4.mul(weight, v128.load(strategy + row + o));
+			if (clamp) added = f32x4.mul(f32x4.mul(weight, v128.load(reachMe + o)), v128.load(strategy + row + o));
+			const sv = v128.load64_zero(s + (<usize>i << 1));
+			const sum = f32x4.add(f32x4.mul(f32x4.convert_i32x4_u(i32x4.extend_low_i16x8_u(sv)), scaleS), added);
+			v128.store(strategy + row + o, sum);
+			topS = f32x4.max(topS, sum);
+		}
+		for (; i < n; i++) {
+			const o = <usize>i << 2;
+			const r = <f32>load<i16>(q + (<usize>i << 1)) * oldRegret;
+			let u = r * (r > 0 ? <f32>positive : <f32>negative) + load<f32>(actionValues + row + o) - load<f32>(value + o);
+			if (clamp && u < 0) u = 0;
+			store<f32>(actionValues + row + o, u);
+			topR = f32x4.max(topR, f32x4.splat(Mathf.abs(u)));
+			const played = load<f32>(strategy + row + o);
+			const added = clamp ? w * load<f32>(reachMe + o) * played : w * played;
+			const sum = <f32>load<u16>(s + (<usize>i << 1)) * oldSum + added;
+			store<f32>(strategy + row + o, sum);
+			topS = f32x4.max(topS, f32x4.splat(sum));
+		}
+	}
+
+	// Storing into a 16-bit array truncates toward zero, so adding a half away
+	// from zero rounds to nearest, and adding the dither rounds at random;
+	// the narrowing saturates, which caps a sum at the top of the range.
+	const largestRegret = largestLane(topR);
+	const largestSum = largestLane(topS);
+	const regretStep = largestRegret > 0 ? <f32>(32767 / <f64>largestRegret) : 0;
+	const sumStep = largestSum > 0 ? <f32>(65535 / <f64>largestSum) : 0;
+	const stepR = f32x4.splat(regretStep);
+	const stepS = f32x4.splat(sumStep);
+	const half = f32x4.splat(0.5);
+	const sign = i32x4.splat(<i32>0x80000000);
+	// Which history is re-encoding a shared block; 0 keeps unshared streams as they were.
+	const mix = ditherMix(iteration, discounted !== 0 ? node : 0);
+	for (let a = 0; a < actions; a++) {
+		const row = <usize>a * rowStride;
+		const q = base + (<usize>(a * n) << 1);
+		const s = sumBase + (<usize>(a * n) << 1);
+		let i = 0;
+		for (; i < n4; i += 4) {
+			const o = <usize>i << 2;
+			const r = f32x4.mul(v128.load(actionValues + row + o), stepR);
+			const rounded = i32x4.trunc_sat_f32x4_s(f32x4.add(r, v128.or(half, v128.and(r, sign))));
+			v128.store64_lane(q + (<usize>i << 1), i16x8.narrow_i32x4_s(rounded, rounded), 0);
+			const d = f32x4.add(f32x4.mul(v128.load(strategy + row + o), stepS), ditherLanes(slot + a * n + i, mix));
+			const sum = i32x4.trunc_sat_f32x4_u(d);
+			v128.store64_lane(s + (<usize>i << 1), i16x8.narrow_i32x4_u(sum, sum), 0);
+		}
+		for (; i < n; i++) {
+			const o = <usize>i << 2;
+			const r = load<f32>(actionValues + row + o) * regretStep;
+			store<i16>(q + (<usize>i << 1), <i16><i32>(r < 0 ? r - 0.5 : r + 0.5));
+			const d = load<f32>(strategy + row + o) * sumStep + ditherOne(slot + a * n + i, mix);
+			store<u16>(s + (<usize>i << 1), <u16><u32>(d < 65535 ? d : <f32>65535));
+		}
+	}
+	store<f64>(regretAt, <f64>largestRegret / 32767);
+	store<f64>(sumAt, <f64>largestSum / 65535);
+}
+
+/** `2^(shift - 160)`, a compact hand's scale; 0 for a shift of 0. See `SHIFT_SCALE` in src/cfr.ts. */
+@inline function shiftScale(shift: i32): f64 {
+	return shift === 0 ? 0 : reinterpret<f64>(<u64>(shift - 160 + 1023) << 52);
+}
+
+/** `1 / shiftScale(shift)`, exactly, for a shift of 1 or more. */
+@inline function shiftInverse(shift: i32): f64 {
+	return reinterpret<f64>(<u64>(1023 + 160 - shift) << 52);
+}
+
+/** `scaleExponent` in src/cfr.ts: the smallest power of two bringing `largest` within `top`, biased. */
+function scaleExponent(largest: f64, top: f64): i32 {
+	if (!(largest > 0)) return 0;
+	const bits = reinterpret<u64>(largest / top);
+	let exponent = <i32>((bits >> 52) & 0x7ff) - 1023 + 160;
+	if ((bits & 0xfffffffffffff) !== 0) exponent++;
+	return exponent < 1 ? 0 : exponent > 255 ? 255 : exponent;
+}
+
+/** `streamSeed` in src/cfr.ts: the start of a slot's random stream on an iteration, for one history. */
+@inline function streamSeed(slot: u32, t: i32, salt: u32): u32 {
+	return ((slot ^ (<u32>t * 0x9e3779b1) ^ (salt * 0x7feb352d) ^ 0x5bd1e995) * 0x85ebca6b) | 1;
+}
+
+/** `nextState` in src/cfr.ts. */
+@inline function nextState(h: u32): u32 {
+	h ^= h >>> 15;
+	h *= 0x2c1b3c6d;
+	return h ^ (h >>> 12);
+}
+
+/**
+ * `updateCompact` in src/cfr.ts: one compactly stored block, decoded,
+ * updated in float64 as the rule says and re-encoded, in whichever mode
+ * compact storage runs; a block shared by several histories is discounted
+ * once an iteration, and with chance sampling, the DCFR discounts a skipped
+ * block missed first. Values are worked out twice rather than staged, as in
+ * `updateI16`. With shared storage the history's `node` salts the rounding
+ * streams, as in the JavaScript `updateCompact` (issue #88).
+ */
+function updateCompact(
+	block: usize, node: i32, chunk: i32, slot: i32, handBase: i32, base: usize, sumBase: usize, actions: i32, n: i32,
+	reachMe: usize, strategy: usize, actionValues: usize, value: usize,
+): void {
+	let positive = factorPositive();
+	let negative = factorNegative();
+	let keep = factorSum();
+	const w = factorWeight();
+	if (dcfrRule && discounted !== 0) {
+		// Another history already discounted this shared block this iteration.
+		const mark = discounted + (block << 2);
+		if (load<i32>(mark) === iteration) {
+			positive = 1;
+			negative = 1;
+			keep = 1;
+		}
+		store<i32>(mark, iteration);
+	}
+	if (dcfrRule && sampleRounds !== 0) {
+		// As the 32-bit update does, in `traverse`.
+		const at = lastUpdate + (block << 2);
+		if (catchUp) {
+			for (let t = load<i32>(at) + 1; t < iteration; t++) {
+				const age: f64 = t > 2 ? <f64>(t - 2) : 0;
+				const grown = age * Math.sqrt(age);
+				const kept = <f64>(t - 1) / <f64>t;
+				positive *= grown / (grown + 1);
+				negative *= 0.5;
+				keep *= kept * kept * kept;
+			}
+		}
+		store<i32>(at, iteration);
+	}
+	const total = actions * n;
+	const rowStride = <usize>n << 2;
+
+	if (compactMode === FLOAT) {
+		for (let k = 0; k < total; k++) {
+			const q = base + (<usize>k << 2);
+			const accumulated = <f64>load<f32>(q);
+			const updated = accumulated * (accumulated > 0 ? positive : negative)
+				+ <f64>load<f32>(actionValues + (<usize>k << 2)) - <f64>load<f32>(value + (<usize>(k % n) << 2));
+			store<f32>(q, <f32>(clamp && updated < 0 ? 0 : updated));
+		}
+		return;
+	}
+
+	const hashBase = load<u32>(chunkStart + (<usize>chunk << 2)) + <u32>slot;
+	// Which history is re-encoding a shared block; 0 keeps unshared streams as they were.
+	const salt: u32 = discounted !== 0 ? <u32>node : 0;
+	if (compactMode === BLOCK_SCALE) {
+		// One scale for the block, as 16-bit storage keeps.
+		const scaleAt = compactScale + (block << 3);
+		const old = load<f64>(scaleAt);
+		let largest: f64 = 0;
+		for (let pass = 0; pass < 2; pass++) {
+			const step: f64 = largest > 0 ? steps / largest : 0;
+			for (let a = 0; a < actions; a++) {
+				const row = a * n;
+				// One hash per row, stepped on for each hand.
+				let h: u32 = stochastic ? streamSeed(hashBase + <u32>row, iteration, salt) : 0;
+				for (let i = 0; i < n; i++) {
+					const q = base + <usize>(row + i);
+					const accumulated = <f64>load<i8>(q) * old;
+					let updated = accumulated * (accumulated > 0 ? positive : negative)
+						+ <f64>load<f32>(actionValues + <usize>a * rowStride + (<usize>i << 2)) - <f64>load<f32>(value + (<usize>i << 2));
+					if (clamp && updated < 0) updated = 0;
+					if (pass === 0) {
+						const magnitude = updated < 0 ? -updated : updated;
+						if (magnitude > largest) largest = magnitude;
+						continue;
+					}
+					const v = updated * step;
+					let rounded: f64;
+					if (stochastic) {
+						h = nextState(h);
+						rounded = Math.floor(v + <f64>h / 4294967296.0);
+					} else {
+						rounded = Math.round(v);
+					}
+					store<i8>(q, <i8><i32>(rounded > steps ? steps : rounded < -steps ? -steps : rounded));
+				}
+			}
+		}
+		store<f64>(scaleAt, largest / steps);
+		return;
+	}
+
+	const shifts = <usize>load<u32>(chunkShift + (<usize>chunk << 2)) + <usize>handBase;
+	const sumShifts = compactSums ? <usize>load<u32>(chunkSumShift + (<usize>chunk << 2)) + <usize>handBase : 0;
+	// Four hands at a time, in 32-bit floats, as `updateI16` works; the rest one by one.
+	const n4 = n & ~3;
+	const zero = f32x4.splat(0);
+	const pos = f32x4.splat(<f32>positive);
+	const neg = f32x4.splat(<f32>negative);
+	const weight = f32x4.splat(<f32>w);
+	const kept = f32x4.splat(<f32>keep);
+	const top = f32x4.splat(<f32>steps);
+	const bottom = f32x4.neg(top);
+	const half = f32x4.splat(0.5);
+	const byteTop = f32x4.splat(255);
+	for (let i = 0; i < n4; i += 4) {
+		const o = <usize>i << 2;
+		const out4 = v128.load(value + o);
+		const scale4 = scalesOf(v128.load32_zero(shifts + <usize>i));
+		let largest = zero;
+		for (let a = 0; a < actions; a++) {
+			const at = actionValues + <usize>a * rowStride + o;
+			const r = f32x4.mul(signedBytes(base + <usize>(a * n + i)), scale4);
+			let u = f32x4.sub(f32x4.add(f32x4.mul(r, v128.bitselect(pos, neg, f32x4.gt(r, zero))), v128.load(at)), out4);
+			if (clamp) u = f32x4.max(u, zero);
+			v128.store(at, u);
+			largest = f32x4.max(largest, f32x4.abs(u));
+		}
+		const exponent = exponentsOf(largest, <f32>steps);
+		v128.store32_lane(shifts + <usize>i, bytesOf(exponent), 0);
+		const inverse = inversesOf(exponent);
+		// One stream per hand, stepped on for each action.
+		let h = stochastic || compactSums ? seedsOf(hashBase + <u32>i, iteration, salt) : zero;
+		for (let a = 0; a < actions; a++) {
+			const v = f32x4.mul(v128.load(actionValues + <usize>a * rowStride + o), inverse);
+			let rounded: v128;
+			if (stochastic) {
+				h = nextStates(h);
+				rounded = f32x4.floor(f32x4.add(v, uniformsOf(h)));
+			} else {
+				rounded = f32x4.floor(f32x4.add(v, half));
+			}
+			const fitted = i32x4.trunc_sat_f32x4_s(f32x4.min(f32x4.max(rounded, bottom), top));
+			const narrow = i16x8.narrow_i32x4_s(fitted, fitted);
+			v128.store32_lane(base + <usize>(a * n + i), i8x16.narrow_i16x8_s(narrow, narrow), 0);
+		}
+
+		if (!compactSums) continue;
+		// The strategy sum, scaled per hand as the regrets are.
+		const sumScale4 = f32x4.mul(scalesOf(v128.load32_zero(sumShifts + <usize>i)), kept);
+		const reach4 = v128.load(reachMe + o);
+		let largestSum = zero;
+		for (let a = 0; a < actions; a++) {
+			const at = strategy + <usize>a * rowStride + o;
+			// DCFR adds the strategy unweighted by own reach (issue #8); CFR+ keeps the weight.
+			let added = f32x4.mul(weight, v128.load(at));
+			if (clamp) added = f32x4.mul(f32x4.mul(weight, reach4), v128.load(at));
+			const sum = f32x4.add(f32x4.mul(unsignedBytes(sumBase + <usize>(a * n + i)), sumScale4), added);
+			v128.store(at, sum);
+			largestSum = f32x4.max(largestSum, sum);
+		}
+		const sumExponent = exponentsOf(largestSum, 255);
+		v128.store32_lane(sumShifts + <usize>i, bytesOf(sumExponent), 0);
+		const sumInverse = inversesOf(sumExponent);
+		for (let a = 0; a < actions; a++) {
+			h = nextStates(h);
+			const v = f32x4.mul(v128.load(strategy + <usize>a * rowStride + o), sumInverse);
+			const rounded = i32x4.trunc_sat_f32x4_u(f32x4.min(f32x4.floor(f32x4.add(v, uniformsOf(h))), byteTop));
+			const narrow = i16x8.narrow_i32x4_u(rounded, rounded);
+			v128.store32_lane(sumBase + <usize>(a * n + i), i8x16.narrow_i16x8_u(narrow, narrow), 0);
+		}
+	}
+	for (let i = n4; i < n; i++) {
+		const o = <usize>i << 2;
+		const out = <f64>load<f32>(value + o);
+		const scale = shiftScale(<i32>load<u8>(shifts + <usize>i));
+		let largest: f64 = 0;
+		for (let a = 0; a < actions; a++) {
+			const accumulated = <f64>load<i8>(base + <usize>(a * n + i)) * scale;
+			let updated = accumulated * (accumulated > 0 ? positive : negative) + <f64>load<f32>(actionValues + <usize>a * rowStride + o) - out;
+			if (clamp && updated < 0) updated = 0;
+			const magnitude = updated < 0 ? -updated : updated;
+			if (magnitude > largest) largest = magnitude;
+		}
+		const exponent = scaleExponent(largest, steps);
+		store<u8>(shifts + <usize>i, <u8>exponent);
+		const inverse: f64 = exponent === 0 ? 0 : shiftInverse(exponent);
+		// One hash per hand, stepped on for each action.
+		let h: u32 = stochastic || compactSums ? streamSeed(hashBase + <u32>i, iteration, salt) : 0;
+		for (let a = 0; a < actions; a++) {
+			const q = base + <usize>(a * n + i);
+			const accumulated = <f64>load<i8>(q) * scale;
+			let updated = accumulated * (accumulated > 0 ? positive : negative) + <f64>load<f32>(actionValues + <usize>a * rowStride + o) - out;
+			if (clamp && updated < 0) updated = 0;
+			const v = updated * inverse;
+			let rounded: f64;
+			if (stochastic) {
+				h = nextState(h);
+				rounded = Math.floor(v + <f64>h / 4294967296.0);
+			} else {
+				rounded = Math.round(v);
+			}
+			store<i8>(q, <i8><i32>(rounded > steps ? steps : rounded < -steps ? -steps : rounded));
+		}
+
+		if (!compactSums) continue;
+		// The strategy sum, scaled per hand as the regrets are.
+		const sumScale = shiftScale(<i32>load<u8>(sumShifts + <usize>i));
+		const reach = <f64>load<f32>(reachMe + o);
+		let largestSum: f64 = 0;
+		for (let a = 0; a < actions; a++) {
+			const played = <f64>load<f32>(strategy + <usize>a * rowStride + o);
+			// DCFR adds the strategy unweighted by own reach (issue #8); CFR+ keeps the weight.
+			const added = clamp ? w * reach * played : w * played;
+			const sum = <f64>load<u8>(sumBase + <usize>(a * n + i)) * sumScale * keep + added;
+			if (sum > largestSum) largestSum = sum;
+		}
+		const sumExponent = scaleExponent(largestSum, 255);
+		store<u8>(sumShifts + <usize>i, <u8>sumExponent);
+		const sumInverse: f64 = sumExponent === 0 ? 0 : shiftInverse(sumExponent);
+		for (let a = 0; a < actions; a++) {
+			const s = sumBase + <usize>(a * n + i);
+			const played = <f64>load<f32>(strategy + <usize>a * rowStride + o);
+			const added = clamp ? w * reach * played : w * played;
+			const sum = <f64>load<u8>(s) * sumScale * keep + added;
+			h = nextState(h);
+			const rounded = Math.floor(sum * sumInverse + <f64>h / 4294967296.0);
+			store<u8>(s, <u8><i32>(rounded < 255 ? rounded : 255));
+		}
+	}
+}
+
+/** Four signed bytes as floats. */
+@inline function signedBytes(at: usize): v128 {
+	return f32x4.convert_i32x4_s(i32x4.extend_low_i16x8_s(i16x8.extend_low_i8x16_s(v128.load32_zero(at))));
+}
+
+/** Four unsigned bytes as floats. */
+@inline function unsignedBytes(at: usize): v128 {
+	return f32x4.convert_i32x4_u(i32x4.extend_low_i16x8_u(i16x8.extend_low_i8x16_u(v128.load32_zero(at))));
+}
+
+/**
+ * `shiftScale` of four hands' shifts, the bytes in the low lane, as float32:
+ * `2^(shift - 160)` has the float32 exponent field `shift - 33`. Below
+ * 2^-126 a scale is taken as 0; it stands for regrets under 10^-35.
+ */
+@inline function scalesOf(shifts: v128): v128 {
+	const field = i32x4.sub(i32x4.extend_low_i16x8_u(i16x8.extend_low_i8x16_u(shifts)), i32x4.splat(33));
+	return v128.and(i32x4.shl(field, 23), i32x4.gt_s(field, i32x4.splat(0)));
+}
+
+/**
+ * `scaleExponent` of four hands' largest values, from float32's exponent
+ * field (biased by 127, where the shift's bias is 160); 0 where a hand has none.
+ */
+@inline function exponentsOf(largest: v128, top: f32): v128 {
+	const bits = f32x4.div(largest, f32x4.splat(top));
+	let exponent = i32x4.add(v128.and(i32x4.shr_u(bits, 23), i32x4.splat(0xff)), i32x4.splat(33));
+	// Not a power of two: one more. `ne` is -1 where true.
+	exponent = i32x4.sub(exponent, i32x4.ne(v128.and(bits, i32x4.splat(0x7fffff)), i32x4.splat(0)));
+	exponent = i32x4.min_s(i32x4.max_s(exponent, i32x4.splat(0)), i32x4.splat(255));
+	return v128.and(exponent, f32x4.gt(largest, f32x4.splat(0)));
+}
+
+/** `shiftInverse` of four shifts, as float32, capped at 2^127; 0 for a shift of 0. */
+@inline function inversesOf(exponent: v128): v128 {
+	const field = i32x4.min_s(i32x4.max_s(i32x4.sub(i32x4.splat(287), exponent), i32x4.splat(0)), i32x4.splat(254));
+	return v128.and(i32x4.shl(field, 23), i32x4.gt_s(exponent, i32x4.splat(0)));
+}
+
+/** Four 32-bit lanes of values 0 to 255 as bytes, in the low lane. */
+@inline function bytesOf(values: v128): v128 {
+	const narrow = i16x8.narrow_i32x4_u(values, values);
+	return i8x16.narrow_i16x8_u(narrow, narrow);
+}
+
+/** `streamSeed` for four slots from `slot`. */
+@inline function seedsOf(slot: u32, t: i32, salt: u32): v128 {
+	const slots = i32x4.add(i32x4.splat(<i32>slot), i32x4(0, 1, 2, 3));
+	const mixed = v128.xor(v128.xor(slots, i32x4.splat(t * <i32>0x9e3779b1)), i32x4.splat(<i32>(salt * 0x7feb352d) ^ 0x5bd1e995));
+	return v128.or(i32x4.mul(mixed, i32x4.splat(<i32>0x85ebca6b)), i32x4.splat(1));
+}
+
+/** `nextState` of four streams. */
+@inline function nextStates(h: v128): v128 {
+	h = v128.xor(h, i32x4.shr_u(h, 15));
+	h = i32x4.mul(h, i32x4.splat(0x2c1b3c6d));
+	return v128.xor(h, i32x4.shr_u(h, 12));
+}
+
+/** Four streams' states as floats in [0, 1), to 24 bits. */
+@inline function uniformsOf(h: v128): v128 {
+	return f32x4.mul(f32x4.convert_i32x4_u(i32x4.shr_u(h, 8)), f32x4.splat(<f32>1 / <f32>16777216));
 }
 
 /** Fold values: card-removal inclusion–exclusion, as `foldValuesHands`. */

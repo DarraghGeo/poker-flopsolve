@@ -29,6 +29,7 @@ import { pairValues } from './pairs.ts';
 import type { Kernels } from './kernels.ts';
 import { loadKernels } from './kernels.ts';
 import { NodeKind } from './tree.ts';
+import type { LineScale } from './lines.ts';
 
 /** Which combinations a player holds, and where each sits in storage. */
 export interface PlayerIndex {
@@ -176,6 +177,7 @@ export function buildLayout(
 	alias?: Int32Array,
 	reachWeighted = false,
 	compact?: CompactPlan,
+	boards?: { readonly from: Int32Array; readonly to: Int32Array },
 ): Layout {
 	// How many of each player's hands each board leaves live: a block's rows.
 	const roundBase = new Int32Array(runouts.rounds + 1);
@@ -225,6 +227,21 @@ export function buildLayout(
 		const actions = tree.numEdges[node];
 		if (actions > maxActions) maxActions = actions;
 		const hands = totals[tree.round[node] * 2 + tree.player[node]];
+		if (boards) {
+			// Line runouts (never with `alias` or `compact`): only the boards of
+			// the node's own line, blocks still addressed by board index,
+			// shifted so that its first board starts here.
+			const round = tree.round[node];
+			const slot = (board: number): number => (roundBase[round] + board) * 2 + tree.player[node];
+			const end = boards.to[node] < runouts.counts[round] ? rowStart[slot(boards.to[node])] : hands;
+			const begin = rowStart[slot(boards.from[node])];
+			walked += actions * (end - begin);
+			offset[node] = total - actions * begin;
+			blockOffset[node] = blocks - boards.from[node];
+			total += actions * (end - begin);
+			blocks += boards.to[node] - boards.from[node];
+			continue;
+		}
 		// An owner always comes before the nodes it owns, so its blocks are placed.
 		walked += actions * hands;
 		if (alias !== undefined && alias[node] !== node) {
@@ -305,7 +322,7 @@ export function blockBase(layout: Layout, tree: Tree, node: number, board: numbe
 /** Accumulated regrets: float, or 16-bit integers scaled per block. */
 export type RegretStore = Float64Array | Float32Array | Int16Array;
 /** Regrets as one of the stores, or compact storage's 8-bit ones. */
-type AnyRegrets = RegretStore | Int8Array;
+export type AnyRegrets = RegretStore | Int8Array;
 /** Accumulated strategy sums: float, or 16-bit integers scaled per block. */
 export type SumStore = Float64Array | Float32Array | Uint16Array;
 
@@ -354,6 +371,13 @@ export interface Context {
 	readonly compactScale?: Float64Array | null;
 	readonly scratch: TerminalScratch;
 	readonly chipScale: number;
+	/**
+	 * With `SpotConfig.lineRunouts`: per chance node, the children table its
+	 * deal uses and the per-hand rescaling of its values (see `lines.ts`).
+	 * Unset, every deal uses `runouts.childStart`.
+	 */
+	readonly lineStarts?: readonly (Int32Array | null)[];
+	readonly lineScales?: readonly (LineScale | null)[];
 	/** Which combinations each player can hold on each board. */
 	readonly active: ActiveLists;
 	/** How hand-space vectors move between boards and meet at terminals. */
@@ -924,7 +948,7 @@ function normalise(
 }
 
 /** Current strategy from positive regrets; uniform where there is none. */
-function regretMatch(regret: AnyRegrets, base: number, actions: number, count: number, strategy: Float64Array): void {
+export function regretMatch(regret: AnyRegrets, base: number, actions: number, count: number, strategy: Float64Array): void {
 	normalise(regret, base, actions, count, strategy);
 }
 
@@ -1080,8 +1104,9 @@ export function traverse(
 
 		// Workers own contiguous slices of the boards at the shard round.
 		const sharded = nextRound === ctx.shardRound;
-		const first = runouts.childStart[nextRound][board];
-		const last = runouts.childStart[nextRound][board + 1];
+		const starts = ctx.lineStarts === undefined ? runouts.childStart[nextRound] : ctx.lineStarts[node]!;
+		const first = starts[board];
+		const last = starts[board + 1];
 		const from = sharded && ctx.shardStart > first ? ctx.shardStart : first;
 		const to = sharded && ctx.shardEnd < last ? ctx.shardEnd : last;
 
@@ -1129,6 +1154,13 @@ export function traverse(
 		}
 		if (lists.packed[mySlot]) {
 			for (let i = 0; i < myCount; i++) out[i] /= lists.multiplicity[myFrom + i];
+		}
+		if (ctx.lineScales !== undefined) {
+			const scale = ctx.lineScales[node];
+			if (scale !== null) {
+				const at = myFrom - scale.base;
+				for (let i = 0; i < myCount; i++) out[i] *= scale.values[at + i];
+			}
 		}
 		return out;
 	}
@@ -1232,13 +1264,13 @@ export function traverse(
 	}
 	if (isTraverser && mode === Mode.Train && ctx.applyUpdates && compactNode) {
 		updateCompact(
-			ctx, chunk, ctx.layout.blockOffset[node] + board, slotBase,
+			ctx, node, chunk, ctx.layout.blockOffset[node] + board, slotBase,
 			ctx.layout.handOffset![node] + ctx.layout.rowStart[listSlot], actions, stride, iterWeight,
 			reachMe, strategy, actionValues, out,
 		);
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.regretScale !== null) {
 		updateQuantised(
-			ctx, ctx.layout.blockOffset[node] + board, slotBase, actions, stride,
+			ctx, node, ctx.layout.blockOffset[node] + board, slotBase, actions, stride,
 			iterWeight, reachMe, strategy, actionValues, out,
 		);
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.dcfr) {
@@ -1366,7 +1398,12 @@ function sampledValue(
  * a hand whose sum is small beside its block's largest loses most of every
  * iteration's contribution, and measured, exploitability stalls near 0.04%
  * of pot where float32 keeps falling. The randomness is a hash of the slot and
- * the iteration, so a solve stays deterministic at any thread count.
+ * the iteration, so a solve stays deterministic at any thread count. With
+ * shared storage it is salted with the history's `node` (else 0): every
+ * history that reaches a shared block re-encodes it in an iteration, and with
+ * one stream for all of them their roundings would push the same way
+ * (issue #94). The node is fixed by the tree, so the salt does not depend on
+ * threads or on the order histories are visited in.
  *
  * `actionValues` and `strategy` are not needed once their values are used, so
  * the new regrets and sums are staged in them rather than in buffers of their
@@ -1374,6 +1411,7 @@ function sampledValue(
  */
 function updateQuantised(
 	ctx: Context,
+	node: number,
 	block: number,
 	slotBase: number,
 	actions: number,
@@ -1439,6 +1477,8 @@ function updateQuantised(
 	// reach 65536 and wrap to zero, hence the cap.
 	const regretStep = largestRegret > 0 ? REGRET_STEPS / largestRegret : 0;
 	const sumStep = largestSum > 0 ? SUM_STEPS / largestSum : 0;
+	// Which history is re-encoding a shared block; 0 keeps unshared streams as they were.
+	const salt = ctx.layout.shared ? node : 0;
 	for (let a = 0; a < actions; a++) {
 		const offset = a * count;
 		const slotRow = slotBase + a * count;
@@ -1446,7 +1486,7 @@ function updateQuantised(
 			const at = slotRow + i;
 			const r = actionValues[offset + i] * regretStep;
 			regret[at] = r < 0 ? r - 0.5 : r + 0.5;
-			const s = strategy[a * count + i] * sumStep + dither(at, iterWeight);
+			const s = strategy[a * count + i] * sumStep + dither(at, iterWeight, salt);
 			strategySum[at] = s < SUM_STEPS ? s : SUM_STEPS;
 		}
 	}
@@ -1457,7 +1497,7 @@ function updateQuantised(
 /** Bias of a compact hand's scale exponent; see `Context.handShift`. */
 const SHIFT_BIAS = 160;
 /** `2^(shift - SHIFT_BIAS)` for every shift, 0 for a shift of 0. */
-const SHIFT_SCALE = Float64Array.from({ length: 256 }, (_, e) => (e === 0 ? 0 : 2 ** (e - SHIFT_BIAS)));
+export const SHIFT_SCALE = Float64Array.from({ length: 256 }, (_, e) => (e === 0 ? 0 : 2 ** (e - SHIFT_BIAS)));
 
 /**
  * The update for a compactly stored node: decode, update in float as the rule
@@ -1468,10 +1508,15 @@ const SHIFT_SCALE = Float64Array.from({ length: 256 }, (_, e) => (e === 0 ? 0 : 
  * precision. Rounding is at random with odds set by the remainder (unless
  * `stochastic` is off), so each stored value is right on average; the
  * randomness is a hash of the slot's place in all of compact storage and the
- * iteration, so it does not depend on threads or chunks.
+ * iteration, so it does not depend on threads or chunks. With shared storage
+ * the history's `node` goes into the hash too: every history reaching a
+ * shared block re-encodes it, and the same random numbers each time would
+ * push its rounding errors the same way instead of letting them cancel
+ * (issue #88).
  */
-function updateCompact(
+export function updateCompact(
 	ctx: Context,
+	node: number,
 	chunk: number,
 	block: number,
 	slotBase: number,
@@ -1489,6 +1534,8 @@ function updateCompact(
 	// Rounding hashes the slot's place in all of compact storage, so how it
 	// is chunked changes nothing.
 	const hashBase = ctx.layout.chunkStart[chunk] + slotBase;
+	// Which history is re-encoding a shared block; 0 keeps unshared streams as they were.
+	const salt = ctx.layout.shared ? node : 0;
 	const steps = plan.steps;
 	let keepPositive = 1;
 	let keepNegative = 0;
@@ -1498,6 +1545,26 @@ function updateCompact(
 	if (ctx.dcfr) {
 		({ keepPositive, keepNegative, keepSum } = dcfrFactors(iterWeight));
 		weight = 1;
+		const discounted = ctx.discounted;
+		if (discounted !== undefined && discounted !== null) {
+			// Another history already discounted this shared block this iteration.
+			if (discounted[block] === iterWeight) keepPositive = keepNegative = keepSum = 1;
+			discounted[block] = iterWeight;
+		}
+		const sampling = ctx.sampling;
+		if (sampling !== undefined && sampling !== null) {
+			// A subtree chance sampling skipped missed those iterations'
+			// discounts, as in the 32-bit update.
+			if (sampling.catchUp) {
+				for (let s = sampling.lastUpdate[block] + 1; s < iterWeight; s++) {
+					const f = cachedFactors(s);
+					keepPositive *= f.keepPositive;
+					keepNegative *= f.keepNegative;
+					keepSum *= f.keepSum;
+				}
+			}
+			sampling.lastUpdate[block] = iterWeight;
+		}
 	}
 
 	if (plan.float) {
@@ -1530,7 +1597,7 @@ function updateCompact(
 		// One hash per row, stepped on for each hand.
 		for (let a = 0; a < actions; a++) {
 			const row = a * count;
-			let h = stochastic ? streamSeed(hashBase + row, iterWeight) : 0;
+			let h = stochastic ? streamSeed(hashBase + row, iterWeight, salt) : 0;
 			for (let i = 0; i < count; i++) {
 				const value = actionValues[row + i] * step;
 				let rounded: number;
@@ -1567,7 +1634,7 @@ function updateCompact(
 		shifts[handBase + i] = exponent;
 		const inverse = exponent === 0 ? 0 : 1 / SHIFT_SCALE[exponent];
 		// One hash per hand, stepped on for each action.
-		let h = stochastic || sums !== null ? streamSeed(hashBase + i, iterWeight) : 0;
+		let h = stochastic || sums !== null ? streamSeed(hashBase + i, iterWeight, salt) : 0;
 		for (let a = 0; a < actions; a++) {
 			const k = a * count + i;
 			const value = actionValues[k] * inverse;
@@ -1608,14 +1675,14 @@ function updateCompact(
 }
 
 /** Largest strategy sum compact storage keeps per hand: the top of a byte. */
-const COMPACT_SUM_STEPS = 255;
+export const COMPACT_SUM_STEPS = 255;
 
 /**
  * A hand's scale exponent: the smallest power of two that brings `largest`
  * within `steps`, read off the float's exponent bits, biased by
  * `SHIFT_BIAS`; 0, for all zeros, below the smallest scale there is.
  */
-function scaleExponent(largest: number, steps: number): number {
+export function scaleExponent(largest: number, steps: number): number {
 	if (!(largest > 0)) return 0;
 	EXPONENT_FLOAT[0] = largest / steps;
 	const high = EXPONENT_BITS[1];
@@ -1626,10 +1693,11 @@ function scaleExponent(largest: number, steps: number): number {
 
 /**
  * Start of a slot's random stream on an iteration, for rounding a run of
- * values with `nextState`. Never zero, the stream's fixed point.
+ * values with `nextState`; `salt` tells apart histories sharing the slot
+ * (0 when none do). Never zero, the stream's fixed point.
  */
-function streamSeed(slot: number, iteration: number): number {
-	return Math.imul(slot ^ Math.imul(iteration, 0x9e3779b1) ^ 0x5bd1e995, 0x85ebca6b) | 1;
+function streamSeed(slot: number, iteration: number, salt: number): number {
+	return Math.imul(slot ^ Math.imul(iteration, 0x9e3779b1) ^ Math.imul(salt, 0x7feb352d) ^ 0x5bd1e995, 0x85ebca6b) | 1;
 }
 
 /** One step of a random stream: the next state, whose `(h >>> 0) / 2^32` is uniform in [0, 1). */
@@ -1665,9 +1733,13 @@ export function storedStrategy(
 	}
 }
 
-/** A deterministic uniform value in [0, 1) for a slot on an iteration. */
-function dither(slot: number, iteration: number): number {
-	let h = Math.imul(slot ^ Math.imul(iteration, 0x9e3779b1), 0x85ebca6b);
+/**
+ * A deterministic uniform value in [0, 1) for a slot on an iteration, from
+ * the stream `salt` picks; salt 0 is the stream unshared storage has always
+ * used. Distinct salts give a slot distinct hash inputs on every iteration.
+ */
+export function dither(slot: number, iteration: number, salt = 0): number {
+	let h = Math.imul(slot ^ Math.imul(iteration, 0x9e3779b1) ^ Math.imul(salt, 0x27d4eb2f), 0x85ebca6b);
 	h ^= h >>> 13;
 	h = Math.imul(h, 0xc2b2ae35);
 	h ^= h >>> 16;

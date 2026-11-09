@@ -227,7 +227,7 @@ interface BetState {
  * @param config betting structure, in units
  * @param runouts board completions, which fix the number of rounds
  */
-export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
+export function buildTree(config: TreeConfig, runouts: Pick<Runouts, 'rounds'>): Tree {
 	const kind: number[] = [];
 	const player: number[] = [];
 	const round: number[] = [];
