@@ -1264,7 +1264,7 @@ export function traverse(
 	}
 	if (isTraverser && mode === Mode.Train && ctx.applyUpdates && compactNode) {
 		updateCompact(
-			ctx, chunk, ctx.layout.blockOffset[node] + board, slotBase,
+			ctx, node, chunk, ctx.layout.blockOffset[node] + board, slotBase,
 			ctx.layout.handOffset![node] + ctx.layout.rowStart[listSlot], actions, stride, iterWeight,
 			reachMe, strategy, actionValues, out,
 		);
@@ -1500,10 +1500,15 @@ export const SHIFT_SCALE = Float64Array.from({ length: 256 }, (_, e) => (e === 0
  * precision. Rounding is at random with odds set by the remainder (unless
  * `stochastic` is off), so each stored value is right on average; the
  * randomness is a hash of the slot's place in all of compact storage and the
- * iteration, so it does not depend on threads or chunks.
+ * iteration, so it does not depend on threads or chunks. With shared storage
+ * the history's `node` goes into the hash too: every history reaching a
+ * shared block re-encodes it, and the same random numbers each time would
+ * push its rounding errors the same way instead of letting them cancel
+ * (issue #88).
  */
-function updateCompact(
+export function updateCompact(
 	ctx: Context,
+	node: number,
 	chunk: number,
 	block: number,
 	slotBase: number,
@@ -1521,6 +1526,8 @@ function updateCompact(
 	// Rounding hashes the slot's place in all of compact storage, so how it
 	// is chunked changes nothing.
 	const hashBase = ctx.layout.chunkStart[chunk] + slotBase;
+	// Which history is re-encoding a shared block; 0 keeps unshared streams as they were.
+	const salt = ctx.layout.shared ? node : 0;
 	const steps = plan.steps;
 	let keepPositive = 1;
 	let keepNegative = 0;
@@ -1582,7 +1589,7 @@ function updateCompact(
 		// One hash per row, stepped on for each hand.
 		for (let a = 0; a < actions; a++) {
 			const row = a * count;
-			let h = stochastic ? streamSeed(hashBase + row, iterWeight) : 0;
+			let h = stochastic ? streamSeed(hashBase + row, iterWeight, salt) : 0;
 			for (let i = 0; i < count; i++) {
 				const value = actionValues[row + i] * step;
 				let rounded: number;
@@ -1619,7 +1626,7 @@ function updateCompact(
 		shifts[handBase + i] = exponent;
 		const inverse = exponent === 0 ? 0 : 1 / SHIFT_SCALE[exponent];
 		// One hash per hand, stepped on for each action.
-		let h = stochastic || sums !== null ? streamSeed(hashBase + i, iterWeight) : 0;
+		let h = stochastic || sums !== null ? streamSeed(hashBase + i, iterWeight, salt) : 0;
 		for (let a = 0; a < actions; a++) {
 			const k = a * count + i;
 			const value = actionValues[k] * inverse;
@@ -1678,10 +1685,11 @@ export function scaleExponent(largest: number, steps: number): number {
 
 /**
  * Start of a slot's random stream on an iteration, for rounding a run of
- * values with `nextState`. Never zero, the stream's fixed point.
+ * values with `nextState`; `salt` tells apart histories sharing the slot
+ * (0 when none do). Never zero, the stream's fixed point.
  */
-function streamSeed(slot: number, iteration: number): number {
-	return Math.imul(slot ^ Math.imul(iteration, 0x9e3779b1) ^ 0x5bd1e995, 0x85ebca6b) | 1;
+function streamSeed(slot: number, iteration: number, salt: number): number {
+	return Math.imul(slot ^ Math.imul(iteration, 0x9e3779b1) ^ Math.imul(salt, 0x7feb352d) ^ 0x5bd1e995, 0x85ebca6b) | 1;
 }
 
 /** One step of a random stream: the next state, whose `(h >>> 0) / 2^32` is uniform in [0, 1). */

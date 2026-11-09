@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { createRun, defineSpot, SpotTooLargeError } from '../src/index.ts';
 import type { CompactStorage, SolveOptions, SpotConfig } from '../src/index.ts';
+import { updateCompact } from '../src/cfr.ts';
 
 const flop: SpotConfig = {
 	board: 'Ts 9s 4h', pot: 60, stack: 100,
@@ -221,6 +222,65 @@ describe('compact storage', () => {
 		shared.close();
 		compact.close();
 	});
+
+	for (const blockScale of [false, true]) {
+		it(`rounds each history sharing a block with its own random stream (issue #88${blockScale ? ', block scale' : ''})`, () => {
+			const deep: SpotConfig = { ...flop, stack: 200, betSizes: [[0.5]], maxRaises: 1 };
+			const run = createRun(defineSpot({ ...deep, shareHistories: true, compactStorage: { sums: false, blockScale } }), { workers: 1, engine: 'js' });
+			run.step(2);
+			const { ctx } = run.solver;
+			const { tree } = run.spot;
+			const layout = ctx.layout;
+			// Two histories pointing at one block of compact storage.
+			const byStorage = new Map<string, number>();
+			let pair: [number, number] | null = null;
+			for (const node of tree.decisionNodes) {
+				if (tree.round[node] < layout.compactFrom) continue;
+				const key = `${layout.compactChunk![node]}:${layout.offset[node]}`;
+				const owner = byStorage.get(key);
+				if (owner === undefined) byStorage.set(key, node);
+				else if (pair === null) pair = [owner, node];
+			}
+			expect(pair).not.toBeNull();
+			const [a, b] = pair!;
+			const actions = tree.numEdges[a];
+			const board = 0;
+			const listSlot = (ctx.active.roundBase[tree.round[a]] + board) * 2 + tree.player[a];
+			const count = ctx.active.count[listSlot];
+			const chunk = layout.compactChunk![a];
+			const slotBase = layout.offset[a] + actions * layout.rowStart[listSlot];
+			const block = layout.blockOffset[a] + board;
+			const handBase = layout.handOffset![a] + layout.rowStart[listSlot];
+			const q = ctx.compactRegret![chunk];
+			const before = q.slice();
+			const scaleBefore = ctx.compactScale?.slice();
+			const shiftBefore = ctx.handShift?.[chunk].slice();
+			// Each encode is the block's first visit this iteration, so is discounted (issue #86).
+			const marksBefore = ctx.discounted?.slice();
+			// Values a third of a step apart, so stochastic rounding has room to differ.
+			const restore = (): void => {
+				q.set(before);
+				if (scaleBefore) ctx.compactScale!.set(scaleBefore);
+				if (shiftBefore) ctx.handShift![chunk].set(shiftBefore);
+				if (marksBefore) ctx.discounted!.set(marksBefore);
+			};
+			const encode = (node: number): Int8Array => {
+				restore();
+				const actionValues = Float64Array.from({ length: actions * count }, (_, k) => ((k * 7919) % 101) / 3 + 0.37);
+				updateCompact(
+					ctx, node, chunk, block, slotBase, handBase, actions, count, 3,
+					new Float64Array(count).fill(1), new Float64Array(actions * count).fill(1 / actions),
+					actionValues, new Float64Array(count),
+				);
+				return q.slice(slotBase, slotBase + actions * count) as Int8Array;
+			};
+			const first = encode(a);
+			expect(encode(a)).toEqual(first);
+			expect(encode(b)).not.toEqual(first);
+			restore();
+			run.close();
+		});
+	}
 
 	it('refuses what it does not combine with', () => {
 		const spot = defineSpot(withStorage({}));
