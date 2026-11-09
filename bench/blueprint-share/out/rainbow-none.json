@@ -1,0 +1,199 @@
+{
+ "tag": "rainbow-none",
+ "storageBytes": 740928816,
+ "peakRss": 986275840,
+ "engine": "wasm",
+ "seconds": 463.366053365,
+ "iterations": 560,
+ "exploitability": 0.045179879595024536,
+ "best": 0.045179879595024536,
+ "history": [
+  {
+   "iterations": 20,
+   "seconds": 19.282211952,
+   "exploitability": 16.6059058102643
+  },
+  {
+   "iterations": 40,
+   "seconds": 35.827746984,
+   "exploitability": 4.9065038280575894
+  },
+  {
+   "iterations": 80,
+   "seconds": 69.205969661,
+   "exploitability": 1.0556125019269766
+  },
+  {
+   "iterations": 120,
+   "seconds": 101.010871645,
+   "exploitability": 0.5214884001122057
+  },
+  {
+   "iterations": 160,
+   "seconds": 133.309311353,
+   "exploitability": 0.8691576752109816
+  },
+  {
+   "iterations": 200,
+   "seconds": 167.50536278500002,
+   "exploitability": 0.4819915129450165
+  },
+  {
+   "iterations": 240,
+   "seconds": 200.90100791799998,
+   "exploitability": 0.30521387093132457
+  },
+  {
+   "iterations": 280,
+   "seconds": 234.433848803,
+   "exploitability": 0.2162346541754655
+  },
+  {
+   "iterations": 320,
+   "seconds": 267.480038964,
+   "exploitability": 0.15874104485223953
+  },
+  {
+   "iterations": 360,
+   "seconds": 300.05192731600005,
+   "exploitability": 0.12024365924120999
+  },
+  {
+   "iterations": 400,
+   "seconds": 333.032738992,
+   "exploitability": 0.09441637486152889
+  },
+  {
+   "iterations": 440,
+   "seconds": 366.566985468,
+   "exploitability": 0.07628257972999658
+  },
+  {
+   "iterations": 480,
+   "seconds": 398.541274472,
+   "exploitability": 0.06287267812504428
+  },
+  {
+   "iterations": 520,
+   "seconds": 431.82365340200005,
+   "exploitability": 0.05270534204406536
+  },
+  {
+   "iterations": 560,
+   "seconds": 463.365932974,
+   "exploitability": 0.045179879595024536
+  }
+ ],
+ "rootError": [
+  {
+   "mae": 0,
+   "max": 0
+  },
+  {
+   "mae": 0,
+   "max": 0
+  }
+ ],
+ "loss": [
+  {
+   "decision": "OOP at root",
+   "blueprint": {
+    "mean": 0.008871218779525755,
+    "max": 0.04991630740054376
+   },
+   "reference": {
+    "mean": 0.008871218779525755,
+    "max": 0.04991630740054376
+   }
+  },
+  {
+   "decision": "IP after check",
+   "blueprint": {
+    "mean": 0.00831599431394231,
+    "max": 0.039456157042288
+   },
+   "reference": {
+    "mean": 0.00831599431394231,
+    "max": 0.039456157042288
+   }
+  }
+ ],
+ "resolves": [
+  {
+   "key": "bet_82.5_call_-2c",
+   "lineReach": 0.1249610020966374,
+   "gain": [
+    0.14389576908395804,
+    0.19474015294058628
+   ]
+  },
+  {
+   "key": "bet_82.5_call_-7c",
+   "lineReach": 0.1249610020966374,
+   "gain": [
+    0.11100149090455413,
+    0.12578345699470636
+   ]
+  },
+  {
+   "key": "bet_82.5_call_-Qs",
+   "lineReach": 0.1249610020966374,
+   "gain": [
+    0.17959442684089066,
+    0.28637681066985915
+   ]
+  },
+  {
+   "key": "check_bet_41.25_call_-2c",
+   "lineReach": 0.05418120349237849,
+   "gain": [
+    0.18527285655932682,
+    0.19164809163388768
+   ]
+  },
+  {
+   "key": "check_bet_41.25_call_-7c",
+   "lineReach": 0.05418120349237849,
+   "gain": [
+    0.08383820028746415,
+    0.07246582678076767
+   ]
+  },
+  {
+   "key": "check_bet_41.25_call_-Qs",
+   "lineReach": 0.05418120349237849,
+   "gain": [
+    0.16357485839959987,
+    0.15420465817161144
+   ]
+  },
+  {
+   "key": "check_check_-2c",
+   "lineReach": 0.476598546648886,
+   "gain": [
+    0.617714798779519,
+    0.8719583445256744
+   ]
+  },
+  {
+   "key": "check_check_-7c",
+   "lineReach": 0.476598546648886,
+   "gain": [
+    1.4349000786938364,
+    0.37924835048812505
+   ]
+  },
+  {
+   "key": "check_check_-Qs",
+   "lineReach": 0.476598546648886,
+   "gain": [
+    0.5290596412086032,
+    0.5997332427927473
+   ]
+  }
+ ],
+ "resolveGain": [
+  0.664978387302668,
+  0.4984994296402221
+ ]
+}

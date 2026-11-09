@@ -1,0 +1,116 @@
+{
+ "tag": "monotone-none",
+ "storageBytes": 196553108,
+ "peakRss": 375373824,
+ "engine": "wasm",
+ "seconds": 82.55666655299999,
+ "iterations": 480,
+ "exploitability": 0.04319741067703316,
+ "best": 0.04319741067703316,
+ "history": [
+  {
+   "iterations": 20,
+   "seconds": 3.9447980060000005,
+   "exploitability": 15.839341779533656
+  },
+  {
+   "iterations": 40,
+   "seconds": 7.161173262999999,
+   "exploitability": 3.424990223490684
+  },
+  {
+   "iterations": 80,
+   "seconds": 13.341470080999999,
+   "exploitability": 0.950965664196386
+  },
+  {
+   "iterations": 120,
+   "seconds": 19.470117426,
+   "exploitability": 0.530620089137462
+  },
+  {
+   "iterations": 160,
+   "seconds": 25.853920657000003,
+   "exploitability": 0.4597279686852641
+  },
+  {
+   "iterations": 200,
+   "seconds": 31.969806846000004,
+   "exploitability": 0.31442491835426317
+  },
+  {
+   "iterations": 240,
+   "seconds": 38.092729092,
+   "exploitability": 0.22085999462375921
+  },
+  {
+   "iterations": 280,
+   "seconds": 45.05785161,
+   "exploitability": 0.15591692531656176
+  },
+  {
+   "iterations": 320,
+   "seconds": 53.263631221000004,
+   "exploitability": 0.11209156461167127
+  },
+  {
+   "iterations": 360,
+   "seconds": 61.613722227,
+   "exploitability": 0.08400713466975694
+  },
+  {
+   "iterations": 400,
+   "seconds": 69.237802178,
+   "exploitability": 0.06560345485622061
+  },
+  {
+   "iterations": 440,
+   "seconds": 76.037291668,
+   "exploitability": 0.05263147681982358
+  },
+  {
+   "iterations": 480,
+   "seconds": 82.55652645599999,
+   "exploitability": 0.04319741067703316
+  }
+ ],
+ "rootError": [
+  {
+   "mae": 0,
+   "max": 0
+  },
+  {
+   "mae": 0,
+   "max": 0
+  }
+ ],
+ "loss": [
+  {
+   "decision": "OOP at root",
+   "blueprint": {
+    "mean": 0.04684679070135949,
+    "max": 0.3922044580100419
+   },
+   "reference": {
+    "mean": 0.04684679070135949,
+    "max": 0.3922044580100419
+   }
+  },
+  {
+   "decision": "IP after check",
+   "blueprint": {
+    "mean": 0.02479598233976706,
+    "max": 0.20305978299799676
+   },
+   "reference": {
+    "mean": 0.02479598233976706,
+    "max": 0.20305978299799676
+   }
+  }
+ ],
+ "resolves": [],
+ "resolveGain": [
+  null,
+  null
+ ]
+}

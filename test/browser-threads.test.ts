@@ -33,6 +33,15 @@ const SPOTS: Record<string, { config: SpotConfig; iterations: number; options?: 
 		},
 		iterations: 30,
 	},
+	// Issue #85: shared river storage with runout buckets, as the phone blueprint runs.
+	'two-tone flop, shared histories, buckets': {
+		config: {
+			board: 'Ts 9s 4h', pot: 60, stack: 100,
+			oop: 'AA,KK,QQ,AKs,AQs,KQs,76s,65s', ip: 'JJ,TT,99,AJs,KJs,QJs,JTs,T9s',
+			betSizes: [[0.66]], maxRaises: 1, shareHistories: true, runoutBuckets: 3,
+		},
+		iterations: 30,
+	},
 	// Issue #99: the sampled solve's state is in the threads' shared memory.
 	'two-tone flop, chance-sampled': {
 		config: {
@@ -42,6 +51,16 @@ const SPOTS: Record<string, { config: SpotConfig; iterations: number; options?: 
 		},
 		iterations: 30,
 		options: { approximations: { chanceSampling: { p: 0.4 } } },
+	},
+	// Both: the phone blueprint's recipe, sampled on threads.
+	'two-tone flop, shared histories, buckets, chance-sampled': {
+		config: {
+			board: 'Ts 9s 4h', pot: 60, stack: 100,
+			oop: 'AA,KK,QQ,AKs,AQs,KQs,76s,65s', ip: 'JJ,TT,99,AJs,KJs,QJs,JTs,T9s',
+			betSizes: [[0.66]], maxRaises: 1, shareHistories: true, runoutBuckets: 3,
+		},
+		iterations: 30,
+		options: { approximations: { chanceSampling: {} } },
 	},
 };
 
