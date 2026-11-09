@@ -163,14 +163,16 @@ for (const workers of workerList) {
 		checks.slice(i).every((d) => d.loss.every((x, k) => Math.abs(x - last.loss[k]) <= 0.01)),
 	);
 	const target = checks.findIndex((c) => c.exploitability <= 0.3);
+	// Every test holds trivially at the last check, which proves nothing: count that as never.
+	const proven = (i: number): number => (i === checks.length - 1 ? -1 : i);
 	console.log(
 		`${boardName} ${shareName}${approxNames.length ? ` +${approxNames.join('+')}` : ''}, ${out.workers} thread(s), ${out.engine}: ` +
 			`storage ${(out.estimateBytes / MiB).toFixed(0)} MiB, renderer peak RSS ${(rss / MiB).toFixed(0)} MiB, ` +
 			`${(last.solveMs / last.iterations).toFixed(0)} ms/iteration`,
 	);
 	console.log(
-		`  exploitability plateau at ${at(plateau)} (${checks[Math.max(plateau, 0)].exploitability.toFixed(3)}%); ` +
-			`0.3% at ${at(target)}; root play still (<1% moved) at ${at(still)}; root loss settled (±0.01%) at ${at(settled)}; ` +
+		`  exploitability plateau at ${at(proven(plateau))} (${checks[Math.max(plateau, 0)].exploitability.toFixed(3)}%); ` +
+			`0.3% at ${at(target)}; root play still (<1% moved) at ${at(proven(still))}; root loss settled (±0.01%) at ${at(proven(settled))}; ` +
 			`final ${last.exploitability.toFixed(3)}%, root loss ${last.loss.map((x) => x.toFixed(4)).join(' / ')}% at ${last.iterations} it`,
 	);
 	console.log(

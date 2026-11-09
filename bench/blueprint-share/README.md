@@ -26,3 +26,35 @@ blueprint stopped at 0.3% of pot: as a reference its own root play lost
 reference was solved again to 0.045%. `coarse` changed nothing (identical
 output): the blueprint's own gap of 3 already folds every runout the ranges
 allow, so `coarseStart` finds no coarser copy and does not run.
+
+## Results (As Kh 7d)
+
+Storage (`out/census.md`): sharing the river saves 4.1× on all three flops,
+196 river decisions keeping 44 blocks; As Kh 7d at `runoutBuckets: 3` goes
+from 707 MiB to 173 MiB at 32 bits.
+
+Accuracy against the unshared blueprint (Node, 4 threads; what sharing
+costs, not distance to the full tree):
+
+| run | root play loss, OOP / IP, % pot | root EV error mean (max) | re-solve gain, OOP / IP refined |
+|---|---|---|---|
+| unshared (the reference's own) | 0.009 / 0.008 | — | 0.67 / 0.50 |
+| river, 400 it | 0.015 / 0.014 | 0.57 / 0.46 (2.2 / 2.7) | 3.0 / 2.2 |
+| river + sampling, 800 it | 0.011 / 0.010 | 0.42 / 0.46 (2.1 / 3.1) | 2.2 / 2.3 |
+| river, 120 it | 0.054 / 0.030 | 1.27 / 1.60 (3.5 / 5.2) | 7.2 / 3.7 |
+| turn+river, 400 it | 0.023 / 0.013 | 0.65 / 0.87 (2.8 / 4.5) | 4.3 / 3.9 |
+
+Chromium (`browser-*.log`; solving time only):
+
+| run | threads | ms/it | peak RSS | 0.3% | root still | root loss settled |
+|---|---|---|---|---|---|---|
+| unshared | 1 | 1490 | 850 MiB | 331 s | 452 s | 481 s |
+| unshared | 4 | 450 | 860 MiB | 115 s | 134 s | 151 s |
+| river | 4 | 458 | 327 MiB | never (plateau 2.8% at 74 s) | 185 s | 138 s |
+| river + sampling | 1 | 238 | 453 MiB | never (plateau 3.2% at 95 s) | 86 s | 109 s |
+
+Against the pass mark: memory passes (327 MiB on the WebAssembly engine);
+the settled root play is within a few thousandths of a percent of pot of the
+unshared blueprint's; 60 s on 4 threads is not met, by shared or unshared.
+Two-tone and monotone have unshared references (`*-none.*`) but were not
+timed or scored before the work stopped.
