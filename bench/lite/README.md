@@ -12,6 +12,12 @@ blueprint from `bench/blueprint-share/measure.ts <board> none` with
 | `t0.ts <lite\|unshared>` | against exact T₀ on As Kh 7d (`bench/adaptive/results/rainbow-T0.json`): the simplification's cost |
 | `napkin.ts [count] [variant]` | napkinpoker's postflop-solver spots: root play at the stored per-action EVs |
 
+Variants include `keep=<MiB>` (`keepBudget` through `keepWithin`, `PICK` picking
+iterations, on the clock) and `i16` (16-bit storage with `wasmStorage`, the budget and
+re-solves too). `browser.ts` also splits the renderer's peak by phase: the pick, the
+blueprint, the re-solve (`GC=1` collects garbage after the pick, a diagnostic no caller
+can do).
+
 The results are in `src/lite.ts` (`solveLite`'s notes), the README's "Lite mode" and
 the `Approximations` notes in `src/index.ts`.
 
@@ -30,3 +36,19 @@ the `Approximations` notes in `src/index.ts`.
 
 The re-solve warm-start numbers in `trimmed/acc-rainbow.log` come from a prototype
 since removed (see the `Approximations` notes).
+
+`out/keep/` is issue #113, `keepBudget` at 150 MiB with `i16`:
+
+- `acc-*-keep150-i16.log`: Node, 4 threads, at the settle point.
+- `browser-*.log`: Chromium on 1, 2 and 4 threads; `browser-rainbow-800.log` runs to 800
+  iterations.
+- `diag-*.log`: what holds the remaining re-solve gain. Monotone keeps every line, so
+  `unshared`, `unshared,nosample` and `keep=150,i16,nosample` separate 16 bits, sampling
+  and the stop; `-800` runs to 800 iterations (`RULE=none CAP=800`).
+- `mem-rainbow-*.log`: the peak by phase on 4 threads: lite as it was (`base`), `i16`
+  shared, and the hybrid with the pick sampling both turn and river (`bothpick`, with and
+  without `GC=1`) and the turn only (`turnpick`, what `keepWithin` does).
+
+The `acc-*` logs and the `diag-*` logs but two-tone's used a pick sampling both rounds; it kept the same
+lines as the turn-only pick on every flop, so their hybrid solves are the same.
+

@@ -393,10 +393,34 @@ Peak memory includes a re-solve. Against exact solves of the full game:
 
 `laterRaise: true` keeps a turn and river raise: 1.74 times the time and 546 MiB.
 `noDonk` and `flopMaxRaises: 2` save 44% an iteration together, but on Ts 9s 4h they
-quadrupled the re-solve gain. So they are off unless asked for. To recover turn
-re-solves instead, keep the most-reached flop lines unshared: `shareHistories:
-{ keepLines: linesWithin(...) }` (issue #101; see [History sharing](#history-sharing-approximate-for-memory)). `bench/lite/` has the scripts and
-logs.
+quadrupled the re-solve gain. So they are off unless asked for.
+
+**Better turn re-solves: `keepBudget`.** It keeps the most-reached flop lines unshared, as
+many as a storage budget allows (issue #113; see [History
+sharing](#history-sharing-approximate-for-memory)). The lines are ranked on a short solve
+of the blueprint with its river checked down, and the blueprint is solved with them kept:
+
+```ts
+import { wasmStorage } from 'poker-flopsolve/wasm-storage';
+
+const lite = solveLite(spot, { workers: 4, keepBudget: 150 * 2 ** 20, precision: 'i16', wasmStorage });
+lite.kept; // ['check check /', 'bet 18.15 call /', 'bet 82.5 call /'] on As Kh 7d
+```
+
+Measured the same way, the ranking included in the time:
+
+| flop | kept | settled, 1 / 2 / 4 threads | peak memory, 1 / 2 / 4 | root play loss, % pot | re-solve gain, % |
+|---|---|---|---|---|---|
+| As Kh 7d | 3 lines | 123 / 61 / 35 s | 489 / 509 / 534 MiB | 0.026 / 0.011 | 2.5 / 1.7 |
+| Ts 9s 4h | 6 lines | 69 / 37 / 22 s | 437 / 463 / 469 MiB | 0.115 / 0.063 | 1.9 / 1.3 |
+| Ks 9s 4s | all 19 | 32 / 19 / 11 s | 290 / 301 / 317 MiB | 0.056 / 0.036 | 2.6 / 1.9 |
+
+The root play is unchanged, and the re-solve gain falls by a third to a half. The rest is
+the early stop: the root settles before the ranges reaching the turn do. With every line
+kept, monotone still re-solved at 2.6 / 1.9 when it settled, but at 1.0 / 0.6 after 800
+iterations. Run longer with `settle: false, iterations: 800`: As Kh 7d then re-solves at
+1.3 / 1.1 in 59 s on 4 threads (533 MiB), where plain sharing gives 2.2 / 2.4.
+`bench/lite/` has the scripts and logs.
 
 ## In a browser
 

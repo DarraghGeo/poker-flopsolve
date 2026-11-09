@@ -72,12 +72,14 @@ export interface SolveLiteOptions
 	/**
 	 * Keep the most-reached first-round lines' later streets unshared
 	 * (`ShareHistories.keepLines`, issue #101), as many as this many bytes
-	 * of storage at `precision` (default 'f32') allow. The lines are picked
-	 * with `linesWithin` from a short solve of the cheap copy, `checkedDown`
-	 * of the blueprint; that is closed and the hybrid solved from cold.
-	 * Throws if the shared blueprint alone is over the budget, or if it
-	 * shares nothing. Unset, off. What it buys and costs is in `solveLite`'s
-	 * notes.
+	 * of storage at `precision` (default 'f32') allow; `keepWithin` picks
+	 * them, and the blueprint with them kept is solved from cold. It is for
+	 * turn re-solves: on issue #47's flops it cut their gain by a third to a
+	 * half at the settle point, more when run longer, root play unchanged.
+	 * 150 MiB with `precision: 'i16'` and `wasmStorage` kept 3–19 lines and
+	 * peaked at 317–534 MiB in Chromium, re-solve included. Throws if the
+	 * shared blueprint alone is over the budget, or if it shares nothing.
+	 * Unset, off. Measures are in `solveLite`'s notes.
 	 */
 	readonly keepBudget?: number;
 	/** Iterations of the picking solve under `keepBudget`. Default 80, as issue #101 measured. */
@@ -255,12 +257,40 @@ function nearest(row: readonly BetSize[], target: number): BetSize[] {
  *
  * `laterRaise`'s cost is on it; the trims `flopMaxRaises` and `noDonk`, and
  * what was rejected, are in `Approximations`' notes in `index.ts`.
+ *
+ * `keepBudget` (issue #113) recovers part of the re-solve gain above. With
+ * `keepBudget: 150 * 2 ** 20, precision: 'i16', wasmStorage` (the recipe
+ * issue #101 measured), the same measures, the pick included in the time:
+ *
+ * | flop | kept, storage | settled | Chromium, 1 / 2 / 4 threads | peak RSS, 1 / 2 / 4 | root play loss | per-hand EV error | re-solve gain |
+ * |---|---|---|---|---|---|---|---|
+ * | As Kh 7d | 3 lines, 150 MiB | 440 it | 123 / 61 / 35 s | 489 / 509 / 534 MiB | 0.026 / 0.011 | 0.58 / 0.70 | 2.54 / 1.72 |
+ * | Ts 9s 4h | 6 lines, 141 MiB | 320 it | 69 / 37 / 22 s | 437 / 463 / 469 MiB | 0.115 / 0.063 | 0.33 / 0.27 | 1.93 / 1.28 |
+ * | Ks 9s 4s | all 19, 97 MiB | 360 it | 32 / 19 / 11 s | 290 / 301 / 317 MiB | 0.056 / 0.036 | 0.82 / 1.02 | 2.61 / 1.91 |
+ *
+ * Root play is as without it; the re-solve gain falls by a third to a half,
+ * but stays well over the unshared blueprint's 0.4–0.7. What holds the rest
+ * is the stop, not the sharing: monotone keeps every line, and at 16 bits
+ * or 32 alike it re-solves at 2.6 / 1.9 when its root play settles, 1.25 /
+ * 0.68 unsampled (220 iterations, 37 s on 4 threads in Node), and 0.99 /
+ * 0.64 run sampled to 800 iterations (20 s). At 800 iterations (`settle:
+ * false, iterations: 800`) As Kh 7d re-solves at 1.33 / 1.14 in 59 s on 4
+ * threads in Chromium, peaking at 533 MiB, and Ts 9s 4h at 1.10 / 0.92 in
+ * 47 s (Node); plain sharing run as long gives 2.23 / 2.41 on As Kh 7d. A
+ * re-solve times as without it.
+ *
+ * Its memory: the picking solve's WebAssembly memory is freed only once the
+ * caller yields to the event loop, so it stays resident beside the
+ * blueprint's. The pick samples the turn but not the checked-down river,
+ * whose baselines would be most of it (182 MiB resident on As Kh 7d sampled
+ * on both, 56 on the turn alone, the same lines kept on all three flops);
+ * sampling both, rainbow peaked at 661 MiB on 4 threads.
  */
 export function solveLite(config: SpotConfig, options: SolveLiteOptions = {}): LiteSolution {
 	const sampling = options.sampling === undefined ? {} : options.sampling;
 	const settle = options.settle === undefined ? {} : options.settle;
 	const approximations = sampling ? { approximations: { chanceSampling: sampling } } : {};
-	const blueprint = keepWithin(liteConfig(config, options), options, approximations);
+	const blueprint = keepWithin(liteConfig(config, options), options);
 	const share = blueprint.shareHistories;
 	const kept = typeof share === 'object' ? [...(share.keepLines ?? [])] : [];
 	const solution = solve(defineSpot(blueprint), {
@@ -302,12 +332,14 @@ export function solveLite(config: SpotConfig, options: SolveLiteOptions = {}): L
 }
 
 /**
- * `blueprint` keeping the lines `options.keepBudget` allows, picked from a
- * short solve of `checkedDown(blueprint)`; `blueprint` itself without a
- * budget. The picking solve is done with, and its storage let go, before
- * the caller solves the result.
+ * `blueprint` keeping the lines `options.keepBudget` allows, picked with
+ * `linesWithin` from `options.pickIterations` of `checkedDown(blueprint)`;
+ * `blueprint` itself without a budget. What `solveLite` solves; exported so
+ * a caller stepping its own run can do the same. The picking solve uses
+ * `options`' `workers`, `precision`, `wasmStorage`, `algorithm` and
+ * `sampling`, the last on every round but the checked-down one.
  */
-function keepWithin(blueprint: SpotConfig, options: SolveLiteOptions, approximations: Pick<SolveOptions, 'approximations'>): SpotConfig {
+export function keepWithin(blueprint: SpotConfig, options: SolveLiteOptions = {}): SpotConfig {
 	const budget = options.keepBudget;
 	if (budget === undefined) return blueprint;
 	if (!(budget > 0)) throw new Error(`keepBudget must be a number of bytes above 0; got ${budget}`);
@@ -315,13 +347,29 @@ function keepWithin(blueprint: SpotConfig, options: SolveLiteOptions, approximat
 	if (!(Number.isInteger(its) && its >= 1)) throw new Error(`pickIterations must be a whole number of at least 1; got ${its}`);
 	const asked = blueprint.shareHistories;
 	if (!asked) throw new Error('keepBudget keeps lines out of shareHistories; this blueprint shares nothing');
-	const picked = solve(defineSpot(checkedDown(blueprint)), {
+	const cheap = defineSpot(checkedDown(blueprint));
+	const picked = solve(cheap, {
 		iterations: its,
-		...approximations,
+		...pickSampling(options.sampling === undefined ? {} : options.sampling, cheap.runouts.rounds),
 		...pick(options, ['workers', 'precision', 'wasmStorage', 'algorithm']),
 	});
 	const keepLines = linesWithin(picked, budget, { config: blueprint, precision: options.precision ?? 'f32' });
 	return { ...blueprint, shareHistories: { ...(asked === true ? {} : asked), keepLines } };
+}
+
+/**
+ * The picking solve's sampling: the blueprint's, but not on the last round,
+ * which `checkedDown` leaves without bets. Its baselines are most of a
+ * sampled solve's memory (on As Kh 7d, 126 of 182 MiB), and `solveLite`
+ * cannot let the picking solve's memory go before the blueprint starts, as
+ * WebAssembly memory is freed only once the caller yields. Sampling the
+ * turn alone ranked the same lines on all three of issue #47's flops.
+ */
+function pickSampling(sampling: SamplingOptions | false, rounds: number): { approximations?: { chanceSampling: SamplingOptions } } {
+	if (!sampling) return {};
+	const asked = sampling.rounds ?? Array.from({ length: rounds - 1 }, (_, i) => i + 1);
+	const kept = asked.filter((r) => r < rounds - 1);
+	return kept.length > 0 ? { approximations: { chanceSampling: { ...sampling, rounds: kept } } } : {};
 }
 
 /**

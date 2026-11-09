@@ -11,8 +11,8 @@
  * `raise` (one turn/river raise), `p=<x>` (sampling
  * probability), `turn+river` (share the turn too), `compact` (8-bit
  * `compactStorage` on the WebAssembly engine), `keep=<MiB>` (issue #113:
- * `solveLite`'s `keepBudget`, the lines picked from `PICK`, default 80,
- * iterations of `checkedDown`'s copy, on the clock), `i16` (16-bit storage
+ * `solveLite`'s `keepBudget` through `keepWithin`, `PICK` (default 80)
+ * picking iterations, on the clock), `i16` (16-bit storage
  * with `wasmStorage`, the re-solves too, and the budget at 16 bits).
  *
  * Environment:
@@ -41,7 +41,7 @@
  */
 
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { checkedDown, COMBOS, createRun, defineSpot, linesWithin, liteConfig, rootPlay, rootPlayMovement, solve, storageCost } from '../../src/index.ts';
+import { COMBOS, createRun, defineSpot, keepWithin, liteConfig, rootPlay, rootPlayMovement, storageCost } from '../../src/index.ts';
 import type { Approximations, LiteOptions, RootPlay, Solution, SolveRun, SpotConfig } from '../../src/index.ts';
 import { Mode } from '../../src/cfr.ts';
 import { wasmStorage } from '../../src/wasm-storage.ts';
@@ -83,17 +83,16 @@ const PICK = Number(process.env.PICK ?? 80);
 const full = fullTree(boardName);
 const liteBlueprint: SpotConfig = { ...liteConfig(full, lite), ...(compact ? { compactStorage: {} } : {}) };
 // `solveLite`'s keepBudget, done here so the pick can be timed.
-let pickMs = 0;
-let kept: string[] = [];
-if (keepArg) {
-	const t = performance.now();
-	const picked = solve(defineSpot(checkedDown(liteBlueprint)), { iterations: PICK, workers: WORKERS, approximations, ...storage });
-	kept = linesWithin(picked, Number(keepArg.slice(5)) * MiB, { config: liteBlueprint, precision: I16 ? 'i16' : 'f32' });
-	pickMs = performance.now() - t;
-	console.log(`kept ${kept.length} line(s) in ${(pickMs / 1000).toFixed(1)} s: ${kept.join(' | ')}`);
-}
-const share = liteBlueprint.shareHistories === true ? {} : liteBlueprint.shareHistories;
-const config: SpotConfig = keepArg ? { ...liteBlueprint, shareHistories: { ...share, keepLines: kept } } : liteBlueprint;
+const pickStart = performance.now();
+const config: SpotConfig = keepArg
+	? keepWithin(liteBlueprint, {
+			keepBudget: Number(keepArg.slice(5)) * MiB, pickIterations: PICK, workers: WORKERS, ...storage,
+			sampling: approximations.chanceSampling ?? false,
+		})
+	: liteBlueprint;
+const pickMs = keepArg ? performance.now() - pickStart : 0;
+const kept = typeof config.shareHistories === 'object' ? [...(config.shareHistories.keepLines ?? [])] : [];
+if (keepArg) console.log(`kept ${kept.length} line(s) in ${(pickMs / 1000).toFixed(1)} s: ${kept.join(' | ')}`);
 const later = {
 	betSizes: full.betSizes, raiseSizes: full.raiseSizes, maxRaises: full.maxRaises, allowAllIn: full.allowAllIn, maxBytes: full.maxBytes,
 	// The blueprint forbids donk bets; T's betting does not.
