@@ -11,7 +11,7 @@
 import { COMBO_CARDS, COMBOS, comboIndex, formatCards, parseCards } from './cards.ts';
 import type { BetSize, RaiseSizes, Tree } from './tree.ts';
 import type { PerPlayer } from './tree.ts';
-import { ACTION_LABELS, ActionKind, buildTree, forPlayer, isPerPlayer, mapPlayers, NodeKind, raisesPerRound } from './tree.ts';
+import { actionLabel, ActionKind, buildTree, forPlayer, isPerPlayer, mapPlayers, NodeKind, raisesPerRound } from './tree.ts';
 import type { Runouts } from './runouts.ts';
 import type { ResolvedBoard } from './runouts.ts';
 export { rankSwap } from './runouts.ts';
@@ -122,6 +122,42 @@ export interface SpotConfig {
 	 * with 0.1, sizes 0.33 and 0.4 become one 0.365. Default 0, none.
 	 */
 	readonly mergeSizes?: number;
+	/**
+	 * Bets, raises and shoves to cut from the tree, with everything below
+	 * them: each the readable path of the node the action leads to, exactly as
+	 * `Solution.path` writes it — `"check bet 18.15"`, `"bet 41.25 raise
+	 * 133.31"`, `"check check / bet 18.15"`, chips being the actor's total
+	 * investment after the action and `/` a deal. Only the line named goes; the
+	 * same size elsewhere stays. Checks, calls and folds cannot be cut, and a
+	 * path that names no such action in the tree is refused.
+	 *
+	 * For a budgeted tree: keep three sizes where they earn their memory, one
+	 * where they do not. A tree's memory is almost all on the river, and each
+	 * flop or turn action multiplies the river subtrees below it, so cutting a
+	 * line saves what its whole subtree stores. Default none; unset, the tree
+	 * is the one the other settings build, unchanged.
+	 */
+	readonly removeActions?: readonly string[];
+	/**
+	 * Thin the bet sizes to a shape that keeps most of what the full ones are
+	 * worth in a fraction of the memory. Every size stays at the root, where
+	 * out of position opens the first round. Everywhere else a decision keeps
+	 * one bet, raise or shove: the one nearest three quarters of the pot, a
+	 * shove where that would be one. Opening the last round after an earlier
+	 * round saw a bet, sizes above the pot and the shove stay as well.
+	 *
+	 * The shape is what growing sizes one at a time by their value per byte
+	 * picked on As Kh 7d and Ks 9s 4s (issue #51). Measured on As Kh 7d, pot
+	 * 55, stack 975, sizes 0.33 / 0.75 / 1.5 with shove-only raises and two
+	 * aggressions: see the `Approximations` notes for its memory and error.
+	 * It is a fixed rule, so it costs nothing to apply. A subgame from
+	 * `Solution.subgameAt` gets the full sizes back unless its betting sets
+	 * this again, and then it is thinned as a tree of its own: bets on the
+	 * streets before it do not count, so a river after a bet on the flop
+	 * keeps only the 0.75 size, where the whole tree also kept its big sizes
+	 * and shove. Default false; unset, the tree is unchanged.
+	 */
+	readonly thinSizes?: boolean;
 	/** Refuse a range wider than this many combinations. */
 	readonly maxCombos?: number;
 	/**
@@ -503,6 +539,8 @@ export function defineSpot(config: SpotConfig): Spot {
 			allInThreshold: config.allInThreshold,
 			noDonk: config.noDonk,
 			mergeSizes: config.mergeSizes,
+			removeActions: config.removeActions,
+			thinSizes: config.thinSizes,
 			chipScale,
 			minRaiseUnits: chipScale,
 		},
@@ -1156,6 +1194,33 @@ export interface Approximations {
 	 * minutes on 4 threads to 0.23%), and T's turn and river sizes would
 	 * need grafts per flop line, which multiplies the solves.
 	 *
+	 * Growing bet sizes adaptively to a byte budget (#51) was built and
+	 * measured. Only the fixed shape it found is offered, as
+	 * `SpotConfig.thinSizes`; `bench/adaptive/` has the growth. Growth starts
+	 * from one size per decision (0.75, a shove facing a bet where there is
+	 * no sized raise). Each round, it probes every cut size in a tree with it
+	 * added, warm-started from the current solve and stepped 60 iterations.
+	 * It scores each by its first-order gain per byte (Σ reach · σ · (Q −
+	 * the best kept action's Q)), whose rank correlation with the true gain
+	 * was 0.81 on a turn spot (0.71 for the best-response gain). It then adds
+	 * the best until the round's share of the budget is spent, and re-solves.
+	 * On As Kh 7d (bench ranges, pot 55, stack 975, 0.33 / 0.75 / 1.5 with a
+	 * shove, shove-only raises, 2 aggressions, 5.8 GiB), 1.7 GiB grown in 4
+	 * rounds had root EVs 1.0 / 1.2% of pot off the exact solve per
+	 * combination (3.9% at most), with 90% of OOP's range picking the same
+	 * size. The issue's static rule (3 sizes on flop and turn opening bets) had
+	 * 1.6 / 1.3% and 13.5% in 2.0 GiB, and `thinSizes` 1.45 / 1.74% and
+	 * 5.6–6.3% in 1.3 GiB. But the probes need a second tree beside the
+	 * current one: the process peaked at 7.5 GiB (8.7 GiB grown from three
+	 * flop sizes, and still 4.8 GiB with probes capped at 0.9 GiB for a
+	 * 0.85 GiB tree), and growth took 31 to 43 minutes on 3 threads before
+	 * the final solve. On Ks 9s 4s, grown from one size, it never added the
+	 * flop sizes it needed and ended worse than the fixed rule (2.9 / 4.1%
+	 * against 2.1 / 1.9%). Its own census of the exact solve also showed that
+	 * how often a size is used is a poor guide to what it is worth. The flop's
+	 * 0.75 bet was used 5% of the time for 0.005% of pot in 29% of the
+	 * storage, while river shove-raises, used 3% of the time, were worth 2%.
+	 *
 	 * Of the storage compressions issue #50 measured, `compactStorage` offers
 	 * 8-bit regrets and sums; these were left out. Against the bench flop's
 	 * 0.016% of pot at 320 iterations with the full average:
@@ -1310,9 +1375,24 @@ export interface Solution {
 export type SubgameBetting = Partial<
 	Pick<
 		SpotConfig,
-		'betSizes' | 'raiseSizes' | 'maxRaises' | 'allowAllIn' | 'allInThreshold' | 'noDonk' | 'mergeSizes' | 'maxCombos' | 'maxBytes'
+		| 'betSizes'
+		| 'raiseSizes'
+		| 'maxRaises'
+		| 'allowAllIn'
+		| 'allInThreshold'
+		| 'noDonk'
+		| 'mergeSizes'
+		| 'removeActions'
+		| 'thinSizes'
+		| 'maxCombos'
+		| 'maxBytes'
 	>
 >;
+
+/** Subgame settings that shape the tree, which a carried-over cut would not fit. */
+const TREE_SETTINGS = [
+	'betSizes', 'raiseSizes', 'maxRaises', 'allowAllIn', 'allInThreshold', 'noDonk', 'mergeSizes', 'thinSizes',
+] as const satisfies readonly (keyof SubgameBetting)[];
 
 export interface StrategyView {
 	readonly node: number;
@@ -1907,12 +1987,18 @@ function makeSolution(
 		}
 	}
 
-	const label = (edge: number): string => {
-		const kind = tree.edgeAction[edge];
-		const amount = tree.edgeTarget[edge] / spot.chipScale;
-		return kind >= ActionKind.Bet ? `${ACTION_LABELS[kind]} ${amount}` : ACTION_LABELS[kind];
-	};
+	const label = (edge: number): string => actionLabel(tree.edgeAction[edge], tree.edgeTarget[edge], spot.chipScale);
 
+	const path = (node: number): string => {
+		const steps: string[] = [];
+		let current = node;
+		while (parent[current] >= 0) {
+			const owner = parent[current];
+			steps.push(tree.kind[owner] === NodeKind.Decision ? label(viaEdge[current]) : '/');
+			current = owner;
+		}
+		return steps.reverse().join(' ') || '(root)';
+	};
 	const reachAt = (node: number, board: number, player: 0 | 1): Float64Array => {
 		const index = spot.players[player];
 		const reach = new Float64Array(COMBOS);
@@ -1968,16 +2054,7 @@ function makeSolution(
 			for (let a = 0; a < actions; a++) names.push(label(tree.firstEdge[node] + a));
 			return { node, board, player: owner, actions: names, combos: spot.players[owner].combos, probs };
 		},
-		path(node) {
-			const steps: string[] = [];
-			let current = node;
-			while (parent[current] >= 0) {
-				const owner = parent[current];
-				steps.push(tree.kind[owner] === NodeKind.Decision ? label(viaEdge[current]) : '/');
-				current = owner;
-			}
-			return steps.reverse().join(' ') || '(root)';
-		},
+		path,
 		reachAt,
 		subgameAt(node, board, betting = {}) {
 			const opensRound = node === 0 || (parent[node] >= 0 && tree.kind[parent[node]] === NodeKind.Chance);
@@ -2003,6 +2080,30 @@ function makeSolution(
 				value === undefined ? undefined : (mapPlayers(value, (side) => later(side, listed(side)) as T) as PerPlayer<T>);
 			const rows = laterEach(source.betSizes, () => true) as SpotConfig['betSizes'];
 			const raiseRows = laterEach(source.raiseSizes, (side) => side !== undefined && raisesPerRound(side));
+			// Cuts below the node carry over, re-rooted at it, while the tree
+			// keeps the old betting; new betting builds a tree they need not fit.
+			// Settings read with `??` fall back when given as undefined, and an
+			// unset thinSizes is the full tree the cuts were made on.
+			const keeps = (key: keyof SubgameBetting): boolean =>
+				key === 'thinSizes' ? !betting.thinSizes : betting[key] === undefined && ['betSizes', 'maxRaises', 'allowAllIn'].includes(key);
+			const reshaped = TREE_SETTINGS.some((key) => key in betting && !keeps(key));
+			const prefix = node === 0 ? '' : `${path(node)} `;
+			// Chips in a path are the actor's total investment, which a subgame
+			// counts from its own start: each amount drops by what is already in.
+			const rebase = (step: string): string => {
+				const [label, chips] = step.split(' ');
+				return chips === undefined ? step : `${label} ${(Math.round(Number(chips) * spot.chipScale) - invested) / spot.chipScale}`;
+			};
+			const cuts = source.removeActions
+				?.filter((line) => line.startsWith(prefix))
+				.map((line) => line.slice(prefix.length).split(' ').reduce<string[]>((steps, word, i, words) => {
+					// Words come as single actions ("check", "/") or a label and its chips.
+					if (/^-?[\d.]+$/.test(word)) steps[steps.length - 1] = rebase(`${words[i - 1]} ${word}`);
+					else steps.push(word);
+					return steps;
+				}, []).join(' '));
+			const removeActions =
+				'removeActions' in betting ? betting.removeActions : reshaped || !cuts || cuts.length === 0 ? undefined : cuts;
 
 			return {
 				board: formatCards(cards),
@@ -2017,6 +2118,9 @@ function makeSolution(
 				allInThreshold: 'allInThreshold' in betting ? betting.allInThreshold : laterEach(source.allInThreshold, Array.isArray),
 				noDonk: 'noDonk' in betting ? betting.noDonk : source.noDonk === undefined ? undefined : later(source.noDonk, Array.isArray(source.noDonk)),
 				mergeSizes: 'mergeSizes' in betting ? betting.mergeSizes : source.mergeSizes,
+				...(removeActions ? { removeActions } : {}),
+				// The thinned shape is the whole tree's, so a subgame starts full.
+				...(betting.thinSizes ? { thinSizes: true } : {}),
 				minWeight: source.minWeight,
 				isomorphism: source.isomorphism,
 				maxCombos: 'maxCombos' in betting ? betting.maxCombos : source.maxCombos,
