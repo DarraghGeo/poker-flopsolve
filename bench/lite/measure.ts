@@ -7,7 +7,8 @@
  * Variants (comma-separated, on top of `liteConfig`'s defaults):
  * `nosample` (no chanceSampling), `nodonk`, `flop2` (flop capped at two
  * aggressions), `raise` (one turn/river raise), `p=<x>` (sampling
- * probability), `turn+river` (share the turn too).
+ * probability), `turn+river` (share the turn too), `compact` (8-bit
+ * `compactStorage` on the WebAssembly engine).
  *
  * Environment:
  * - `RULE`: the stop rule, `every:tolerance:patience` (default `20:0.01:2`,
@@ -39,6 +40,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { COMBOS, createRun, defineSpot, liteConfig, rootPlay, rootPlayMovement } from '../../src/index.ts';
 import type { Approximations, LiteOptions, RootPlay, Solution, SolveRun, SpotConfig } from '../../src/index.ts';
 import { Mode } from '../../src/cfr.ts';
+import { wasmStorage } from '../../src/wasm-storage.ts';
 import { resolveSubgame } from '../../src/resolve.ts';
 import { configFromJson, fromJson, lineNode, nodeEvs, openMass, rootEvs, turnBoard } from '../nested/lib.ts';
 import { full as fullTree, type Board } from '../blueprint-share/spots.ts';
@@ -61,13 +63,15 @@ const lite: LiteOptions = {
 	...(variants.includes('turn+river') ? { shareHistories: { fromRound: 1 } } : {}),
 };
 const pArg = variants.find((v) => v.startsWith('p='));
+// 8-bit storage with sums, on the WebAssembly engine.
+const compact = variants.includes('compact');
 const approximations: Approximations = variants.includes('nosample')
 	? {}
 	: { chanceSampling: pArg ? { p: Number(pArg.slice(2)) } : {} };
 const tag = `${boardName}-${variants.length ? variants.join('+') : 'base'}-${WORKERS}t${RULE === '20:0.01:2' ? '' : `-${RULE.replaceAll(':', '_')}`}`;
 
 const full = fullTree(boardName);
-const config: SpotConfig = liteConfig(full, lite);
+const config: SpotConfig = { ...liteConfig(full, lite), ...(compact ? { compactStorage: {} } : {}) };
 const later = {
 	betSizes: full.betSizes, raiseSizes: full.raiseSizes, maxRaises: full.maxRaises, allowAllIn: full.allowAllIn, maxBytes: full.maxBytes,
 };
@@ -108,7 +112,7 @@ const spot = defineSpot(config);
 console.log(
 	`${tag}: ${spot.estimate.decisionNodes} nodes, ${spot.estimate.runouts} runouts, ${(spot.estimate.bytes / MiB).toFixed(0)} MiB f32`,
 );
-const run = createRun(spot, { workers: WORKERS, approximations });
+const run = createRun(spot, { workers: WORKERS, approximations, ...(compact ? { wasmStorage } : {}) });
 interface Check {
 	iterations: number;
 	seconds: number;
