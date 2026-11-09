@@ -491,6 +491,12 @@ export interface Sampling extends SamplingPlan {
 	readonly bytes: number;
 }
 
+/** The rounds chance sampling samples, of a spot with `rounds` betting rounds. */
+export function sampledRounds(options: SamplingOptions, rounds: number): number[] {
+	const asked = options.rounds ?? Array.from({ length: rounds }, (_, r) => r);
+	return asked.filter((r) => r > 0 && r < rounds);
+}
+
 /** Lay out sampling state for a spot. */
 export function planSampling(
 	tree: Tree,
@@ -500,8 +506,7 @@ export function planSampling(
 	options: SamplingOptions,
 ): SamplingPlan {
 	const rounds = new Uint8Array(runouts.rounds);
-	const asked = options.rounds ?? Array.from({ length: runouts.rounds }, (_, r) => r);
-	for (const r of asked) if (r > 0 && r < runouts.rounds) rounds[r] = 1;
+	for (const r of sampledRounds(options, runouts.rounds)) rounds[r] = 1;
 	const boardOffset = new Int32Array(active.roundBase[runouts.rounds] * 2);
 	const perNode = new Float64Array(runouts.rounds);
 	for (let r = 1; r < runouts.rounds; r++) {
@@ -547,16 +552,21 @@ export function samplingBytes(plan: SamplingPlan): number {
 	return (plan.values + plan.walks + plan.blocks) * 4;
 }
 
-/** Sampling state over the given storage, or freshly allocated. */
+/**
+ * Sampling state over the given storage, or freshly allocated by `allocate`
+ * (plain buffers by default; shared ones for a threaded solve, whose threads
+ * each keep the state of their own runouts in it).
+ */
 export function makeSampling(
 	plan: SamplingPlan,
 	storage?: { baseline: Float32Array; lastWalk: Int32Array; lastUpdate: Int32Array },
+	allocate: (bytes: number) => ArrayBuffer | SharedArrayBuffer = (bytes) => new ArrayBuffer(bytes),
 ): Sampling {
 	return {
 		...plan,
-		baseline: storage?.baseline ?? new Float32Array(plan.values),
-		lastWalk: storage?.lastWalk ?? new Int32Array(plan.walks),
-		lastUpdate: storage?.lastUpdate ?? new Int32Array(plan.blocks),
+		baseline: storage?.baseline ?? new Float32Array(allocate(plan.values * 4)),
+		lastWalk: storage?.lastWalk ?? new Int32Array(allocate(plan.walks * 4)),
+		lastUpdate: storage?.lastUpdate ?? new Int32Array(allocate(plan.blocks * 4)),
 		bytes: samplingBytes(plan),
 	};
 }
