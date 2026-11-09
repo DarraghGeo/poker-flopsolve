@@ -6,7 +6,8 @@
  *   node --import tsx bench/lite/browser.ts <rainbow|two-tone|monotone> [variant,...] [workers,...] [cap]
  *
  * Variants as in `measure.ts` (`nosample`, `nodonk`, `flop2`, `raise`,
- * `p=<x>`). `RULE` (`every:tolerance:patience`, default `settle`'s 20:0.01:2)
+ * `p=<x>`, `keep=<MiB>`, `i16`; the pick is on the clock, as `solveLite`
+ * pays for it, and closed before the hybrid starts). `RULE` (`every:tolerance:patience`, default `settle`'s 20:0.01:2)
  * is the stop; `RESOLVE_ITS` the re-solve's iterations (default 300).
  *
  * The page does what `solveLite` does, stepped so it can be timed: a run of
@@ -42,6 +43,10 @@ const lite: LiteOptions = {
 	...(variants.includes('raise') ? { laterRaise: true } : {}),
 };
 const pArg = variants.find((v) => v.startsWith('p='));
+const keepArg = variants.find((v) => v.startsWith('keep='));
+const KEEP_BYTES = keepArg ? Number(keepArg.slice(5)) * MiB : 0;
+const I16 = variants.includes('i16');
+const PICK = Number(process.env.PICK ?? 80);
 const approximations: Approximations = variants.includes('nosample') ? {} : { chanceSampling: pArg ? { p: Number(pArg.slice(2)) } : {} };
 const full = { ...fullTree(boardName), maxBytes: 3.5 * 2 ** 30 };
 // T's betting; the blueprint forbids donk bets, T does not.
@@ -78,6 +83,9 @@ interface Out {
 	checks: { iterations: number; ms: number; movement: number; loss: number[]; exploitability: number | null }[];
 	resolveMs: number;
 	resolveWorkers: number;
+	kept: string[];
+	pickMs: number;
+	storageAt: number;
 }
 
 const before = new Set(renderers().keys());
@@ -88,9 +96,10 @@ for (const workers of workerList) {
 	}, 100);
 	const out = await runInBrowser<Out>(
 		`
-		import { createRun, defineSpot, liteConfig, parseCard, rootPlay, trackSettle } from './src/index.ts';
+		import { checkedDown, createRun, defineSpot, linesWithin, liteConfig, parseCard, rootPlay, solve, storageCost, trackSettle } from './src/index.ts';
 		import { resolveSubgame } from './src/resolve.ts';
 		import { enableThreads } from './src/threads.ts';
+		import { wasmStorage } from './src/wasm-storage.ts';
 		const FULL = ${JSON.stringify(full)};
 		const LITE = ${JSON.stringify(lite)};
 		const LATER = ${JSON.stringify(later)};
@@ -119,11 +128,25 @@ for (const workers of workerList) {
 		}
 		export default async function run() {
 			await enableThreads(${workers});
-			const spot = defineSpot(liteConfig(FULL, LITE));
-			const run = createRun(spot, { workers: ${workers}, approximations: ${JSON.stringify(approximations)} });
+			const storage = ${I16} ? { precision: 'i16', wasmStorage } : {};
+			const options = { workers: ${workers}, approximations: ${JSON.stringify(approximations)}, ...storage };
+			let config = liteConfig(FULL, LITE);
+			let kept = [];
+			let pickMs = 0;
+			if (${KEEP_BYTES} > 0) {
+				// What solveLite's keepBudget does; the picking solve's run is closed by solve().
+				const t = performance.now();
+				const picked = solve(defineSpot(checkedDown(config)), { ...options, iterations: ${PICK} });
+				kept = linesWithin(picked, ${KEEP_BYTES}, { config, precision: ${I16} ? 'i16' : 'f32' });
+				const share = config.shareHistories === true ? {} : config.shareHistories;
+				config = { ...config, shareHistories: { ...share, keepLines: kept } };
+				pickMs = performance.now() - t;
+			}
+			const spot = defineSpot(config);
+			const run = createRun(spot, options);
 			const tracker = trackSettle({ every: ${EVERY}, tolerance: ${TOL}, patience: ${PATIENCE} });
 			const checks = [];
-			let ms = 0;
+			let ms = pickMs;
 			let stopped = 'cap';
 			let done = 0;
 			while (done < ${CAP}) {
@@ -150,12 +173,13 @@ for (const workers of workerList) {
 			const board = spot.resolveBoard(cards).board;
 			const t = performance.now();
 			const resolved = resolveSubgame(bp, node, board, {
-				player: 0, iterations: ${RESOLVE_ITS}, betting: LATER, solve: { workers: ${workers} },
+				player: 0, iterations: ${RESOLVE_ITS}, betting: LATER, solve: { workers: ${workers}, ...storage },
 			});
 			const resolveMs = performance.now() - t;
 			const out = {
 				...blueprint, estimateBytes: spot.estimate.bytes, stopped, iterations: done, ms, checks,
 				resolveMs, resolveWorkers: resolved.solution.workers,
+				kept, pickMs, storageAt: storageCost(spot, ${I16} ? 'i16' : 'f32'),
 			};
 			return out;
 		}
@@ -167,7 +191,8 @@ for (const workers of workerList) {
 	const rss = Math.max(0, ...peak.values());
 	const last = out.checks.at(-1)!;
 	console.log(
-		`${boardName} ${variants.join('+') || 'base'}, ${out.workers} thread(s), ${out.engine}: storage ${(out.estimateBytes / MiB).toFixed(0)} MiB, ` +
+		`${boardName} ${variants.join('+') || 'base'}, ${out.workers} thread(s), ${out.engine}: storage ${(out.storageAt / MiB).toFixed(0)} MiB${I16 ? ' i16' : ''}, ` +
+			(out.kept.length ? `kept ${out.kept.length} line(s), picked in ${(out.pickMs / 1000).toFixed(1)} s, ` : '') +
 			`renderer peak RSS ${(rss / MiB).toFixed(0)} MiB, ${(out.ms / out.iterations).toFixed(0)} ms/iteration`,
 	);
 	console.log(

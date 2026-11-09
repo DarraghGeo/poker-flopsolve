@@ -10,7 +10,10 @@
  * aggressions), `unshared`,
  * `raise` (one turn/river raise), `p=<x>` (sampling
  * probability), `turn+river` (share the turn too), `compact` (8-bit
- * `compactStorage` on the WebAssembly engine).
+ * `compactStorage` on the WebAssembly engine), `keep=<MiB>` (issue #113:
+ * `solveLite`'s `keepBudget`, the lines picked from `PICK`, default 80,
+ * iterations of `checkedDown`'s copy, on the clock), `i16` (16-bit storage
+ * with `wasmStorage`, the re-solves too, and the budget at 16 bits).
  *
  * Environment:
  * - `RULE`: the stop rule, `every:tolerance:patience` (default `20:0.01:2`,
@@ -38,7 +41,7 @@
  */
 
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { COMBOS, createRun, defineSpot, liteConfig, rootPlay, rootPlayMovement } from '../../src/index.ts';
+import { checkedDown, COMBOS, createRun, defineSpot, linesWithin, liteConfig, rootPlay, rootPlayMovement, solve, storageCost } from '../../src/index.ts';
 import type { Approximations, LiteOptions, RootPlay, Solution, SolveRun, SpotConfig } from '../../src/index.ts';
 import { Mode } from '../../src/cfr.ts';
 import { wasmStorage } from '../../src/wasm-storage.ts';
@@ -72,8 +75,25 @@ const approximations: Approximations = variants.includes('nosample')
 	: { chanceSampling: pArg ? { p: Number(pArg.slice(2)) } : {} };
 const tag = `${boardName}-${variants.length ? variants.join('+') : 'base'}-${WORKERS}t${RULE === '20:0.01:2' ? '' : `-${RULE.replaceAll(':', '_')}`}`;
 
+const keepArg = variants.find((v) => v.startsWith('keep='));
+const I16 = variants.includes('i16');
+const storage = I16 ? { precision: 'i16' as const, wasmStorage } : compact ? { wasmStorage } : {};
+const PICK = Number(process.env.PICK ?? 80);
+
 const full = fullTree(boardName);
-const config: SpotConfig = { ...liteConfig(full, lite), ...(compact ? { compactStorage: {} } : {}) };
+const liteBlueprint: SpotConfig = { ...liteConfig(full, lite), ...(compact ? { compactStorage: {} } : {}) };
+// `solveLite`'s keepBudget, done here so the pick can be timed.
+let pickMs = 0;
+let kept: string[] = [];
+if (keepArg) {
+	const t = performance.now();
+	const picked = solve(defineSpot(checkedDown(liteBlueprint)), { iterations: PICK, workers: WORKERS, approximations, ...storage });
+	kept = linesWithin(picked, Number(keepArg.slice(5)) * MiB, { config: liteBlueprint, precision: I16 ? 'i16' : 'f32' });
+	pickMs = performance.now() - t;
+	console.log(`kept ${kept.length} line(s) in ${(pickMs / 1000).toFixed(1)} s: ${kept.join(' | ')}`);
+}
+const share = liteBlueprint.shareHistories === true ? {} : liteBlueprint.shareHistories;
+const config: SpotConfig = keepArg ? { ...liteBlueprint, shareHistories: { ...share, keepLines: kept } } : liteBlueprint;
 const later = {
 	betSizes: full.betSizes, raiseSizes: full.raiseSizes, maxRaises: full.maxRaises, allowAllIn: full.allowAllIn, maxBytes: full.maxBytes,
 	// The blueprint forbids donk bets; T's betting does not.
@@ -114,9 +134,10 @@ function lossOf(play: RootPlay): number[] {
 // ---------------------------------------------------------------- blueprint
 const spot = defineSpot(config);
 console.log(
-	`${tag}: ${spot.estimate.decisionNodes} nodes, ${spot.estimate.runouts} runouts, ${(spot.estimate.bytes / MiB).toFixed(0)} MiB f32`,
+	`${tag}: ${spot.estimate.decisionNodes} nodes, ${spot.estimate.runouts} runouts, ${(spot.estimate.bytes / MiB).toFixed(0)} MiB f32` +
+		(I16 ? `, ${(storageCost(spot, 'i16') / MiB).toFixed(0)} MiB i16` : ''),
 );
-const run = createRun(spot, { workers: WORKERS, approximations, ...(compact ? { wasmStorage } : {}) });
+const run = createRun(spot, { workers: WORKERS, approximations, ...storage });
 interface Check {
 	iterations: number;
 	seconds: number;
@@ -127,7 +148,7 @@ const checks: Check[] = [];
 const plays: RootPlay[] = [];
 const [ruleEvery, ruleTol, rulePatience] = RULE === 'none' ? [0, 0, 0] : RULE.split(':').map(Number);
 let still = 0;
-let solveMs = 0;
+let solveMs = pickMs;
 let stoppedAt = 'cap';
 for (let done = 0; done < CAP; ) {
 	const t = performance.now();
@@ -298,7 +319,7 @@ for (const key of keys) {
 		const g = ([0, 1] as const).map((player) => {
 			const t = performance.now();
 			const resolved = resolveSubgame(bp, node, board, {
-				player, gadget: 'unsafe', betting: later, iterations, solve: { workers: RESOLVE_WORKERS },
+				player, gadget: 'unsafe', betting: later, iterations, solve: { workers: RESOLVE_WORKERS, ...storage },
 			});
 			seconds.push((performance.now() - t) / 1000);
 			if (resolved.solution.spot.tree.nodeCount !== ref.spot.tree.nodeCount) throw new Error(`${key}: re-solved tree differs`);
@@ -331,7 +352,7 @@ writeFileSync(
 	new URL(`${tag}.json`, OUT),
 	JSON.stringify(
 		{
-			tag, storageBytes: spot.estimate.bytes, peakRss, workers: WORKERS, stoppedAt, iterations: done, seconds, exploitability,
+			tag, storageBytes: spot.estimate.bytes, storageAt: storageCost(spot, I16 ? 'i16' : 'f32'), kept, pickMs, peakRss, workers: WORKERS, stoppedAt, iterations: done, seconds, exploitability,
 			rootError, loss, refLoss, rules, resolves, summary,
 			checks: checks.map((c) => ({ ...c, loss: c.loss.map((x) => +x.toFixed(5)) })),
 		},

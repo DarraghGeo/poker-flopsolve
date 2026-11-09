@@ -1,76 +1,76 @@
 {
  "tag": "monotone-none",
  "storageBytes": 196553108,
- "peakRss": 375373824,
+ "peakRss": 429301760,
  "engine": "wasm",
- "seconds": 82.55666655299999,
+ "seconds": 65.775850843,
  "iterations": 480,
  "exploitability": 0.04319741067703316,
  "best": 0.04319741067703316,
  "history": [
   {
    "iterations": 20,
-   "seconds": 3.9447980060000005,
+   "seconds": 3.5273759210000004,
    "exploitability": 15.839341779533656
   },
   {
    "iterations": 40,
-   "seconds": 7.161173262999999,
+   "seconds": 6.28366241,
    "exploitability": 3.424990223490684
   },
   {
    "iterations": 80,
-   "seconds": 13.341470080999999,
+   "seconds": 11.967907448,
    "exploitability": 0.950965664196386
   },
   {
    "iterations": 120,
-   "seconds": 19.470117426,
+   "seconds": 17.114124326,
    "exploitability": 0.530620089137462
   },
   {
    "iterations": 160,
-   "seconds": 25.853920657000003,
+   "seconds": 22.269573144,
    "exploitability": 0.4597279686852641
   },
   {
    "iterations": 200,
-   "seconds": 31.969806846000004,
+   "seconds": 27.309311752,
    "exploitability": 0.31442491835426317
   },
   {
    "iterations": 240,
-   "seconds": 38.092729092,
+   "seconds": 32.404744775,
    "exploitability": 0.22085999462375921
   },
   {
    "iterations": 280,
-   "seconds": 45.05785161,
+   "seconds": 37.484008149000005,
    "exploitability": 0.15591692531656176
   },
   {
    "iterations": 320,
-   "seconds": 53.263631221000004,
+   "seconds": 42.80172099,
    "exploitability": 0.11209156461167127
   },
   {
    "iterations": 360,
-   "seconds": 61.613722227,
+   "seconds": 48.09519096,
    "exploitability": 0.08400713466975694
   },
   {
    "iterations": 400,
-   "seconds": 69.237802178,
+   "seconds": 53.487650873999996,
    "exploitability": 0.06560345485622061
   },
   {
    "iterations": 440,
-   "seconds": 76.037291668,
+   "seconds": 60.103553913,
    "exploitability": 0.05263147681982358
   },
   {
    "iterations": 480,
-   "seconds": 82.55652645599999,
+   "seconds": 65.77573707500001,
    "exploitability": 0.04319741067703316
   }
  ],
@@ -108,9 +108,82 @@
    }
   }
  ],
- "resolves": [],
+ "resolves": [
+  {
+   "key": "bet_18.15_call_-2h",
+   "lineReach": 0.1401969132536942,
+   "gain": [
+    0.28591962091250217,
+    0.3822369861616969
+   ]
+  },
+  {
+   "key": "bet_18.15_call_-As",
+   "lineReach": 0.1401969132536942,
+   "gain": [
+    0.30481144288469775,
+    0.34113757766252495
+   ]
+  },
+  {
+   "key": "bet_18.15_call_-Qd",
+   "lineReach": 0.1401969132536942,
+   "gain": [
+    0.26124255031822713,
+    0.30016712351309466
+   ]
+  },
+  {
+   "key": "check_bet_41.25_call_-2h",
+   "lineReach": 0.07633033092311721,
+   "gain": [
+    0.2527773263295579,
+    0.2914607238459798
+   ]
+  },
+  {
+   "key": "check_bet_41.25_call_-As",
+   "lineReach": 0.07633033092311721,
+   "gain": [
+    0.3262802886897315,
+    0.30987287723283696
+   ]
+  },
+  {
+   "key": "check_bet_41.25_call_-Qd",
+   "lineReach": 0.07633033092311721,
+   "gain": [
+    0.30632485636023354,
+    0.6504533991640136
+   ]
+  },
+  {
+   "key": "check_check_-2h",
+   "lineReach": 0.6054645011395646,
+   "gain": [
+    0.5041911861890379,
+    0.431900018091018
+   ]
+  },
+  {
+   "key": "check_check_-As",
+   "lineReach": 0.6054645011395646,
+   "gain": [
+    0.4955129903432899,
+    0.6455935838537614
+   ]
+  },
+  {
+   "key": "check_check_-Qd",
+   "lineReach": 0.6054645011395646,
+   "gain": [
+    0.4995472340728828,
+    0.4291126480979588
+   ]
+  }
+ ],
  "resolveGain": [
-  null,
-  null
+  0.4439497604646506,
+  0.46685112078091745
  ]
 }

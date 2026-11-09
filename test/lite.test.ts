@@ -5,7 +5,8 @@
 
 import { describe, expect, it } from 'vitest';
 import {
-	ActionKind, bettingFrom, createRun, defineSpot, liteConfig, NodeKind, rootPlay, rootPlayMovement, rootPlayNodes, solve, solveLite, trackSettle,
+	ActionKind, bettingFrom, checkedDown, createRun, defineSpot, liteConfig, NodeKind, rootPlay, rootPlayMovement, rootPlayNodes, solve, solveLite,
+	storageCost, trackSettle, turnLineReach,
 } from '../src/index.ts';
 import type { SpotConfig } from '../src/index.ts';
 
@@ -251,5 +252,91 @@ describe('solveLite', () => {
 		const lite = solveLite(small, { workers: 1, sampling: false, settle: false, iterations: 30 });
 		expect(lite.solution.stoppedAt).toBe('iterations');
 		expect(lite.solution.iterations).toBe(30);
+	});
+});
+
+describe('solveLite keepBudget', () => {
+	const shared = defineSpot(liteConfig(small));
+	const sharedBytes = storageCost(shared, 'f32');
+	const unsharedBytes = storageCost(defineSpot(liteConfig(small, { shareHistories: false })), 'f32');
+	const options = { workers: 1, settle: false, iterations: 20, pickIterations: 10 } as const;
+
+	it('keeps nothing and says so without a budget', () => {
+		const lite = solveLite(small, options);
+		expect(lite.kept).toEqual([]);
+		expect(lite.blueprint).toEqual(liteConfig(small));
+	});
+
+	it('keeps every line when the budget holds the unshared tree, and only free ones when it holds the shared one', () => {
+		const all = solveLite(small, { ...options, keepBudget: unsharedBytes });
+		const lines = turnLineReach(all.solution).map((l) => l.line);
+		expect(lines.length).toBeGreaterThan(1);
+		expect([...all.kept].sort()).toEqual([...lines].sort());
+		expect(all.blueprint.shareHistories).toEqual({ keepLines: all.kept });
+		expect(all.solution.spot.source.shareHistories).toEqual({ keepLines: all.kept });
+		expect(all.solution.iterations).toBe(20);
+		expect(storageCost(all.solution.spot, 'f32')).toBeLessThanOrEqual(unsharedBytes);
+
+		// Only lines that cost nothing: a line owning its shared block keeps it free.
+		const none = solveLite(small, { ...options, keepBudget: sharedBytes });
+		expect(none.kept.length).toBeLessThan(lines.length);
+		expect(storageCost(none.solution.spot, 'f32')).toBe(sharedBytes);
+	});
+
+	it('keeps the most-reached lines a budget between the two allows', () => {
+		const lite = solveLite(small, { ...options, keepBudget: (sharedBytes + unsharedBytes) / 2 });
+		const free = solveLite(small, { ...options, keepBudget: sharedBytes }).kept;
+		expect(lite.kept.length).toBeGreaterThan(free.length);
+		expect(storageCost(lite.solution.spot, 'f32')).toBeGreaterThan(sharedBytes);
+		expect(storageCost(lite.solution.spot, 'f32')).toBeLessThanOrEqual((sharedBytes + unsharedBytes) / 2);
+		// The hybrid still re-solves.
+		const { tree } = lite.solution.spot;
+		const turn = tree.edgeChild[tree.firstEdge[tree.edgeChild[tree.firstEdge[tree.edgeChild[tree.firstEdge[0]]]]]];
+		expect(lite.resolve(turn, 0, { player: 0, iterations: 5 }).solution.iterations).toBe(5);
+	});
+
+	it('keeps the caller\'s own kept lines too', () => {
+		const share = liteConfig(small).shareHistories;
+		expect(share).toBe(true);
+		const own = solveLite(small, { ...options, keepBudget: unsharedBytes, shareHistories: { keepLines: ['check check /'] } });
+		expect(own.kept).toContain('check check /');
+	});
+
+	it('budgets at the solve\'s precision', () => {
+		const i16Shared = storageCost(shared, 'i16');
+		expect(i16Shared).toBeLessThan(sharedBytes);
+		// Over the shared tree at 16 bits, under it at 32.
+		expect(solveLite(small, { ...options, precision: 'i16', keepBudget: sharedBytes }).kept.length).toBeGreaterThan(0);
+	});
+
+	it('refuses a budget the shared tree does not fit, a spot that shares nothing, and bad settings', () => {
+		expect(() => solveLite(small, { ...options, keepBudget: sharedBytes / 2 })).toThrow(/over the budget/);
+		expect(() => solveLite(small, { ...options, keepBudget: unsharedBytes, shareHistories: false })).toThrow(/shareHistories/);
+		expect(() => solveLite(small, { ...options, keepBudget: 0 })).toThrow(/keepBudget/);
+		expect(() => solveLite(small, { ...options, keepBudget: unsharedBytes, pickIterations: 0 })).toThrow(/pickIterations/);
+	});
+});
+
+describe('checkedDown', () => {
+	it('takes the bets out of the last round and keeps the rest', () => {
+		const lite = liteConfig(caller);
+		const cheap = checkedDown(lite);
+		expect(cheap.betSizes).toEqual([[0.33, 0.75, 1.5], [0.75], []]);
+		expect(cheap.allowAllIn).toEqual([true, false, false]);
+		expect(cheap.raiseSizes).toEqual(lite.raiseSizes);
+		expect(cheap.shareHistories).toBe(true);
+	});
+
+	it('drops the caller\'s kept lines, which may lie below the last round', () => {
+		const cheap = checkedDown({ ...liteConfig(caller), shareHistories: { keepLines: ['check check / check check /'] } });
+		expect(cheap.shareHistories).toEqual({});
+	});
+
+	it('handles per-player betting and a one-round spot', () => {
+		const perPlayer = checkedDown({ ...small, betSizes: { oop: [[0.33], [0.5]], ip: [[0.66], [1]] }, allowAllIn: true });
+		expect(perPlayer.betSizes).toEqual({ oop: [[0.33], []], ip: [[0.66], []] });
+		expect(perPlayer.allowAllIn).toEqual([true, false]);
+		const river = checkedDown({ ...small, board: 'Ts 9h 4d 2c 3s', betSizes: [[0.5]] });
+		expect(river.betSizes).toEqual([[]]);
 	});
 });

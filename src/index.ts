@@ -2611,5 +2611,5 @@ function makeSolution(
 }
 
 export { formatCards, parseCards };
-export { bettingFrom, liteConfig, solveLite } from './lite.ts';
+export { bettingFrom, checkedDown, liteConfig, solveLite } from './lite.ts';
 export type { LiteOptions, LiteResolveOptions, LiteSolution, SolveLiteOptions } from './lite.ts';

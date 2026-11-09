@@ -14,6 +14,7 @@
 
 import { parseCards } from './cards.ts';
 import type { SamplingOptions } from './cfr.ts';
+import { linesWithin } from './hybrid.ts';
 import type { ShareHistories, Solution, SolveOptions, SpotConfig, SubgameBetting } from './index.ts';
 import { defineSpot, solve } from './index.ts';
 import type { ResolvedSubgame, ResolveOptions } from './resolve.ts';
@@ -68,6 +69,19 @@ export interface SolveLiteOptions
 	 * Default {}: sampled at p 0.35, on `workers` threads.
 	 */
 	readonly sampling?: SamplingOptions | false;
+	/**
+	 * Keep the most-reached first-round lines' later streets unshared
+	 * (`ShareHistories.keepLines`, issue #101), as many as this many bytes
+	 * of storage at `precision` (default 'f32') allow. The lines are picked
+	 * with `linesWithin` from a short solve of the cheap copy, `checkedDown`
+	 * of the blueprint; that is closed and the hybrid solved from cold.
+	 * Throws if the shared blueprint alone is over the budget, or if it
+	 * shares nothing. Unset, off. What it buys and costs is in `solveLite`'s
+	 * notes.
+	 */
+	readonly keepBudget?: number;
+	/** Iterations of the picking solve under `keepBudget`. Default 80, as issue #101 measured. */
+	readonly pickIterations?: number;
 }
 
 /** Settings for `LiteSolution.resolve`. */
@@ -80,8 +94,10 @@ export interface LiteResolveOptions extends Omit<ResolveOptions, 'betting'> {
 export interface LiteSolution {
 	/** The blueprint's solution. */
 	readonly solution: Solution;
-	/** The blueprint spot that was solved (`liteConfig`'s). */
+	/** The blueprint spot that was solved (`liteConfig`'s, with `keepBudget` its kept lines). */
 	readonly blueprint: SpotConfig;
+	/** The lines kept unshared (`ShareHistories.keepLines`); empty without `keepBudget` or kept lines of the caller's. */
+	readonly kept: readonly string[];
 	/** The caller's spot, full betting. */
 	readonly source: SpotConfig;
 	/**
@@ -241,13 +257,16 @@ function nearest(row: readonly BetSize[], target: number): BetSize[] {
  * what was rejected, are in `Approximations`' notes in `index.ts`.
  */
 export function solveLite(config: SpotConfig, options: SolveLiteOptions = {}): LiteSolution {
-	const blueprint = liteConfig(config, options);
 	const sampling = options.sampling === undefined ? {} : options.sampling;
 	const settle = options.settle === undefined ? {} : options.settle;
+	const approximations = sampling ? { approximations: { chanceSampling: sampling } } : {};
+	const blueprint = keepWithin(liteConfig(config, options), options, approximations);
+	const share = blueprint.shareHistories;
+	const kept = typeof share === 'object' ? [...(share.keepLines ?? [])] : [];
 	const solution = solve(defineSpot(blueprint), {
 		iterations: options.iterations ?? 2000,
 		...(settle ? { settle } : {}),
-		...(sampling ? { approximations: { chanceSampling: sampling } } : {}),
+		...approximations,
 		...pick(options, ['workers', 'precision', 'wasmStorage', 'algorithm', 'onProgress', 'targetPercent']),
 	});
 	const subgameSolve = pick(options, ['workers', 'precision', 'wasmStorage']);
@@ -256,6 +275,7 @@ export function solveLite(config: SpotConfig, options: SolveLiteOptions = {}): L
 	return {
 		solution,
 		blueprint,
+		kept,
 		source: config,
 		resolve(node, board, resolveOptions) {
 			const round = tree.round[node];
@@ -278,6 +298,62 @@ export function solveLite(config: SpotConfig, options: SolveLiteOptions = {}): L
 				solve: { ...subgameSolve, ...resolveOptions.solve },
 			});
 		},
+	};
+}
+
+/**
+ * `blueprint` keeping the lines `options.keepBudget` allows, picked from a
+ * short solve of `checkedDown(blueprint)`; `blueprint` itself without a
+ * budget. The picking solve is done with, and its storage let go, before
+ * the caller solves the result.
+ */
+function keepWithin(blueprint: SpotConfig, options: SolveLiteOptions, approximations: Pick<SolveOptions, 'approximations'>): SpotConfig {
+	const budget = options.keepBudget;
+	if (budget === undefined) return blueprint;
+	if (!(budget > 0)) throw new Error(`keepBudget must be a number of bytes above 0; got ${budget}`);
+	const its = options.pickIterations ?? 80;
+	if (!(Number.isInteger(its) && its >= 1)) throw new Error(`pickIterations must be a whole number of at least 1; got ${its}`);
+	const asked = blueprint.shareHistories;
+	if (!asked) throw new Error('keepBudget keeps lines out of shareHistories; this blueprint shares nothing');
+	const picked = solve(defineSpot(checkedDown(blueprint)), {
+		iterations: its,
+		...approximations,
+		...pick(options, ['workers', 'precision', 'wasmStorage', 'algorithm']),
+	});
+	const keepLines = linesWithin(picked, budget, { config: blueprint, precision: options.precision ?? 'f32' });
+	return { ...blueprint, shareHistories: { ...(asked === true ? {} : asked), keepLines } };
+}
+
+/**
+ * `config` with its last round checked down: no bet or all-in there, and
+ * cuts naming that round's actions dropped. Its first rounds are the same
+ * game tree, so how often each line reaches the next round
+ * (`turnLineReach`) comes out much as the real spot's, at a fraction of its
+ * storage: what `solveLite`'s `keepBudget` ranks lines on (issue #101: on
+ * As Kh 7d the lite blueprint so cut stores 57 MiB, against 173, and ranked
+ * the same top 3). `shareHistories.keepLines` is dropped, as it may name
+ * nodes the cut removes.
+ */
+export function checkedDown(config: SpotConfig): SpotConfig {
+	const rounds = 6 - parseCards(config.board).length;
+	if (!(rounds >= 1 && rounds <= 3)) throw new Error(`A board has 3, 4 or 5 cards; got ${config.board}`);
+	const last = rounds - 1;
+	const betSizes = mapPlayers(config.betSizes, (rows) =>
+		perRound(rows, true, rounds, 'betSizes').map((row, r) => (r === last ? [] : row)),
+	);
+	const allowAllIn = mapPlayers(config.allowAllIn ?? false, (side) =>
+		perRound(side, Array.isArray(side), rounds, 'allowAllIn').map((on, r) => (r === last ? false : on)),
+	);
+	// A cut's round is the number of deals ('/') before its last action.
+	const removeActions = config.removeActions?.filter((line) => line.split('/').length - 1 < last);
+	const asked = config.shareHistories;
+	const shareHistories = typeof asked === 'object' ? (({ keepLines: _kept, ...rest }) => rest)(asked) : asked;
+	return {
+		...config,
+		betSizes: betSizes as SpotConfig['betSizes'],
+		allowAllIn: allowAllIn as SpotConfig['allowAllIn'],
+		...(removeActions === undefined ? {} : { removeActions }),
+		...(shareHistories === undefined ? {} : { shareHistories }),
 	};
 }
 
