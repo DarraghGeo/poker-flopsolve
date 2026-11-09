@@ -3,8 +3,11 @@
  * (#86, #88, #94) appeared only when two options met, so every pair of
  *
  *   shareHistories, compactStorage, thinSizes, runoutBuckets, chanceSampling,
- *   coarseStart, lineRunouts, wasmStorage at 16 bits, resolveSubgame
+ *   coarseStart, lineRunouts, wasmStorage at 16 bits, resolveSubgame,
  *
+ * and the two presets built from them (issue #115), `litePreset` (what
+ * `solveLite` solves) and `largeTree`, each applied to the spot and settings
+ * the other side of the pair leaves, as a caller would hand them over,
  * is solved here on one small turn spot, and either runs or is refused:
  *
  * - refused: exactly the pairs `REFUSED` lists, each with an error naming
@@ -21,9 +24,9 @@
 import { describe, expect, it } from 'vitest';
 import { parseCards } from '../src/cards.ts';
 import { engineAvailable } from '../src/engine.ts';
-import { createRun, defineSpot, NodeKind, resolveSubgame } from '../src/index.ts';
+import { createRun, defineSpot, litePreset, NodeKind, resolveSubgame } from '../src/index.ts';
 import type { Solution, SolveOptions, SolveRun, SpotConfig } from '../src/index.ts';
-import { wasmStorage } from '../src/wasm-storage.ts';
+import { largeTree, wasmStorage } from '../src/wasm-storage.ts';
 import { compareStorage, copyStorage, storageArrays } from './wasm-storage-helpers.ts';
 
 /** Small enough to solve in milliseconds, rich enough for every option to act. */
@@ -42,7 +45,18 @@ interface Option {
 	readonly resolve?: boolean;
 	/** The option given its off value, which must change nothing. */
 	readonly off?: { readonly config?: Partial<SpotConfig>; readonly solve?: SolveOptions };
+	/** A preset: applied to the spot and settings the other options leave, after them. */
+	readonly preset?: (config: SpotConfig, solve: SolveOptions) => { config: SpotConfig; solve: SolveOptions };
+	/** Options a preset switches on unless the caller's settings say otherwise, so their off value is the caller's word. */
+	readonly honours?: readonly string[];
 }
+
+/** Solve options merged, approximations field by field, `over` winning. */
+const mergeSolve = (under: SolveOptions, over: SolveOptions = {}): SolveOptions => ({
+	...under,
+	...over,
+	approximations: { ...under.approximations, ...over.approximations },
+});
 
 const OPTIONS: readonly Option[] = [
 	{ name: 'shareHistories', config: { shareHistories: true }, off: { config: { shareHistories: false } } },
@@ -64,6 +78,29 @@ const OPTIONS: readonly Option[] = [
 	// At 32 bits the engine runs as it always has, wasmStorage or not.
 	{ name: 'wasmStorage i16', solve: { precision: 'i16', wasmStorage }, off: { solve: { wasmStorage } } },
 	{ name: 'resolveSubgame', resolve: true },
+	{
+		name: 'litePreset',
+		preset: (config, solve) => {
+			// The river keeps the half-pot bet. With the default, the pot bet,
+			// this small spot has actions tied exactly: their regrets are 0 up
+			// to a rounding, whose sign flips regret matching between thread
+			// counts and engines. The exact solve of that tree does it too, by
+			// 3% at the root after 12 iterations, so it says nothing of the preset.
+			const lite = litePreset(config, { settle: false, laterSize: 0.5 });
+			// The steps are the test's; the preset's own iteration cap is not.
+			const { iterations: _cap, ...options } = lite.options;
+			return { config: lite.config, solve: mergeSolve(options, solve) };
+		},
+		honours: ['shareHistories', 'chanceSampling'],
+	},
+	{
+		name: 'largeTree',
+		preset: (config, solve) => {
+			const large = largeTree(config, { options: solve });
+			return { config: large.config, solve: large.options };
+		},
+		honours: ['chanceSampling'],
+	},
 ];
 
 /** Pairs refused, with a pattern each refusal's message matches. */
@@ -72,18 +109,21 @@ const REFUSED: Record<string, RegExp> = {
 	'compactStorage + lineRunouts': /lineRunouts does not combine with shareHistories or compactStorage/,
 	'chanceSampling + lineRunouts': /lineRunouts does not combine with chanceSampling, coarseStart/,
 	'coarseStart + lineRunouts': /lineRunouts does not combine with chanceSampling, coarseStart/,
+	'lineRunouts + litePreset': /lineRunouts does not combine with the lite blueprint/,
+	'lineRunouts + largeTree': /lineRunouts does not combine with chanceSampling, coarseStart/,
 };
 
 const ITERATIONS = 12;
 
 /** Options merged, approximations included. */
-function merge(parts: readonly { config?: Partial<SpotConfig>; solve?: SolveOptions }[]): { config: SpotConfig; solve: SolveOptions } {
+function merge(parts: readonly Omit<Option, 'name'>[]): { config: SpotConfig; solve: SolveOptions } {
 	let config: SpotConfig = turn;
 	let solve: SolveOptions = {};
 	for (const part of parts) {
 		config = { ...config, ...part.config };
-		solve = { ...solve, ...part.solve, approximations: { ...solve.approximations, ...part.solve?.approximations } };
+		solve = mergeSolve(solve, part.solve);
 	}
+	for (const part of parts) if ('preset' in part && part.preset) ({ config, solve } = part.preset(config, solve));
 	return { config, solve };
 }
 
@@ -147,8 +187,9 @@ const maxDiff = (a: ArrayLike<number>, b: ArrayLike<number>): number => {
 };
 
 describe.runIf(engineAvailable())('opt-in options in pairs', () => {
-	it('lists every pair once: 36 of them, 4 refused', () => {
-		expect(pairs).toHaveLength(36);
+	it('lists every pair once: 55 of them, 6 refused', () => {
+		expect(pairs).toHaveLength(55);
+		expect(Object.keys(REFUSED)).toHaveLength(6);
 		for (const name of Object.keys(REFUSED)) expect(pairs.map(([a, b]) => key(a, b))).toContain(name);
 	});
 
@@ -188,6 +229,7 @@ describe.runIf(engineAvailable())('opt-in options in pairs', () => {
 			if (other === option || !other.off || REFUSED[key(option, other)] || REFUSED[key(other, option)]) continue;
 			// wasmStorage is what moves compact storage onto the engine: no off value there.
 			if (other.name === 'wasmStorage i16' && option.name === 'compactStorage') continue;
+			if (option.honours?.includes(other.name)) continue;
 			it(`${option.name} beside ${other.name} off: identical to ${option.name} alone`, () => {
 				// Sampling keeps its baselines even at p = 1: compare the arrays both keep.
 				const workers = 2;

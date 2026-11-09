@@ -17,10 +17,13 @@
 
 import type { WasmStorage } from './engine.ts';
 import type { SolveOptions, SpotConfig } from './index.ts';
+import type { PresetChanges, SettingChange } from './presets.ts';
+import { presetChanges } from './presets.ts';
 import { ENGINE_STORAGE_WASM } from './wasm/engine-storage.ts';
 import { ENGINE_STORAGE_SHARED_WASM } from './wasm/engine-storage-shared.ts';
 
 export type { WasmStorage } from './engine.ts';
+export type { PresetChanges, SettingChange, SizesCut, Street } from './presets.ts';
 
 /** The storage engine, to pass as `SolveOptions.wasmStorage`. */
 export const wasmStorage: WasmStorage = { plain: ENGINE_STORAGE_WASM, shared: ENGINE_STORAGE_SHARED_WASM };
@@ -43,10 +46,17 @@ export interface LargeTreeOptions {
 	readonly options?: SolveOptions;
 }
 
-/** What `largeTree` returns: the spot's settings and the solve's. */
+/** What `largeTree` returns: the spot's settings and the solve's, and what they changed. */
 export interface LargeTree {
 	readonly config: SpotConfig;
 	readonly options: SolveOptions;
+	/**
+	 * What the preset changed against the config it was given: the sizes
+	 * `thinSizes` cut (every decision but the flop's first keeps one size
+	 * near 0.75 pot), the streets that lost any, the storage and sampling
+	 * switched on, and a `compactStorage` dropped for 16 bits.
+	 */
+	readonly changes: PresetChanges;
 }
 
 /**
@@ -76,7 +86,7 @@ export interface LargeTree {
  * play 0.04% of pot, per-hand root EVs about 1.5% of pot off on average;
  * and on seven napkinpoker spots against postflop-solver's EVs, 0.04% of pot
  * at OOP's root as for an exact solve, but 0.34% against 0.16% for IP's play
- * after a check, whose 0.33 bet `thinSizes` cuts. See the `Approximations` notes in src/index.ts for the combinations
+ * after a check, whose 0.33 bet `thinSizes` cuts. See docs/APPROXIMATIONS.md for the combinations
  * measured and left out.
  */
 export function largeTree(config: SpotConfig, preset: LargeTreeOptions = {}): LargeTree {
@@ -92,7 +102,32 @@ export function largeTree(config: SpotConfig, preset: LargeTreeOptions = {}): La
 		approximations: { chanceSampling: {}, ...own.approximations },
 		wasmStorage,
 	};
-	return storage === 'i16'
-		? { config: { ...rest, thinSizes: true }, options }
-		: { config: { ...rest, thinSizes: true, compactStorage: compactStorage ?? {} }, options };
+	const out: SpotConfig =
+		storage === 'i16' ? { ...rest, thinSizes: true } : { ...rest, thinSizes: true, compactStorage: compactStorage ?? {} };
+
+	const settings: SettingChange[] = [];
+	const notes: string[] = [];
+	if (config.thinSizes !== true) {
+		settings.push({ setting: 'thinSizes', from: config.thinSizes, to: true });
+		notes.push("thinSizes: every decision but the first round's opening keeps one bet or raise, nearest 0.75 pot (approximate: a smaller game)");
+	}
+	if (storage === 'i16') {
+		if (compactStorage) {
+			settings.push({ setting: 'compactStorage', from: compactStorage, to: undefined });
+			notes.push("compactStorage: dropped, as storage is 'i16'; pass storage: 'compact' to keep it");
+		}
+		if (own.precision === undefined) {
+			settings.push({ setting: 'precision', from: undefined, to: 'i16' });
+			notes.push('precision: 16-bit storage on the WebAssembly engine');
+		}
+	} else if (!compactStorage) {
+		settings.push({ setting: 'compactStorage', from: undefined, to: {} });
+		notes.push('compactStorage: 8-bit storage with sums on the WebAssembly engine');
+	}
+	if (own.wasmStorage !== wasmStorage) settings.push({ setting: 'wasmStorage', from: own.wasmStorage, to: wasmStorage });
+	if (own.approximations?.chanceSampling === undefined) {
+		settings.push({ setting: 'approximations.chanceSampling', from: undefined, to: {} });
+		notes.push('chanceSampling: turn and river deals sampled at p 0.35');
+	}
+	return { config: out, options, changes: presetChanges(config, out, settings, notes) };
 }
