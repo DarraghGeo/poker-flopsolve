@@ -44,6 +44,11 @@ const CASES: [string, SpotConfig, SolveOptions, number][] = [
 	['compact storage from the turn, i16 before', { ...flop, compactStorage: { from: 1 } }, { precision: 'i16' }, 0.02],
 	['compact storage without sums', { ...flop, compactStorage: { sums: false } }, {}, 0.002],
 	['compact storage with a block scale', { ...flop, compactStorage: { sums: false, blockScale: true } }, {}, 0.002],
+	['compact storage with shared histories', { ...flop, shareHistories: true, compactStorage: {} }, {}, 0.002],
+	[
+		'compact storage with a block scale and shared histories',
+		{ ...flop, shareHistories: true, compactStorage: { sums: false, blockScale: true } }, {}, 0.002,
+	],
 	['compact storage with 32-bit regrets', { ...flop, compactStorage: { sums: false, float: true } }, {}, 0.01],
 	['compact storage rounded to nearest', { ...flop, compactStorage: { nearest: true, steps: 100 } }, {}, 0.01],
 	[
@@ -246,6 +251,20 @@ describe('compactStorage combined with what it used to refuse (issue #84)', () =
 		one.step(8);
 		three.step(8);
 		expect(three.workers).toBe(3);
+		for (const [name, share] of compareStorage(one, three)) expect(share, name).toBe(0);
+		one.close();
+		three.close();
+	});
+
+	it('runs compact storage with shared histories on JavaScript worker threads as on one', () => {
+		// Each history's rounding stream is salted by its node (issue #88), never by thread or visit order.
+		const config: SpotConfig = { ...flop, shareHistories: true, compactStorage: {} };
+		const one = createRun(defineSpot(config), { workers: 1, engine: 'js' });
+		const three = createRun(defineSpot(config), { workers: 3, engine: 'js' });
+		one.step(8);
+		three.step(8);
+		expect(three.workers).toBe(3);
+		expect(one.solver.ctx.layout.shared).toBe(true);
 		for (const [name, share] of compareStorage(one, three)) expect(share, name).toBe(0);
 		one.close();
 		three.close();
