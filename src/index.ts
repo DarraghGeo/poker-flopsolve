@@ -2325,15 +2325,17 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 		let done = 0;
 		while (done < iterations) {
 			const until = Math.min(done + plan.every, iterations);
+			// A short last step moves the play less; it is not a check.
+			const full = until - done === plan.every;
 			run.step(until - done);
 			done = until;
 			const measured = run.snapshot();
-			const settled = tracker.check(measured, done);
+			const settled = full && tracker.check(measured, done);
 			const info: Progress = {
 				iteration: done,
 				exploitability: target > 0 ? measured.exploitability() : Number.NaN,
 				elapsedMs: Date.now() - started,
-				movement: tracker.movement,
+				movement: full ? tracker.movement : Number.NaN,
 			};
 			history.push(info);
 			options.onProgress?.(info);

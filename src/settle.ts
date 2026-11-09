@@ -33,7 +33,7 @@ export interface SettleOptions {
 	readonly tolerance?: number;
 	/** Consecutive still checks before stopping. Default 2. */
 	readonly patience?: number;
-	/** Iterations before the first check counts. Default 0. */
+	/** Iterations before which no check counts toward `patience`. Default 0. */
 	readonly minIterations?: number;
 }
 
@@ -143,8 +143,9 @@ export function trackSettle(options: SettleOptions = {}): SettleTracker {
 			const play = rootPlay(solution);
 			movement = previous ? rootPlayMovement(previous, play) : Number.NaN;
 			previous = play;
-			still = movement <= plan.tolerance ? still + 1 : 0;
-			settled = still >= plan.patience && iterations >= plan.minIterations;
+			// A check before `minIterations` does not count toward patience.
+			still = iterations >= plan.minIterations && movement <= plan.tolerance ? still + 1 : 0;
+			settled = still >= plan.patience;
 			return settled;
 		},
 		get movement() {

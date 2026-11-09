@@ -86,9 +86,10 @@ export interface LiteSolution {
 	readonly source: SpotConfig;
 	/**
 	 * Re-solve the subgame at a node opening the turn or river, at the
-	 * caller's full betting for the streets from there: `resolveSubgame`,
-	 * 'unsafe' and 200 iterations unless `options` say otherwise, on the
-	 * blueprint's thread count.
+	 * caller's full betting for the streets from there, the caller's cuts
+	 * below the node included: `resolveSubgame`, 'unsafe' and 200 iterations
+	 * unless `options` say otherwise, with the blueprint's `workers`,
+	 * `precision` and `wasmStorage`.
 	 */
 	resolve(node: number, board: number, options: LiteResolveOptions): ResolvedSubgame;
 }
@@ -100,8 +101,10 @@ export interface LiteSolution {
  * `shareHistories` and `runoutBuckets: 3`. Ranges, pot, stacks and everything
  * else carry over. Per-player betting is simplified side by side.
  *
- * Bet and raise cuts (`removeActions`) on the first round carry over; those
- * below a deal are dropped, as the later rounds' sizes no longer exist.
+ * Bet and raise cuts (`removeActions`) on the first round carry over, but
+ * for those past `flopMaxRaises`; those below a deal are dropped, as the
+ * later rounds' sizes no longer exist (`LiteSolution.resolve` puts them
+ * back). The caller's own `shareHistories` stands unless `options` give one.
  */
 export function liteConfig(config: SpotConfig, options: LiteOptions = {}): SpotConfig {
 	const target = options.laterSize ?? 0.75;
@@ -134,7 +137,12 @@ export function liteConfig(config: SpotConfig, options: LiteOptions = {}): SpotC
 	const allowAllIn = mapPlayers(config.allowAllIn ?? false, (side) =>
 		perRound(side, Array.isArray(side), rounds, 'allowAllIn').map((on, r) => (r === 0 ? on : false)),
 	);
-	const removeActions = config.removeActions?.filter((line) => !line.includes('/'));
+	// Cuts below a deal name sizes the blueprint no longer has, and cuts past
+	// the flop cap name raises it no longer has.
+	const aggressions = (line: string): number => line.split(' ').filter((w) => w === 'bet' || w === 'raise' || w === 'allin').length;
+	const removeActions = config.removeActions?.filter(
+		(line) => !line.includes('/') && (flopCap === undefined || aggressions(line) <= flopCap),
+	);
 	const buckets = options.runoutBuckets ?? 3;
 	const given = typeof config.runoutBuckets === 'number' ? config.runoutBuckets : config.runoutBuckets ? 1 : 0;
 	return {
@@ -146,7 +154,7 @@ export function liteConfig(config: SpotConfig, options: LiteOptions = {}): SpotC
 		...(options.noDonk === undefined ? {} : { noDonk: options.noDonk }),
 		...(removeActions === undefined ? {} : { removeActions }),
 		runoutBuckets: Math.max(buckets, given),
-		shareHistories: options.shareHistories ?? true,
+		shareHistories: options.shareHistories ?? config.shareHistories ?? true,
 	};
 }
 
@@ -242,17 +250,32 @@ export function solveLite(config: SpotConfig, options: SolveLiteOptions = {}): L
 		...(sampling ? { approximations: { chanceSampling: sampling } } : {}),
 		...pick(options, ['workers', 'precision', 'wasmStorage', 'algorithm', 'onProgress', 'targetPercent']),
 	});
-	const workers = options.workers;
+	const subgameSolve = pick(options, ['workers', 'precision', 'wasmStorage']);
+	const { tree } = solution.spot;
+	const scale = solution.spot.chipScale;
 	return {
 		solution,
 		blueprint,
 		source: config,
 		resolve(node, board, resolveOptions) {
-			const round = solution.spot.tree.round[node];
+			const round = tree.round[node];
+			// The caller's cuts below the node, re-rooted there as `subgameAt`
+			// does its own: chips count from what each player has put in.
+			const prefix = `${solution.path(node)} `;
+			const invested = (tree.pot[node] - solution.spot.potUnits) / 2;
+			const removeActions = (config.removeActions ?? [])
+				.filter((line) => line.startsWith(prefix))
+				.map((line) =>
+					line
+						.slice(prefix.length)
+						.split(' ')
+						.map((word) => (/^-?[\d.]+$/.test(word) ? String((Math.round(Number(word) * scale) - invested) / scale) : word))
+						.join(' '),
+				);
 			return resolveSubgame(solution, node, board, {
 				...resolveOptions,
-				betting: { ...bettingFrom(config, round), ...resolveOptions.betting },
-				solve: { ...(workers === undefined ? {} : { workers }), ...resolveOptions.solve },
+				betting: { ...bettingFrom(config, round), removeActions, ...resolveOptions.betting },
+				solve: { ...subgameSolve, ...resolveOptions.solve },
 			});
 		},
 	};
