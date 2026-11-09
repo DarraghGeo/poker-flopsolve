@@ -1,0 +1,620 @@
+{
+ "tag": "two-tone-base-1t",
+ "storageBytes": 162326902,
+ "peakRss": 317251584,
+ "workers": 1,
+ "stoppedAt": "settled",
+ "iterations": 500,
+ "seconds": 63.890306561000024,
+ "exploitability": 4.720118510271656,
+ "rootError": [
+  {
+   "mae": 1.5268797680102537,
+   "max": 8.030369597756433
+  },
+  {
+   "mae": 2.930362278375855,
+   "max": 12.849994618554547
+  }
+ ],
+ "loss": [
+  0.0881798159115145,
+  0.04700881525059237
+ ],
+ "refLoss": [
+  0.11633928613058066,
+  0.05205971572284774
+ ],
+ "rules": [],
+ "resolves": [
+  {
+   "key": "bet_18.15_call_-2c",
+   "lineReach": 0.18547550864630802,
+   "iterations": 300,
+   "warm": "off",
+   "gain": [
+    33.36150300210402,
+    35.88797489783124
+   ],
+   "seconds": [
+    12.767891873999993,
+    11.77018432700001
+   ]
+  },
+  {
+   "key": "bet_18.15_call_-As",
+   "lineReach": 0.18547550864630802,
+   "iterations": 300,
+   "warm": "off",
+   "gain": [
+    24.08131970326181,
+    40.51184837667205
+   ],
+   "seconds": [
+    7.938035676999992,
+    8.639908102000001
+   ]
+  },
+  {
+   "key": "bet_18.15_call_-Qd",
+   "lineReach": 0.18547550864630802,
+   "iterations": 300,
+   "warm": "off",
+   "gain": [
+    25.56309646193771,
+    24.473023795715857
+   ],
+   "seconds": [
+    11.982448456999991,
+    11.292130495999999
+   ]
+  },
+  {
+   "key": "check_bet_41.25_call_-2c",
+   "lineReach": 0.062345034024937046,
+   "iterations": 300,
+   "warm": "off",
+   "gain": [
+    4.636181359190216,
+    7.4837632245373875
+   ],
+   "seconds": [
+    9.324080847000005,
+    8.574113765999995
+   ]
+  },
+  {
+   "key": "check_bet_41.25_call_-As",
+   "lineReach": 0.062345034024937046,
+   "iterations": 300,
+   "warm": "off",
+   "gain": [
+    9.480592455505391,
+    9.34658848622602
+   ],
+   "seconds": [
+    5.831654865000019,
+    6.046374599000003
+   ]
+  },
+  {
+   "key": "check_bet_41.25_call_-Qd",
+   "lineReach": 0.062345034024937046,
+   "iterations": 300,
+   "warm": "off",
+   "gain": [
+    6.785484296510641,
+    7.318251627172749
+   ],
+   "seconds": [
+    8.89438652,
+    8.873024053999979
+   ]
+  },
+  {
+   "key": "check_check_-2c",
+   "lineReach": 0.3889325719628694,
+   "iterations": 300,
+   "warm": "off",
+   "gain": [
+    9.793375151024664,
+    13.834605066276195
+   ],
+   "seconds": [
+    14.942977449000027,
+    15.228161977999989
+   ]
+  },
+  {
+   "key": "check_check_-As",
+   "lineReach": 0.3889325719628694,
+   "iterations": 300,
+   "warm": "off",
+   "gain": [
+    10.081082785788368,
+    7.185581069224752
+   ],
+   "seconds": [
+    9.295298857999995,
+    9.351060599999997
+   ]
+  },
+  {
+   "key": "check_check_-Qd",
+   "lineReach": 0.3889325719628694,
+   "iterations": 300,
+   "warm": "off",
+   "gain": [
+    17.18634664863235,
+    7.939561811976744
+   ],
+   "seconds": [
+    14.380657733,
+    14.281718729999964
+   ]
+  }
+ ],
+ "summary": [
+  {
+   "iterations": 300,
+   "warm": "off",
+   "gain": [
+    16.287249800450265,
+    16.478588349167445
+   ],
+   "seconds": 10.523006051777775
+  }
+ ],
+ "checks": [
+  {
+   "iterations": 10,
+   "seconds": 2.188157936,
+   "loss": [
+    11.3579,
+    3.86119
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 20,
+   "seconds": 3.743345678,
+   "loss": [
+    5.3638,
+    3.38795
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 30,
+   "seconds": 5.15317095,
+   "loss": [
+    2.75743,
+    3.07487
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 40,
+   "seconds": 6.364803654,
+   "loss": [
+    1.21429,
+    1.35594
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 50,
+   "seconds": 7.717024973,
+   "loss": [
+    0.67596,
+    0.70793
+   ],
+   "exploitability": 20.104672157216534
+  },
+  {
+   "iterations": 60,
+   "seconds": 8.987863373999998,
+   "loss": [
+    0.42114,
+    0.41282
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 70,
+   "seconds": 10.234203642999999,
+   "loss": [
+    0.30924,
+    0.28208
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 80,
+   "seconds": 11.417860637,
+   "loss": [
+    0.2443,
+    0.21637
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 90,
+   "seconds": 12.858315824,
+   "loss": [
+    0.2062,
+    0.17748
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 100,
+   "seconds": 14.137775100999999,
+   "loss": [
+    0.18181,
+    0.15235
+   ],
+   "exploitability": 7.532852743507509
+  },
+  {
+   "iterations": 110,
+   "seconds": 15.464621393999998,
+   "loss": [
+    0.16528,
+    0.13518
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 120,
+   "seconds": 16.652517888,
+   "loss": [
+    0.15358,
+    0.12234
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 130,
+   "seconds": 17.736750992999998,
+   "loss": [
+    0.14487,
+    0.11313
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 140,
+   "seconds": 18.866157375,
+   "loss": [
+    0.1382,
+    0.10581
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 150,
+   "seconds": 20.075411987,
+   "loss": [
+    0.13283,
+    0.09954
+   ],
+   "exploitability": 5.639435383427855
+  },
+  {
+   "iterations": 160,
+   "seconds": 21.360476003,
+   "loss": [
+    0.12837,
+    0.09428
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 170,
+   "seconds": 22.725971447,
+   "loss": [
+    0.12465,
+    0.08966
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 180,
+   "seconds": 23.981391349000003,
+   "loss": [
+    0.12147,
+    0.0858
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 190,
+   "seconds": 25.387736682,
+   "loss": [
+    0.11871,
+    0.08256
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 200,
+   "seconds": 26.559177188000003,
+   "loss": [
+    0.11628,
+    0.07971
+   ],
+   "exploitability": 5.09754291360536
+  },
+  {
+   "iterations": 210,
+   "seconds": 27.73023351,
+   "loss": [
+    0.11421,
+    0.0773
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 220,
+   "seconds": 28.836366212000005,
+   "loss": [
+    0.1124,
+    0.07507
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 230,
+   "seconds": 29.956250719000003,
+   "loss": [
+    0.11066,
+    0.07311
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 240,
+   "seconds": 31.16103945900001,
+   "loss": [
+    0.10906,
+    0.07156
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 250,
+   "seconds": 32.484259078,
+   "loss": [
+    0.10757,
+    0.07
+   ],
+   "exploitability": 4.861838665701714
+  },
+  {
+   "iterations": 260,
+   "seconds": 33.748234154,
+   "loss": [
+    0.1062,
+    0.06849
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 270,
+   "seconds": 35.075302245,
+   "loss": [
+    0.10496,
+    0.06707
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 280,
+   "seconds": 36.32572926600001,
+   "loss": [
+    0.10378,
+    0.0657
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 290,
+   "seconds": 37.566858787000015,
+   "loss": [
+    0.10269,
+    0.06439
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 300,
+   "seconds": 38.78361611600001,
+   "loss": [
+    0.10167,
+    0.06317
+   ],
+   "exploitability": 4.767891300987693
+  },
+  {
+   "iterations": 310,
+   "seconds": 40.08800090200001,
+   "loss": [
+    0.10068,
+    0.06199
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 320,
+   "seconds": 41.38309235600001,
+   "loss": [
+    0.09974,
+    0.06085
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 330,
+   "seconds": 42.54573390500001,
+   "loss": [
+    0.09883,
+    0.05975
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 340,
+   "seconds": 43.89891577300001,
+   "loss": [
+    0.09794,
+    0.05871
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 350,
+   "seconds": 45.17604185900001,
+   "loss": [
+    0.09707,
+    0.0577
+   ],
+   "exploitability": 4.722953321823419
+  },
+  {
+   "iterations": 360,
+   "seconds": 46.419118596000004,
+   "loss": [
+    0.09627,
+    0.05673
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 370,
+   "seconds": 47.75305345800001,
+   "loss": [
+    0.0955,
+    0.0558
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 380,
+   "seconds": 48.94536904400001,
+   "loss": [
+    0.09475,
+    0.0549
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 390,
+   "seconds": 50.13285928900001,
+   "loss": [
+    0.09404,
+    0.05404
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 400,
+   "seconds": 51.47400538000001,
+   "loss": [
+    0.09336,
+    0.05321
+   ],
+   "exploitability": 4.705232565057113
+  },
+  {
+   "iterations": 410,
+   "seconds": 52.78274857300001,
+   "loss": [
+    0.09272,
+    0.05244
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 420,
+   "seconds": 53.889847875000015,
+   "loss": [
+    0.09211,
+    0.05168
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 430,
+   "seconds": 54.999722935000015,
+   "loss": [
+    0.09151,
+    0.05095
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 440,
+   "seconds": 56.19659420500002,
+   "loss": [
+    0.09094,
+    0.05026
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 450,
+   "seconds": 57.40496660900001,
+   "loss": [
+    0.09041,
+    0.04961
+   ],
+   "exploitability": 4.70297160844296
+  },
+  {
+   "iterations": 460,
+   "seconds": 58.54353969600002,
+   "loss": [
+    0.08992,
+    0.049
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 470,
+   "seconds": 59.77523946500001,
+   "loss": [
+    0.08945,
+    0.04843
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 480,
+   "seconds": 61.19944044000001,
+   "loss": [
+    0.089,
+    0.04791
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 490,
+   "seconds": 62.61092329200002,
+   "loss": [
+    0.08858,
+    0.04743
+   ],
+   "exploitability": null
+  },
+  {
+   "iterations": 500,
+   "seconds": 63.890306561000024,
+   "loss": [
+    0.08818,
+    0.04701
+   ],
+   "exploitability": 4.720118510271656
+  }
+ ]
+}
