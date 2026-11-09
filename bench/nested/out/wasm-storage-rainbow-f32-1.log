@@ -1,0 +1,4 @@
+rainbow f32 in Chromium (1 threads), storage 707 MiB, tab peak RSS 902 MiB
+  1 thread(s), wasm: 302.8 s to 0.232% in 240 it (1.262 s/it with checks; checks 8.7 s)
+  turn re-solve, 1 thread(s): 28.7 s, 64 MiB
+{"board":"rainbow","storage":"f32","peak":945799168,"threads":1,"solves":[{"workers":1,"ms":302847.81999999983,"iterations":240,"exploitability":0.2320602667714193,"engine":"wasm","checkMs":8738.224999999162}],"resolves":[{"workers":1,"ms":28682.680000000633,"bytes":67278184}],"storageBytes":740928816}

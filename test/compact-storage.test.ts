@@ -224,22 +224,13 @@ describe('compact storage', () => {
 
 	it('refuses what it does not combine with', () => {
 		const spot = defineSpot(withStorage({}));
-		const clashes: SolveOptions[] = [
-			{ precision: 'i16' }, { analysisOnly: true },
-			{ approximations: { chanceSampling: { p: 0.5 } } }, { approximations: { coarseStart: { iterations: 5 } } },
-		];
-		for (const options of clashes) expect(() => createRun(spot, { workers: 1, ...options })).toThrow(/compactStorage/);
+		// Issue #84 lifted the other clashes; see test/wasm-storage.test.ts.
+		expect(() => createRun(spot, { workers: 1, analysisOnly: true })).toThrow(/compactStorage/);
 		expect(() => defineSpot(withStorage({ from: 3 }))).toThrow(/from/);
 		expect(() => defineSpot(withStorage({ steps: 200 }))).toThrow(/steps/);
 		expect(() => defineSpot(withStorage({ blockScale: true }))).toThrow(/sums/);
 		for (const chunkBytes of [0, -1, NaN, 1.5]) expect(() => defineSpot(withStorage({ chunkBytes }))).toThrow(/chunkBytes/);
 		// A node bigger than a chunk would need a buffer over the cap.
 		expect(() => createRun(defineSpot(withStorage({ chunkBytes: 1000 })), { workers: 1 })).toThrow(/chunkBytes/);
-		// Bucketed runouts measure the real game by warm-starting it, which compact storage cannot feed.
-		expect(() => createRun(defineSpot({ ...withStorage({}), runoutBuckets: true }), { workers: 1 })).toThrow(/runoutBuckets/);
-		// Nor can a compact run seed a warm start.
-		const compact = createRun(spot, { workers: 1 });
-		expect(() => createRun(defineSpot(flop), { workers: 1, warmStart: compact })).toThrow(/compactStorage/);
-		compact.close();
 	});
 });

@@ -1,0 +1,5 @@
+rainbow compact in Chromium (4 threads), storage 272 MiB, tab peak RSS 462 MiB
+  4 thread(s), wasm: 105.6 s to 0.290% in 200 it (0.528 s/it with checks; checks 2.2 s)
+  turn re-solve, 1 thread(s): 40.7 s, 21 MiB
+  turn re-solve, 4 thread(s): 12.2 s, 21 MiB
+{"board":"rainbow","storage":"compact","peak":484634624,"threads":4,"solves":[{"workers":4,"ms":105602.18999999994,"iterations":200,"exploitability":0.290105826401255,"engine":"wasm","checkMs":2234.989999999758}],"resolves":[{"workers":1,"ms":40693.125,"bytes":21623344},{"workers":4,"ms":12156.455000000075,"bytes":21623344}],"storageBytes":284786216}

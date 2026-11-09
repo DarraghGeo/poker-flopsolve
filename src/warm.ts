@@ -27,6 +27,7 @@
  */
 
 import type { Context, RegretStore, SumStore } from './cfr.ts';
+import { COMPACT_SUM_STEPS, regretMatch, scaleExponent, SHIFT_SCALE } from './cfr.ts';
 import { COMBO_CARDS, COMBOS, DECK, comboIndex } from './cards.ts';
 import { markMembers } from './hands.ts';
 import type { Runouts } from './runouts.ts';
@@ -135,6 +136,97 @@ export function writeBlock(
 	scale[block] = largest / steps;
 }
 
+/**
+ * Read a compactly stored block as plain numbers: the regrets, unless
+ * `regrets` is null, and the strategy sums. Where compact storage keeps no
+ * sums its strategy is the current profile, so that is what comes back as
+ * the sums: any positive multiple of a strategy averages to it.
+ */
+export function readCompactBlock(
+	ctx: Context,
+	node: number,
+	listSlot: number,
+	block: number,
+	base: number,
+	actions: number,
+	count: number,
+	regrets: Float64Array | null,
+	sums: Float64Array,
+): void {
+	const plan = ctx.compact!;
+	const chunk = ctx.layout.compactChunk![node];
+	const q = ctx.compactRegret![chunk];
+	const handBase = ctx.layout.handOffset![node] + ctx.layout.rowStart[listSlot];
+	const shifts = plan.perHand ? ctx.handShift![chunk] : null;
+	const blockScale = !plan.perHand && !plan.float ? ctx.compactScale![block] : 1;
+	for (let i = 0; i < count; i++) {
+		const scale = shifts ? SHIFT_SCALE[shifts[handBase + i]] : blockScale;
+		if (regrets) for (let a = 0; a < actions; a++) regrets[a * count + i] = q[base + a * count + i] * scale;
+		if (!plan.sums) continue;
+		const sumScale = SHIFT_SCALE[ctx.sumShift![chunk][handBase + i]];
+		const stored = ctx.compactSum![chunk];
+		for (let a = 0; a < actions; a++) sums[a * count + i] = stored[base + a * count + i] * sumScale;
+	}
+	if (!plan.sums) regretMatch(q, base, actions, count, sums);
+}
+
+/**
+ * Write a compactly stored block, encoding it as compact storage does but
+ * rounded to nearest: the regrets unless `regrets` is null, the sums where it
+ * keeps them unless `sums` is null.
+ */
+export function writeCompactBlock(
+	ctx: Context,
+	node: number,
+	listSlot: number,
+	block: number,
+	base: number,
+	actions: number,
+	count: number,
+	regrets: Float64Array | null,
+	sums: Float64Array | null,
+): void {
+	const plan = ctx.compact!;
+	const chunk = ctx.layout.compactChunk![node];
+	const q = ctx.compactRegret![chunk];
+	const handBase = ctx.layout.handOffset![node] + ctx.layout.rowStart[listSlot];
+	const steps = plan.steps;
+	const fit = (value: number, top: number, bottom: number): number => {
+		const rounded = Math.round(value);
+		return rounded > top ? top : rounded < bottom ? bottom : rounded;
+	};
+	if (regrets && plan.float) {
+		for (let k = 0; k < actions * count; k++) q[base + k] = regrets[k];
+	} else if (regrets && !plan.perHand) {
+		let largest = 0;
+		for (let k = 0; k < actions * count; k++) largest = Math.max(largest, Math.abs(regrets[k]));
+		const step = largest > 0 ? steps / largest : 0;
+		for (let k = 0; k < actions * count; k++) q[base + k] = fit(regrets[k] * step, steps, -steps);
+		ctx.compactScale![block] = largest / steps;
+	} else if (regrets) {
+		const shifts = ctx.handShift![chunk];
+		for (let i = 0; i < count; i++) {
+			let largest = 0;
+			for (let a = 0; a < actions; a++) largest = Math.max(largest, Math.abs(regrets[a * count + i]));
+			const exponent = scaleExponent(largest, steps);
+			shifts[handBase + i] = exponent;
+			const inverse = exponent === 0 ? 0 : 1 / SHIFT_SCALE[exponent];
+			for (let a = 0; a < actions; a++) q[base + a * count + i] = fit(regrets[a * count + i] * inverse, steps, -steps);
+		}
+	}
+	if (!sums || !plan.sums) return;
+	const stored = ctx.compactSum![chunk];
+	const shifts = ctx.sumShift![chunk];
+	for (let i = 0; i < count; i++) {
+		let largest = 0;
+		for (let a = 0; a < actions; a++) largest = Math.max(largest, sums[a * count + i]);
+		const exponent = scaleExponent(largest, COMPACT_SUM_STEPS);
+		shifts[handBase + i] = exponent;
+		const inverse = exponent === 0 ? 0 : 1 / SHIFT_SCALE[exponent];
+		for (let a = 0; a < actions; a++) stored[base + a * count + i] = fit(sums[a * count + i] * inverse, COMPACT_SUM_STEPS, 0);
+	}
+}
+
 /** The real cards of a stored board. */
 export function realCards(runouts: Runouts, round: number, board: number): number[] {
 	const width = runouts.width[round];
@@ -190,7 +282,9 @@ export function warmStart(
 	const oldSum = new Float64Array(width);
 	const newRegret = new Float64Array(width);
 	const newSum = new Float64Array(width);
-	const hasRegret = to.regret.length > 0 && from.regret.length > 0;
+	// An analysis-only run has none; compact storage may keep all of its regrets compactly.
+	const keepsRegrets = (ctx: Context): boolean => ctx.regret.length > 0 || (ctx.compactRegret ?? null) !== null;
+	const hasRegret = keepsRegrets(to) && keepsRegrets(from);
 
 	// A combination's position in the old board's hand list, or -1.
 	const position = new Int32Array(COMBOS).fill(-1);
@@ -223,8 +317,12 @@ export function warmStart(
 			const oldBlock = from.layout.blockOffset[old] + resolved.board;
 			const oldBase = from.layout.offset[old] + oldActions * from.layout.rowStart[oldSlot];
 			const oldLength = oldActions * oldCount;
-			if (hasRegret) readBlock(from.regret, from.regretScale, oldBlock, oldBase, oldLength, oldRegret);
-			readBlock(from.strategySum, from.sumScale, oldBlock, oldBase, oldLength, oldSum);
+			if (round >= from.layout.compactFrom) {
+				readCompactBlock(from, old, oldSlot, oldBlock, oldBase, oldActions, oldCount, hasRegret ? oldRegret : null, oldSum);
+			} else {
+				if (hasRegret) readBlock(from.regret, from.regretScale, oldBlock, oldBase, oldLength, oldRegret);
+				readBlock(from.strategySum, from.sumScale, oldBlock, oldBase, oldLength, oldSum);
+			}
 			// Every hand an old entry stands for is at that entry.
 			markMembers(from.active, oldFrom, oldCount, position, false);
 
@@ -255,8 +353,12 @@ export function warmStart(
 
 			const block = to.layout.blockOffset[node] + board;
 			const base = to.layout.offset[node] + actions * to.layout.rowStart[newSlot];
-			if (hasRegret) writeBlock(to.regret, to.regretScale, REGRET_STEPS, block, base, length, newRegret);
-			if (averages) writeBlock(to.strategySum, to.sumScale, SUM_STEPS, block, base, length, newSum);
+			if (round >= to.layout.compactFrom) {
+				writeCompactBlock(to, node, newSlot, block, base, actions, count, hasRegret ? newRegret : null, averages ? newSum : null);
+			} else {
+				if (hasRegret) writeBlock(to.regret, to.regretScale, REGRET_STEPS, block, base, length, newRegret);
+				if (averages) writeBlock(to.strategySum, to.sumScale, SUM_STEPS, block, base, length, newSum);
+			}
 		}
 	}
 	return { matchedNodes: matched, decisionNodes: tree.decisionNodes.length, averages };
