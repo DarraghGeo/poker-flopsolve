@@ -45,6 +45,11 @@ const CASES: [string, SpotConfig, SolveOptions, number][] = [
 	['compact storage without sums', { ...flop, compactStorage: { sums: false } }, {}, 0.002],
 	['compact storage with a block scale', { ...flop, compactStorage: { sums: false, blockScale: true } }, {}, 0.002],
 	['compact storage with 32-bit regrets', { ...flop, compactStorage: { sums: false, float: true } }, {}, 0.01],
+	['compact storage with shared histories', { ...flop, shareHistories: true, compactStorage: {} }, {}, 0.01],
+	[
+		'compact storage with shared histories and 32-bit regrets',
+		{ ...flop, shareHistories: true, compactStorage: { sums: false, float: true } }, {}, 0.01,
+	],
 	['compact storage rounded to nearest', { ...flop, compactStorage: { nearest: true, steps: 100 } }, {}, 0.01],
 	[
 		'compact storage with chance sampling',

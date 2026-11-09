@@ -72,6 +72,30 @@ describe('compact storage', () => {
 		});
 	}
 
+	it('with 32-bit regrets and shared histories discounts a shared block once an iteration, as the full solve does (#93)', () => {
+		const deep: SpotConfig = { ...flop, stack: 200, betSizes: [[0.5]], maxRaises: 1, shareHistories: true };
+		const exact = createRun(defineSpot(deep), { workers: 1, engine: 'js' });
+		const compact = createRun(defineSpot({ ...deep, compactStorage: { from: 1, float: true, sums: false } }), { workers: 1 });
+		expect(compact.solver.ctx.layout.shared).toBe(true);
+		exact.step(15);
+		compact.step(15);
+		const exactSlots = new Map(slices(exact, false).concat(slices(exact, true)).map(([n, s, l]) => [n, [s, l]]));
+		let differences = 0;
+		let compared = 0;
+		for (const [node, start, length] of slices(compact, true)) {
+			const [from] = exactSlots.get(node)!;
+			const chunk = compact.solver.ctx.layout.compactChunk![node];
+			for (let i = 0; i < length; i++) {
+				compared++;
+				if (compact.solver.ctx.compactRegret![chunk][start + i] !== exact.solver.ctx.regret[from + i]) differences++;
+			}
+		}
+		expect(compared).toBeGreaterThan(0);
+		expect(differences).toBe(0);
+		exact.close();
+		compact.close();
+	});
+
 	it('reads the current profile where it keeps no sums', () => {
 		const run = createRun(defineSpot(withStorage({ from: 1, sums: false })), { workers: 1 });
 		run.step(10);

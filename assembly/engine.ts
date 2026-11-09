@@ -1036,8 +1036,9 @@ function scaleExponent(largest: f64, top: f64): i32 {
 /**
  * `updateCompact` in src/cfr.ts: one compactly stored block, decoded,
  * updated in float64 as the rule says and re-encoded, in whichever mode
- * compact storage runs; with chance sampling, the DCFR discounts a skipped
- * block missed first. Values are worked out twice rather than staged, as in
+ * compact storage runs; a block shared by several histories is discounted on
+ * the first visit of an iteration only; with chance sampling, the DCFR
+ * discounts a skipped block missed first. Values are worked out twice rather than staged, as in
  * `updateI16`.
  */
 function updateCompact(
@@ -1048,6 +1049,16 @@ function updateCompact(
 	let negative = factorNegative();
 	let keep = factorSum();
 	const w = factorWeight();
+	if (dcfrRule && discounted !== 0) {
+		// Another history already discounted this shared block this iteration.
+		const mark = discounted + (block << 2);
+		if (load<i32>(mark) === iteration) {
+			positive = 1;
+			negative = 1;
+			keep = 1;
+		}
+		store<i32>(mark, iteration);
+	}
 	if (dcfrRule && sampleRounds !== 0) {
 		// As the 32-bit update does, in `traverse`.
 		const at = lastUpdate + (block << 2);
