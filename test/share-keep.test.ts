@@ -145,7 +145,6 @@ describe('turnLineReach and linesWithin', () => {
 			expect(linesWithin(sol, budget)).toEqual(ranked.slice(0, 2));
 			expect(linesWithin(sol, bytes(ranked.slice(0, 2)))).toEqual(ranked.slice(0, 2));
 			expect(linesWithin(sol, defineSpot(flop).estimate.bytes)).toEqual(ranked);
-			expect(linesWithin(sol, 1)).toEqual([]);
 		} finally {
 			run.close();
 		}
@@ -164,6 +163,57 @@ describe('turnLineReach and linesWithin', () => {
 			const kept = defineSpot({ ...config, shareHistories: { keepLines: all } });
 			expect(kept.estimate.bytes).toBe(defineSpot(flop).estimate.bytes);
 			expect(linesWithin(sol, defineSpot(config).estimate.bytes, { config })).toEqual([]);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('carries the average only into a spot keeping at least the same lines', () => {
+		const lines = turnLines(defineSpot(config));
+		const run = createRun(defineSpot({ ...flop, shareHistories: { keepLines: lines.slice(0, 1) } }), { workers: 1 });
+		try {
+			run.step(10);
+			const into = (share: SpotConfig['shareHistories']): boolean | undefined => {
+				const warm = createRun(defineSpot({ ...flop, shareHistories: share }), { workers: 1, warmStart: run });
+				try {
+					return warm.warmStart?.averages;
+				} finally {
+					warm.close();
+				}
+			};
+			// Fewer kept lines: several histories would land in one block.
+			expect(into(true)).toBe(false);
+			expect(into({ keepLines: lines.slice(1, 2) })).toBe(false);
+			expect(into({ keepLines: lines.slice(0, 2) })).toBe(true);
+		} finally {
+			run.close();
+		}
+		const plain = createRun(defineSpot({ ...flop, shareHistories: {} }), { workers: 1 });
+		try {
+			plain.step(5);
+			const warm = createRun(defineSpot({ ...flop, shareHistories: { keepLines: lines.slice(0, 1) } }), { workers: 1, warmStart: plain });
+			expect(warm.warmStart?.averages).toBe(true);
+			warm.close();
+		} finally {
+			plain.close();
+		}
+	});
+
+	it('returns every line the budget was checked with, and refuses a budget sharing alone misses', () => {
+		const run = createRun(defineSpot(config), { workers: 1 });
+		try {
+			run.step(30);
+			const sol = run.snapshot();
+			const ranked = turnLineReach(sol).map((l) => l.line);
+			const last = ranked[ranked.length - 1];
+			const keeping: SpotConfig = { ...flop, shareHistories: { keepLines: [last] } };
+			const picked = linesWithin(sol, defineSpot(keeping).estimate.bytes, { config: keeping });
+			expect(picked).toEqual([last]);
+			expect(() => linesWithin(sol, 1)).toThrow(/budget/);
+			// Compact storage is what the budget counts when the spot has it.
+			const compact: SpotConfig = { ...config, compactStorage: {} };
+			const all = linesWithin(sol, defineSpot({ ...flop, compactStorage: {} }).estimate.compactBytes!, { config: compact });
+			expect(all).toEqual(ranked);
 		} finally {
 			run.close();
 		}

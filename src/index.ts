@@ -467,9 +467,9 @@ export interface ShareHistories {
 	 * `Solution.path` names a node (a flop line opening the turn reads like
 	 * `"check check /"`). Every node at or below a listed one is left out of
 	 * sharing, and so is any round root above one. The rest share as
-	 * before. Unset or empty, nothing is kept. A warm start between two
-	 * spots that differ only here carries the average strategy too, as for
-	 * the same spot.
+	 * before. Unset or empty, nothing is kept. A warm start into a spot that
+	 * differs only here, keeping at least the lines its source keeps,
+	 * carries the average strategy too, as for the same spot.
 	 *
 	 * What it is for (issue #101): a turn re-solved from a shared blueprint
 	 * (`resolveSubgame`) inherits only the ranges the blueprint brings to
@@ -477,10 +477,11 @@ export interface ShareHistories {
 	 * it learns from river values that several histories share. Keeping the
 	 * few most-reached flop lines unshared gives the flop exact values
 	 * where most of the play is, and that straightens the ranges on the
-	 * lines left shared too. Pick them with `turnLineReach` from a short
-	 * shared solve (80 iterations), close that, and solve the hybrid spot
-	 * from cold. Continuing from the picking solve instead is worse: its
-	 * average lingers.
+	 * lines left shared too. Pick them with `linesWithin` (the most-reached
+	 * lines, `turnLineReach`, that a storage budget allows) from a short
+	 * solve, 80 iterations, of a cheap copy of the spot (below); close that
+	 * and solve the hybrid spot from cold. Continuing from the picking solve
+	 * instead is worse: its average lingers.
 	 *
 	 * Measured on issue #47's blueprint (`1size-b3`), 400 iterations, against
 	 * the unshared blueprint solved to 0.045% of pot. "Re-solve gain" is the
@@ -497,7 +498,21 @@ export interface ShareHistories {
 	 * | top 6 | 383 MiB | 1.16 / 0.65 | 0.23 / 0.27 |
 	 * | all (unshared) | 707 MiB | 0.67 / 0.50 | 0 |
 	 *
-	 * HYBRID_TEXTURES
+	 * On Ts9s4h and Ks9s4s plain sharing gives 4.10 / 3.69 and 4.23 /
+	 * 2.72 against 0.48 / 0.55 and 0.44 / 0.47 unshared. Kept by a 300 MiB
+	 * budget (`linesWithin`), two-tone keeps 6 lines in 282 MiB for 0.61 /
+	 * 0.72, and monotone all 19 in 187 MiB. The top 3 alone are not enough
+	 * on two-tone (1.82 / 1.96), so budget the storage, not the count.
+	 *
+	 * In Chromium the picking solve's WebAssembly memory stays resident
+	 * until it is collected, so it adds to the peak. Rank on a cheap copy
+	 * instead: the blueprint with its river checked down (57 MiB on AsKh7d)
+	 * ranked the same top 3 there. Within 512 MiB on AsKh7d, store the
+	 * hybrid at 16 bits (`precision: 'i16'` with `wasmStorage`) with a 150
+	 * MiB budget at that precision. It keeps the same 3 lines, re-solves at
+	 * 1.47 / 0.92, and peaked at 392 MiB on 4 threads, 592 ms an iteration
+	 * against 495 shared, its root play settled in 127 s. Two-tone the same
+	 * way: 0.88 / 0.85. `bench/blueprint-share/` has the scripts and figures.
 	 */
 	readonly keepLines?: readonly string[];
 }
@@ -1983,19 +1998,10 @@ function planCoarseStart(spot: Spot, options: SolveOptions, precision: Precision
 
 	// A compact spot's coarse spot is compact too: its storage is its layout at
 	// that precision, beside the rest `estimate.compactBytes` counts at 32 bits.
-	const cost = (of: Spot, at: Precision): number => {
-		if (of.estimate.compactBytes === null) {
-			return at === 'i16' ? of.estimate.compressedBytes : of.estimate.bytes * (at === 'f64' ? 2 : 1);
-		}
-		const plan = compactPlan(of.source.compactStorage!, of.runouts.rounds);
-		const bytesAt = (width: number): number =>
-			buildLayout(of.tree, of.runouts, of.players, width, of.historyAlias, reachWeighted(of.source), plan).bytes;
-		return of.estimate.compactBytes + bytesAt(PRECISION_BYTES[at]) - bytesAt(4);
-	};
-	const used = cost(spot, precision);
+	const used = storageCost(spot, precision);
 	const left = maxBytes - used;
-	const coarsePrecision: Precision = options.precision ?? (cost(coarseSpot, 'f32') <= left ? 'f32' : 'i16');
-	const needs = cost(coarseSpot, coarsePrecision);
+	const coarsePrecision: Precision = options.precision ?? (storageCost(coarseSpot, 'f32') <= left ? 'f32' : 'i16');
+	const needs = storageCost(coarseSpot, coarsePrecision);
 	if (needs > left) {
 		throw new Error(
 			`coarseStart needs ~${formatBytes(needs)} beside this spot's ~${formatBytes(used)}, ` +
@@ -2028,26 +2034,43 @@ function solveCoarse(plan: CoarsePlan, options: SolveOptions): SolveRun {
 	return run;
 }
 
+/** Bytes `of` takes stored at `at`, compact storage included. */
+export function storageCost(of: Spot, at: Precision): number {
+	if (of.estimate.compactBytes === null) {
+		return at === 'i16' ? of.estimate.compressedBytes : of.estimate.bytes * (at === 'f64' ? 2 : 1);
+	}
+	const plan = compactPlan(of.source.compactStorage!, of.runouts.rounds);
+	const bytesAt = (width: number): number =>
+		buildLayout(of.tree, of.runouts, of.players, width, of.historyAlias, reachWeighted(of.source), plan).bytes;
+	return of.estimate.compactBytes + bytesAt(PRECISION_BYTES[at]) - bytesAt(4);
+}
+
 /**
  * Whether two configurations describe the very same game. Limits and how
  * runouts are stored do not change the game, so they are left out.
  */
 function sameSpot(a: SpotConfig, b: SpotConfig): boolean {
 	const plain = ({ maxBytes: _bytes, maxCombos: _combos, isomorphism: _iso, ...game }: SpotConfig): string =>
-		JSON.stringify(withoutKeptLines(game), (_, value: unknown) => (value instanceof Float64Array ? Array.from(value) : value));
-	return plain(a) === plain(b);
+		JSON.stringify(game, (_, value: unknown) => (value instanceof Float64Array ? Array.from(value) : value));
+	const kept = (config: SpotConfig): readonly string[] | undefined =>
+		typeof config.shareHistories === 'object' ? config.shareHistories.keepLines : undefined;
+	if (kept(a) === undefined && kept(b) === undefined) return plain(a) === plain(b);
+	// `keepLines` only gives nodes their shared block's own copy, so a warm
+	// start into a spot keeping every line its source keeps copies each node
+	// exactly, average included; into one keeping fewer, several histories
+	// would write one block.
+	const mine = new Set(kept(a) ?? []);
+	if (!(kept(b) ?? []).every((line) => mine.has(line))) return false;
+	return plain(withoutKeptLines(a)) === plain(withoutKeptLines(b));
 }
 
-/**
- * `game` as its sharing would be without `keepLines`, which only gives some
- * nodes their shared block's own copy: a warm start between two such spots
- * copies every node exactly, average included, as for the same spot.
- */
-function withoutKeptLines<T extends Pick<SpotConfig, 'shareHistories'>>(game: T): T {
-	const asked = game.shareHistories;
-	if (!asked || asked === true || asked.keepLines === undefined) return game;
-	const { keepLines: _kept, ...rest } = asked;
-	return { ...game, shareHistories: Object.keys(rest).length > 0 ? rest : true };
+/** `config` with `keepLines` dropped and its sharing in one form: `true` and `{}` alike, unset keys gone. */
+function withoutKeptLines(config: SpotConfig): SpotConfig {
+	const asked = config.shareHistories;
+	if (!asked) return config;
+	const { keepLines: _kept, ...rest } = asked === true ? {} : asked;
+	const set = Object.entries(rest).filter(([, value]) => value !== undefined);
+	return { ...config, shareHistories: set.length > 0 ? Object.fromEntries(set) : true };
 }
 
 /** Largest rank distance within a runout bucket, for `runoutBuckets: true`. */

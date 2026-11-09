@@ -126,7 +126,8 @@ for (const workers of workerList) {
 				kept = ${KEEP_MIB} > 0
 					? linesWithin(pre.snapshot(), ${KEEP_MIB} * 2 ** 20, { config: CONFIG, precision: ${I16} ? 'i16' : 'f32' })
 					: turnLineReach(pre.snapshot()).slice(0, ${KEEP_TOP}).map((l) => l.line);
-				const hybrid = defineSpot({ ...CONFIG, shareHistories: { keepLines: kept } });
+				const share = CONFIG.shareHistories === true ? {} : CONFIG.shareHistories;
+				const hybrid = defineSpot({ ...CONFIG, shareHistories: { ...share, keepLines: kept } });
 				if (${WARM}) {
 					run = createRun(hybrid, { ...options, warmStart: pre });
 					done = ${PICK};
