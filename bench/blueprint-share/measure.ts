@@ -46,8 +46,10 @@ const [boardName, shareName, iterArg, approxArg] = process.argv.slice(2) as [Boa
 const CAP = Number(iterArg ?? 400);
 const TARGET = Number(process.env.BLUEPRINT_TARGET ?? 0.3);
 const approxNames = approxArg ? approxArg.split(',') : [];
+const unknown = approxNames.filter((name) => !/^(sampling(\d*\.?\d+)?|compact|compact-nearest|coarse)$/.test(name));
+if (unknown.length > 0) throw new Error(`unknown approximation ${unknown.join(', ')}`);
 // `sampling` walks each deal with probability 0.35, `sampling0.9` with 0.9 (issue #105).
-const samplingName = approxNames.find((name) => name.startsWith('sampling'));
+const samplingName = approxNames.find((name) => /^sampling(\d*\.?\d+)?$/.test(name));
 const approximations: Approximations = {
 	...(samplingName ? { chanceSampling: samplingName === 'sampling' ? {} : { p: Number(samplingName.slice(8)) } } : {}),
 	// The blueprint's own buckets are at a gap of 3, so the coarse copy needs a wider one.
@@ -62,7 +64,7 @@ const MiB = 2 ** 20;
 
 const full = fullTree(boardName);
 // `compact` stores 8-bit regrets and sums rounded at random, `compact-nearest` rounded to nearest (issue #105).
-const compactName = approxNames.find((name) => name.startsWith('compact'));
+const compactName = approxNames.find((name) => name === 'compact' || name === 'compact-nearest');
 const config: SpotConfig = {
 	...blueprintOf(boardName, shareName),
 	...(compactName ? { compactStorage: compactName === 'compact-nearest' ? { nearest: true } : {} } : {}),
@@ -80,7 +82,7 @@ const isOwnReference = RESOLVES && shareName === 'none' && approxNames.length ==
 // ---------------------------------------------------------------- blueprint
 const spot = defineSpot(config);
 console.log(
-	`${tag}: ${spot.estimate.decisionNodes} nodes, ${spot.estimate.runouts} runouts, ${((spot.estimate.compactBytes ?? spot.estimate.bytes) / MiB).toFixed(0)} MiB ${compactName ? "8-bit" : "f32"}`,
+	`${tag}: ${spot.estimate.decisionNodes} nodes, ${spot.estimate.runouts} runouts, ${((spot.estimate.compactBytes ?? spot.estimate.bytes) / MiB).toFixed(0)} MiB${compactName ? '' : ' f32'}`,
 );
 const started = performance.now();
 const run = createRun(spot, { workers: 4, approximations, ...(compactName ? { wasmStorage } : {}) });

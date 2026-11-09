@@ -1,8 +1,8 @@
 # Why noise moves the `shareHistories` plateau (issue #105)
 
 #103's pair matrix found that on its small turn spot, exact DCFR with
-`shareHistories` stops near 5.3% of pot, while sampling deals or 8-bit
-stochastic rounding brings it under 1%. These scripts look for why, and
+`shareHistories` stops near 5.3% of pot (5.7–5.8% in the JS engine runs
+here), while sampling deals or 8-bit stochastic rounding brings it under 1%. These scripts look for why, and
 `bench/blueprint-share/measure.ts` (now with `sampling<p>` and `compact`)
 checks whether the gain carries to #85's flop blueprint.
 
@@ -11,7 +11,7 @@ checks whether the gain carries to #85's flop blueprint.
 | `spot.ts` | #103's turn spot: Ah Kd Qc 8s, pot 60, stack 90, `AA,KK,55,44,AKs,KQs` vs `QQ,JJ,33,22,AQs,QJs`, 0.5 and 1 pot, raise 1, `maxRaises: 2`, river shared |
 | `probe.ts [spot] [solve]` | exploitability of the average and of the current profile at 100, 300, 1000 and 3000 iterations, JS engine, one thread |
 | `local.ts [spot] [solve]` | share of each player's own reach into shared blocks that comes by a history other than each hand's main one, over the first iterations |
-| `probes.patch` | throwaway hooks in `src/cfr.ts` for the experiments below (`git apply`, never merged): a salt for sampling's draws, random weights on shared regret updates, uniform play mixed into training, the probe pass `local.ts` reads |
+| `probes.patch` | throwaway hooks in `src/cfr.ts` for the experiments below (`git apply`, never merged): a salt for sampling's draws (the "seeds" below; the library has no seed option), random weights on shared regret updates, uniform play mixed into training, the probe pass `local.ts` reads. Made against `src/cfr.ts` at commit 2d3a3b9; check that out if it no longer applies |
 
 Exploitability is % of pot, of the shared strategy, measured exactly in
 the full game, at 3000 iterations unless noted. "Spot 2" is a second turn
@@ -45,7 +45,8 @@ its first few iterations lead to:
 
 - After one iteration, regret matching plays nearly pure everywhere. By
   iteration 2, OOP's own reach into every shared river block is zero
-  (`local.ts`: "NaN"). Under sampling (p 0.9) it is not. Which history
+  (`local.ts`: "NaN"); under sampling at p 0.9, seed 2, it is 0.3%, and
+  11% by iteration 3 where the deterministic solve has 0%. Which history
   each hand trains a shared block from is decided by near-ties here.
 - ±1% random weights on shared regret updates **for the first 5
   iterations only**, and plain DCFR after, end at 0.39%. For the first 2,
@@ -85,7 +86,8 @@ different basin at the start, and where it lands is a lottery:
 On spot 2 the deterministic solve was already in a good basin, and
 noise neither helps nor hurts. Mixing uniform play into the first
 iterations, the change that follows most directly from the cause, helps
-or not with the schedule. None of these is a rule to adopt.
+or not with the schedule on spot 1 alone, so it was not taken to spot 2.
+None of these is a rule to adopt.
 
 ## The flop blueprint
 

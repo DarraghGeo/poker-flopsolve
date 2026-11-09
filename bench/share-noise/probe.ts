@@ -15,10 +15,17 @@
  * shared history's regret update by a uniform random factor of mean 1 and
  * that standard deviation, on iterations FROM+1 to UNTIL; EPS is a function
  * of the iteration `t` (e.g. 'Math.min(0.5, 5 / t)'), the share of uniform
- * play mixed into the training strategy at every node.
+ * play mixed into the training strategy at every node. DITHER acts on
+ * DCFR's update only, not CFR+'s.
  */
+import { readFileSync } from 'node:fs';
 import { createRun, defineSpot } from '../../src/index.ts';
 import { TURN_SPOT } from './spot.ts';
+
+const hooks = ['SEED', 'DITHER', 'EPS'].filter((name) => process.env[name]);
+if (hooks.length > 0 && !readFileSync(new URL('../../src/cfr.ts', import.meta.url), 'utf8').includes('__dither')) {
+	throw new Error(`${hooks.join(', ')} need bench/share-noise/probes.patch applied`);
+}
 
 const G = globalThis as Record<string, unknown>;
 G.__seed = Number(process.env.SEED ?? 0);

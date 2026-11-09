@@ -269,11 +269,14 @@ export interface SpotConfig {
 	 * randomness then picks another: chance sampling, 8-bit stochastic
 	 * rounding, even float rounding under CFR+. On #103's turn spot
 	 * (exploitability 5.8% of pot), sampling at p 0.9 ended at 0.3–1.6%
-	 * depending on the seed. On a second turn spot (0.7%) it changed
-	 * nothing, and on the blueprint above it did not lower the plateau
-	 * either: 2.7–2.9% against 2.6–2.7%. Do not count on it. No
-	 * deterministic change found was better on both turn spots.
-	 * `bench/share-noise/` has the measurements.
+	 * over six different sets of draws. On a second turn spot (0.7%) it
+	 * changed nothing. On the blueprint above, neither sampling at p 0.9
+	 * (2.9%) nor 8-bit stochastic storage (2.5%) moved the plateau beyond
+	 * that spread, against 2.6% shared alone. Do not count on noise to
+	 * lower it. Of the deterministic changes tried (other regret
+	 * weighting, discount start, uniform play mixed into the first
+	 * iterations), none was a reliable gain. `bench/share-noise/` has the
+	 * measurements.
 	 *
 	 * `true` shares the river. See `ShareHistories` for the turn and for
 	 * lossier buckets.
