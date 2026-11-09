@@ -53,6 +53,8 @@ export { activeCombos, parseRange, rangeWeight } from './range.ts';
 export type { ResolvedBoard } from './runouts.ts';
 export type { WarmStartReport } from './warm.ts';
 export { resolveSubgame } from './resolve.ts';
+export { turnLineReach } from './hybrid.ts';
+export type { LineReach } from './hybrid.ts';
 export type { Gadget, ResolvedSubgame, ResolveOptions } from './resolve.ts';
 export { simdAvailable } from './kernels.ts';
 export type { BetSize } from './tree.ts';
@@ -460,6 +462,15 @@ export interface ShareHistories {
 	 * into it; 'counterfactual' adds them as plain CFR would.
 	 */
 	readonly weighting?: 'reach' | 'counterfactual';
+	/**
+	 * Lines whose later streets keep storage of their own, each named as
+	 * `Solution.path` names a node (a flop line opening the turn reads like
+	 * `"check check /"`). Every node at or below a listed one is left out of
+	 * sharing, and so is any round root above one. The rest share as
+	 * before. Unset or empty, nothing is kept. See `keptLines` for picking
+	 * them by reach (issue #101).
+	 */
+	readonly keepLines?: readonly string[];
 }
 
 /** Projected cost of solving a spot. */
@@ -729,11 +740,51 @@ function shareHistories(
 	if (asked.weighting !== undefined && asked.weighting !== 'reach' && asked.weighting !== 'counterfactual') {
 		throw new Error(`shareHistories.weighting must be 'reach' or 'counterfactual', got ${String(asked.weighting)}`);
 	}
+	const keep = asked.keepLines && asked.keepLines.length > 0 ? keptNodes(tree, chipScale, asked.keepLines) : undefined;
 	return aliasHistories(
 		tree, runouts,
-		{ key: width === undefined ? { kind: 'exact' } : { kind: 'spr', width }, fromRound: from ?? runouts.rounds - 1 },
+		{ key: width === undefined ? { kind: 'exact' } : { kind: 'spr', width }, fromRound: from ?? runouts.rounds - 1, keep },
 		Math.round(config.stack * chipScale),
 	).alias;
+}
+
+/**
+ * `ShareHistories.keepLines` as node marks: each listed node, everything
+ * below it, and everything above it, so that no round root containing it
+ * is shared either.
+ */
+function keptNodes(tree: Tree, chipScale: number, lines: readonly string[]): Uint8Array {
+	const parent = new Int32Array(tree.nodeCount).fill(-1);
+	const paths: string[] = new Array(tree.nodeCount);
+	paths[0] = '(root)';
+	// Children come after their parents, so a parent's path is always ready.
+	for (let node = 0; node < tree.nodeCount; node++) {
+		for (let e = 0; e < tree.numEdges[node]; e++) {
+			const edge = tree.firstEdge[node] + e;
+			const child = tree.edgeChild[edge];
+			parent[child] = node;
+			const step = tree.kind[node] === NodeKind.Decision ? actionLabel(tree.edgeAction[edge], tree.edgeTarget[edge], chipScale) : '/';
+			paths[child] = node === 0 ? step : `${paths[node]} ${step}`;
+		}
+	}
+	const listed = new Set(lines);
+	const missing = new Set(lines);
+	const marks = new Uint8Array(tree.nodeCount);
+	// At or below a listed node: parents come first, so one sweep does.
+	for (let node = 0; node < tree.nodeCount; node++) {
+		if (listed.has(paths[node])) {
+			missing.delete(paths[node]);
+			marks[node] = 1;
+		} else if (parent[node] >= 0 && marks[parent[node]]) {
+			marks[node] = 1;
+		}
+	}
+	if (missing.size > 0) {
+		throw new Error(`shareHistories.keepLines: no node of this tree has the path ${[...missing].map((l) => `"${l}"`).join(', ')}`);
+	}
+	// Above one: every ancestor of a marked node.
+	for (let node = tree.nodeCount - 1; node > 0; node--) if (marks[node]) marks[parent[node]] = 1;
+	return marks;
 }
 
 /** Solver tuning. */
@@ -1935,8 +1986,20 @@ function solveCoarse(plan: CoarsePlan, options: SolveOptions): SolveRun {
  */
 function sameSpot(a: SpotConfig, b: SpotConfig): boolean {
 	const plain = ({ maxBytes: _bytes, maxCombos: _combos, isomorphism: _iso, ...game }: SpotConfig): string =>
-		JSON.stringify(game, (_, value: unknown) => (value instanceof Float64Array ? Array.from(value) : value));
+		JSON.stringify(withoutKeptLines(game), (_, value: unknown) => (value instanceof Float64Array ? Array.from(value) : value));
 	return plain(a) === plain(b);
+}
+
+/**
+ * `game` as its sharing would be without `keepLines`, which only gives some
+ * nodes their shared block's own copy: a warm start between two such spots
+ * copies every node exactly, average included, as for the same spot.
+ */
+function withoutKeptLines<T extends Pick<SpotConfig, 'shareHistories'>>(game: T): T {
+	const asked = game.shareHistories;
+	if (!asked || asked === true || asked.keepLines === undefined) return game;
+	const { keepLines: _kept, ...rest } = asked;
+	return { ...game, shareHistories: Object.keys(rest).length > 0 ? rest : true };
 }
 
 /** Largest rank distance within a runout bucket, for `runoutBuckets: true`. */

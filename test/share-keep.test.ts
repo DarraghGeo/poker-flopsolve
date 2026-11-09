@@ -1,0 +1,134 @@
+/**
+ * `ShareHistories.keepLines`: chosen lines keep their own turn and river
+ * storage while the rest share (issue #101).
+ */
+
+import { describe, expect, it } from 'vitest';
+import { createRun, defineSpot, NodeKind, turnLineReach } from '../src/index.ts';
+import type { Spot, SpotConfig } from '../src/index.ts';
+
+const flop: SpotConfig = {
+	board: 'Ts 9h 4d', pot: 60, stack: 100,
+	oop: 'AA,KK,QQ,AKs,AQs,KQs,76s,65s', ip: 'JJ,TT,99,AJs,KJs,QJs,JTs,T9s',
+	betSizes: [[0.33, 0.66]], maxRaises: 1,
+};
+
+/** Every flop line that reaches the turn, as `Solution.path` names its first turn decision. */
+function turnLines(spot: Spot): string[] {
+	const run = createRun(spot, { workers: 1, analysisOnly: true });
+	try {
+		const sol = run.snapshot();
+		const { tree } = spot;
+		const lines: string[] = [];
+		for (let node = 0; node < tree.nodeCount; node++) {
+			if (tree.kind[node] !== NodeKind.Chance || tree.round[node] !== 0) continue;
+			lines.push(sol.path(tree.edgeChild[tree.firstEdge[node]]));
+		}
+		return lines;
+	} finally {
+		run.close();
+	}
+}
+
+/** Nodes at or below `line`'s first turn decision. */
+function below(spot: Spot, line: string): number[] {
+	const run = createRun(spot, { workers: 1, analysisOnly: true });
+	try {
+		const sol = run.snapshot();
+		const { tree } = spot;
+		const found = [...tree.decisionNodes].find((n) => sol.path(n) === line);
+		if (found === undefined) throw new Error(`no ${line}`);
+		const out: number[] = [];
+		const stack = [found];
+		while (stack.length) {
+			const n = stack.pop()!;
+			out.push(n);
+			for (let e = 0; e < tree.numEdges[n]; e++) stack.push(tree.edgeChild[tree.firstEdge[n] + e]);
+		}
+		return out;
+	} finally {
+		run.close();
+	}
+}
+
+describe('shareHistories.keepLines', () => {
+	const shared = defineSpot({ ...flop, shareHistories: true });
+	const lines = turnLines(shared);
+	// A line whose river shares with another's.
+	const sharing = lines.find((line) => below(shared, line).some((n) => shared.historyAlias![n] !== n))!;
+
+	it('leaves the storage of everything below a kept line its own', () => {
+		expect(sharing).toBeDefined();
+		const kept = defineSpot({ ...flop, shareHistories: { keepLines: [sharing] } });
+		for (const n of below(kept, sharing)) expect(kept.historyAlias![n]).toBe(n);
+		// Nothing below a kept line is an owner the rest follow either.
+		const mine = new Set(below(kept, sharing));
+		for (let n = 0; n < kept.tree.nodeCount; n++) if (!mine.has(n)) expect(mine.has(kept.historyAlias![n]) && kept.historyAlias![n] !== n).toBe(false);
+		expect(kept.estimate.bytes).toBeGreaterThan(shared.estimate.bytes);
+		expect(kept.estimate.bytes).toBeLessThan(defineSpot(flop).estimate.bytes);
+	});
+
+	it('is the same as plain sharing when empty', () => {
+		const empty = defineSpot({ ...flop, shareHistories: { keepLines: [] } });
+		expect(Array.from(empty.historyAlias!)).toEqual(Array.from(shared.historyAlias!));
+	});
+
+	it('keeping every line solves as the unshared spot does', () => {
+		const all = defineSpot({ ...flop, shareHistories: { keepLines: lines } });
+		expect(all.estimate.bytes).toBe(defineSpot(flop).estimate.bytes);
+		const solve = (spot: Spot): number => {
+			const run = createRun(spot, { workers: 1 });
+			try {
+				run.step(20);
+				return run.exploitabilityPercent();
+			} finally {
+				run.close();
+			}
+		};
+		expect(solve(all)).toBe(solve(defineSpot(flop)));
+	});
+
+	it('refuses a line the tree does not have', () => {
+		expect(() => defineSpot({ ...flop, shareHistories: { keepLines: ['bet 999 call /'] } })).toThrow(/keepLines/);
+	});
+});
+
+describe('turnLineReach and refineLines', () => {
+	const config: SpotConfig = { ...flop, shareHistories: true };
+
+	it('ranks the flop lines by reach, summing to the pairs that see a turn', () => {
+		const run = createRun(defineSpot(config), { workers: 1 });
+		try {
+			run.step(30);
+			const ranked = turnLineReach(run.snapshot());
+			expect(ranked.map((l) => l.line).sort()).toEqual(turnLines(run.spot).sort());
+			for (let i = 1; i < ranked.length; i++) expect(ranked[i].share).toBeLessThanOrEqual(ranked[i - 1].share);
+			const total = ranked.reduce((s, l) => s + l.share, 0);
+			expect(total).toBeGreaterThan(0.2);
+			expect(total).toBeLessThanOrEqual(1 + 1e-9);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('a warm start between spots differing only in keepLines carries the average', () => {
+		const run = createRun(defineSpot(config), { workers: 1 });
+		try {
+			run.step(40);
+			const { line, node } = turnLineReach(run.snapshot())[0];
+			const before = run.snapshot().reachAt(node, 0, 0);
+			const kept = createRun(defineSpot({ ...flop, shareHistories: { keepLines: [line] } }), { workers: 1, warmStart: run });
+			try {
+				expect(kept.warmStart?.averages).toBe(true);
+				// The same strategy, so the same ranges at the line and the same exploitability.
+				const after = kept.snapshot().reachAt(node, 0, 0);
+				for (let h = 0; h < before.length; h++) expect(after[h]).toBeCloseTo(before[h], 6);
+				expect(kept.exploitabilityPercent()).toBeCloseTo(run.exploitabilityPercent(), 4);
+			} finally {
+				kept.close();
+			}
+		} finally {
+			run.close();
+		}
+	});
+});

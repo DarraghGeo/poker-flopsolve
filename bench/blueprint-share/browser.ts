@@ -4,7 +4,7 @@
  * when exploitability and the root play stop improving, seconds per
  * iteration, and the tab's peak memory.
  *
- *   node --import tsx bench/blueprint-share/browser.ts <board> <none|river|turn+river> [workers,...] [cap] [sampling]
+ *   [KEEP_TOP=k [PICK=80] [WARM=1]] node --import tsx bench/blueprint-share/browser.ts <board> <none|river|turn+river> [workers,...] [cap] [sampling]
  *
  * The clock counts solving only (`step`). Every 20 iterations, off the
  * clock, it measures exploitability and the root play: OOP at the root and
@@ -39,6 +39,14 @@ const EVERY = 20;
 const approxNames = approxArg ? approxArg.split(',') : [];
 const approximations: Approximations = approxNames.includes('sampling') ? { chanceSampling: {} } : {};
 const config: SpotConfig = { ...blueprintOf(boardName, shareName), maxBytes: 3.5 * 2 ** 30 };
+// Issue #101's hybrid: KEEP_TOP=k keeps the k most-reached flop lines' rivers
+// unshared, ranked by `turnLineReach` after PICK (default 80) shared
+// iterations; those count on the clock. With WARM=1 the hybrid continues
+// from that solve (a warm start, average included), both alive at once; else
+// it starts cold once the picking solve is closed.
+const KEEP_TOP = process.env.KEEP_TOP === undefined ? 0 : Number(process.env.KEEP_TOP);
+const PICK = Number(process.env.PICK ?? 80);
+const WARM = process.env.WARM === '1';
 const reference = JSON.parse(
 	readFileSync(new URL(`../../scratch/blueprint-share/${boardName}-none/root.json`, import.meta.url), 'utf8'),
 ) as { actions: { actions: string[]; evs: (number | null)[][]; reach: (number | null)[] }[] };
@@ -75,6 +83,7 @@ interface Out {
 	workers: number;
 	engine: string;
 	estimateBytes: number;
+	kept: string[];
 	checks: Check[];
 }
 
@@ -86,7 +95,7 @@ for (const workers of workerList) {
 	}, 100);
 	const out = await runInBrowser<Out>(
 		`
-		import { createRun, defineSpot } from './src/index.ts';
+		import { createRun, defineSpot, turnLineReach } from './src/index.ts';
 		import { enableThreads } from './src/threads.ts';
 		const CONFIG = ${JSON.stringify(config)};
 		const REF = ${JSON.stringify(refActions)};
@@ -95,11 +104,30 @@ for (const workers of workerList) {
 			const spot = defineSpot(CONFIG);
 			const tree = spot.tree;
 			const nodes = [0, tree.edgeChild[tree.firstEdge[0]]];
-			const run = createRun(spot, { workers: ${workers}, approximations: ${JSON.stringify(approximations)} });
-			const checks = [];
+			const options = { workers: ${workers}, approximations: ${JSON.stringify(approximations)} };
+			let run;
 			let solveMs = 0;
+			let done = 0;
+			let kept = [];
+			if (${KEEP_TOP} > 0) {
+				const t = performance.now();
+				const pre = createRun(spot, options);
+				pre.step(${PICK});
+				kept = turnLineReach(pre.snapshot()).slice(0, ${KEEP_TOP}).map((l) => l.line);
+				const hybrid = defineSpot({ ...CONFIG, shareHistories: { keepLines: kept } });
+				if (${WARM}) {
+					run = createRun(hybrid, { ...options, warmStart: pre });
+					done = ${PICK};
+				}
+				pre.close();
+				if (!${WARM}) run = createRun(hybrid, options);
+				solveMs += performance.now() - t;
+			} else {
+				run = createRun(spot, options);
+			}
+			const checks = [];
 			let previous = null;
-			for (let done = 0; done < ${CAP}; ) {
+			while (done < ${CAP}) {
 				const t = performance.now();
 				run.step(${EVERY});
 				solveMs += performance.now() - t;
@@ -143,7 +171,7 @@ for (const workers of workerList) {
 				previous = probs;
 				checks.push({ iterations: done, solveMs, exploitability, loss, change });
 			}
-			const out = { workers: run.workers, engine: run.engine, estimateBytes: spot.estimate.bytes, checks };
+			const out = { workers: run.workers, engine: run.engine, estimateBytes: run.spot.estimate.bytes, kept, checks };
 			run.close();
 			return out;
 		}
@@ -166,7 +194,7 @@ for (const workers of workerList) {
 	// Every test holds trivially at the last check, which proves nothing: count that as never.
 	const proven = (i: number): number => (i === checks.length - 1 ? -1 : i);
 	console.log(
-		`${boardName} ${shareName}${approxNames.length ? ` +${approxNames.join('+')}` : ''}, ${out.workers} thread(s), ${out.engine}: ` +
+		`${boardName} ${shareName}${approxNames.length ? ` +${approxNames.join('+')}` : ''}${KEEP_TOP ? ` keep top ${KEEP_TOP}${WARM ? ' warm' : ''} (${out.kept.join('; ')})` : ''}, ${out.workers} thread(s), ${out.engine}: ` +
 			`storage ${(out.estimateBytes / MiB).toFixed(0)} MiB, renderer peak RSS ${(rss / MiB).toFixed(0)} MiB, ` +
 			`${(last.solveMs / last.iterations).toFixed(0)} ms/iteration`,
 	);
@@ -180,5 +208,5 @@ for (const workers of workerList) {
 			.map((c) => `${c.iterations}:${c.exploitability.toFixed(2)}%,${c.loss.map((x) => x.toFixed(3)).join('/')},${c.change.map((x) => (100 * x).toFixed(1)).join('/')}@${(c.solveMs / 1000).toFixed(0)}s`)
 			.join(' ')}`,
 	);
-	console.log(JSON.stringify({ board: boardName, share: shareName, approx: approxNames, rss, ...out }));
+	console.log(JSON.stringify({ board: boardName, share: shareName, approx: approxNames, keepTop: KEEP_TOP, warm: WARM, pick: PICK, rss, ...out }));
 }
