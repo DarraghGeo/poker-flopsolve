@@ -23,7 +23,7 @@
 
 import { COMBO_CARDS, COMBOS } from './cards.ts';
 import type { Context } from './cfr.ts';
-import { averageStrategy } from './cfr.ts';
+import { storedStrategy } from './cfr.ts';
 import { markMembers } from './hands.ts';
 import { NodeKind } from './tree.ts';
 
@@ -293,7 +293,7 @@ function walk(
 	const stride = activeCount;
 	const slotBase = ctx.layout.offset[node] + actions * ctx.layout.rowStart[listSlot];
 	const strategy = buffers.strategy[depth];
-	averageStrategy(ctx.strategySum, slotBase, actions, stride, strategy, ctx.regret);
+	storedStrategy(ctx, node, slotBase, actions, stride, strategy);
 
 	// The traverser's values are counterfactual: its own reach never enters.
 	if (owner === traverser) {

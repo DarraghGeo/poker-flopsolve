@@ -1,0 +1,42 @@
+{
+ "threads": 4,
+ "reason": null,
+ "spots": {
+  "rainbow T0 thinSizes": [
+   {
+    "workers": 1,
+    "msPerIteration": 1944.5187499998137,
+    "engine": "wasm"
+   },
+   {
+    "workers": 4,
+    "msPerIteration": 887.0925000002608,
+    "engine": "wasm"
+   }
+  ],
+  "monotone T0 thinSizes": [
+   {
+    "workers": 1,
+    "msPerIteration": 659.28125,
+    "engine": "wasm"
+   },
+   {
+    "workers": 4,
+    "msPerIteration": 295.49875000026077,
+    "engine": "wasm"
+   }
+  ],
+  "monotone T thinSizes": [
+   {
+    "workers": 1,
+    "msPerIteration": 1444.0087500000373,
+    "engine": "wasm"
+   },
+   {
+    "workers": 4,
+    "msPerIteration": 642.496249999851,
+    "engine": "wasm"
+   }
+  ]
+ }
+}

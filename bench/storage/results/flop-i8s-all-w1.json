@@ -1,0 +1,70 @@
+{
+ "spot": "flop",
+ "variant": "i8s-all",
+ "workers": 1,
+ "engine": "js",
+ "storageMiB": 81.4,
+ "estimateMiB": 99.3,
+ "peakRssMiB": 226,
+ "setupSeconds": 0.4,
+ "rows": [
+  {
+   "iterations": 10,
+   "trainSeconds": 16.4,
+   "exploitability": 12.7178,
+   "positiveShare": 0.6754,
+   "mae": 10.5075,
+   "max": 20.4757
+  },
+  {
+   "iterations": 20,
+   "trainSeconds": 33.3,
+   "exploitability": 4.0275,
+   "positiveShare": 0.6747,
+   "mae": 3.6846,
+   "max": 10.5939
+  },
+  {
+   "iterations": 40,
+   "trainSeconds": 66.8,
+   "exploitability": 0.922,
+   "positiveShare": 0.6382,
+   "mae": 1.823,
+   "max": 4.1515
+  },
+  {
+   "iterations": 80,
+   "trainSeconds": 134.3,
+   "exploitability": 0.1762,
+   "positiveShare": 0.6052,
+   "mae": 0.1946,
+   "max": 0.8042
+  },
+  {
+   "iterations": 160,
+   "trainSeconds": 269.8,
+   "exploitability": 0.0583,
+   "positiveShare": 0.5831,
+   "mae": 0.0462,
+   "max": 0.2495
+  },
+  {
+   "iterations": 320,
+   "trainSeconds": 538.1,
+   "exploitability": 0.0291,
+   "positiveShare": 0.5736,
+   "mae": 0.0193,
+   "max": 0.1398
+  }
+ ],
+ "sizeChoice": {
+  "actionMae": 0.1141,
+  "actionMax": 4.9262,
+  "playedActionMae": null,
+  "playedActionMax": 0,
+  "sameBestAction": 0.8535,
+  "sameBestSize": 1,
+  "sameBestSizeWhereClear": 1,
+  "clearShare": 0
+ }
+}

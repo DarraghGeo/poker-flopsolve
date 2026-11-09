@@ -21,7 +21,7 @@ import type { Tree } from './tree.ts';
 import { ENGINE_WASM } from './wasm/engine.ts';
 import { ENGINE_SHARED_WASM } from './wasm/engine-shared.ts';
 import type { ShardPlan } from './parallel.ts';
-import { THREAD_FAILED_ERROR, WORKER_START_ERROR, WORKER_START_MS } from './parallel.ts';
+import { awaitThreads, THREAD_FAILED_ERROR, WORKER_START_ERROR, WORKER_START_MS } from './parallel.ts';
 
 /** The parts of the WebAssembly API used here, typed locally: the project builds without DOM typings. */
 interface WasmApi {
@@ -82,6 +82,8 @@ export interface Engine {
 	readonly strategySum: Float32Array;
 	/** Chance sampling's state, as views onto the engine's memory; null without sampling. */
 	readonly sampling: { baseline: Float32Array; lastWalk: Int32Array; lastUpdate: Int32Array } | null;
+	/** With shared storage, `Context.discounted` as a view onto the engine's memory; else null. */
+	readonly discounted: Int32Array | null;
 	/** Install as the solver's root traversal; `dcfr` picks the update rule. */
 	root(dcfr: boolean): RootTraversal;
 	/** Release worker threads, if any. */
@@ -105,6 +107,8 @@ export interface EngineWorkerSetup {
 	readonly stride: number;
 	readonly control: SharedArrayBuffer;
 	readonly settings: SharedArrayBuffer;
+	/** With shared storage: where the discount marks, the block table and the weighted nodes (or 0) sit. */
+	readonly shared?: readonly [number, number, number];
 }
 
 /** How a pool starts its workers; the platform layer supplies it. */
@@ -128,7 +132,13 @@ export const ENGINE_CONTROL = { generation: 0, done: 1, command: 2, mode: 3, tra
  */
 export function createEngine(
 	input: EngineInput,
-	pool?: { plan: ShardPlan; threads: number; spawn: SpawnEngineWorker },
+	pool?: {
+		plan: ShardPlan;
+		threads: number;
+		spawn: SpawnEngineWorker;
+		/** The shortest a step waits for the other threads; see `awaitThreads` in src/parallel.ts. */
+		backstopFloorMs?: number;
+	},
 ): Engine | null {
 	const shared = pool !== undefined;
 	const compiledModule = compiledEngine(shared ? 'shared' : 'plain');
@@ -200,6 +210,14 @@ export function createEngine(
 				lastUpdate: add(null, plan.blocks * 4),
 			}
 		: null;
+	// History sharing's once-an-iteration discount marks, only when storage is shared.
+	const share = layout.shared
+		? {
+				marks: add(null, layout.blocks * 4),
+				blockOffset: sample ? sample.blockOffset : add(layout.blockOffset),
+				weighted: layout.reachWeighted ? add(layout.reachWeighted) : -1,
+			}
+		: null;
 
 	const offsets: number[] = [];
 	let total = 64 + Math.ceil(Math.max(input.lowBytes ?? 0, 0) / 16) * 16;
@@ -244,6 +262,10 @@ export function createEngine(
 		};
 	}
 
+	const weightedAt = share && share.weighted >= 0 ? offsets[share.weighted] : 0;
+	if (share) exports.setShared(offsets[share.marks], offsets[share.blockOffset], weightedAt);
+	const discounted = share ? new Int32Array(memory.buffer, offsets[share.marks], layout.blocks) : null;
+
 	const regret = new Float32Array(memory.buffer, offsets[REGRET], layout.totalSlots);
 	const strategySum = new Float32Array(memory.buffer, offsets[SUMS], layout.totalSlots);
 	const me = new Float32Array(memory.buffer, offsets[own[0].rootMe], stride);
@@ -282,6 +304,7 @@ export function createEngine(
 				rootMe: offsets[own[w].rootMe], rootOpp: offsets[own[w].rootOpp],
 				partial: offsets[partials] + (w - 1) * entries * rowBytes,
 				stride, control: controlBuffer, settings: settingsBuffer,
+				...(share ? { shared: [offsets[share.marks], offsets[share.blockOffset], weightedAt] as const } : {}),
 			};
 			workers.push(pool.spawn(setup, (error) => {
 				failure ??= error;
@@ -309,6 +332,9 @@ export function createEngine(
 	const failed = (): Error | null =>
 		failure ?? (control && Atomics.load(control, ENGINE_CONTROL.failed) ? new Error(THREAD_FAILED_ERROR) : null);
 
+	// The iteration a step is for, and its rule, which shared storage's threads need.
+	let iteration = 0;
+	let dcfrRule = 0;
 	const run = (asked: number, traverser: 0 | 1, iterWeight: number, dcfr: boolean): Float64Array => {
 		// Once any thread has failed, so does every step after, before it
 		// touches anything.
@@ -325,7 +351,9 @@ export function createEngine(
 			for (let i = 0; i < count; i++) into[i] = weights[active.list[from + i]];
 		}
 		const [positive, negative, sum, weight, clamp] = settingsFor(mode, iterWeight, dcfr);
-		if (plan) exports.setIteration(mode === Mode.Train ? iterWeight : 0, dcfr ? 1 : 0);
+		iteration = mode === Mode.Train ? iterWeight : 0;
+		dcfrRule = dcfr ? 1 : 0;
+		if (plan || share) exports.setIteration(iteration, dcfrRule);
 		let at: number;
 		if (!pool) {
 			if (apply === 0) exports.setPhase(0, 0);
@@ -361,13 +389,14 @@ export function createEngine(
 		exports.setPhase(1, 0);
 		exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
 		// Every thread walks its slice of the split round.
-		settings!.set([positive, negative, sum, weight, clamp, apply]);
+		settings!.set([positive, negative, sum, weight, clamp, apply, iteration, dcfrRule]);
 		Atomics.store(control!, ENGINE_CONTROL.done, 0);
 		Atomics.store(control!, ENGINE_CONTROL.mode, mode);
 		Atomics.store(control!, ENGINE_CONTROL.traverser, traverser);
 		Atomics.store(control!, ENGINE_CONTROL.command, 0);
 		Atomics.add(control!, ENGINE_CONTROL.generation, 1);
 		Atomics.notify(control!, ENGINE_CONTROL.generation);
+		const dispatched = performance.now();
 		exports.setShard(plan.round, plan.bounds[0], plan.bounds[1]);
 		exports.setPhase(0, apply);
 		const valueView = new Float32Array(memory.buffer, offsets[values], entries * stride);
@@ -378,11 +407,10 @@ export function createEngine(
 		}
 		// A thread whose walk throws says so in `failed` and counts itself
 		// done, as its error event cannot reach this thread while it waits.
-		for (;;) {
-			const done = Atomics.load(control!, ENGINE_CONTROL.done);
-			if (done >= threads - 1 || failure) break;
-			Atomics.wait(control!, ENGINE_CONTROL.done, done, 50);
-		}
+		// One killed without unwinding does neither, hence the backstop.
+		failure ??= awaitThreads(
+			control!, ENGINE_CONTROL.done, threads - 1, dispatched, pool!.backstopFloorMs, () => failure !== null,
+		);
 		const dead = failed();
 		if (dead) throw dead;
 		const partialView = new Float32Array(memory.buffer, offsets[partials], (threads - 1) * entries * stride);
@@ -403,6 +431,7 @@ export function createEngine(
 		regret,
 		strategySum,
 		sampling: samplingViews,
+		discounted,
 		threads,
 		root(dcfr) {
 			return (mode, traverser, iterWeight) => run(mode, traverser, iterWeight, dcfr);
@@ -434,6 +463,7 @@ export interface EngineExports {
 		baselines: number, lastWalks: number, lastUpdates: number, blockOffsets: number,
 	): void;
 	setIteration(t: number, dcfr: number): void;
+	setShared(marks: number, blockOffsets: number, weighted: number): void;
 	run(mode: number, traverser: number, me: number, opp: number, positive: number, negative: number, sum: number, weight: number, clamp: number): number;
 	runChance(mode: number, traverser: number, node: number, me: number, opp: number, positive: number, negative: number, sum: number, weight: number, clamp: number): number;
 }

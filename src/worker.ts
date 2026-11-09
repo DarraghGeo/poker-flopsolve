@@ -16,7 +16,7 @@
 
 import { parentPort, workerData } from 'node:worker_threads';
 import { COMBOS } from './cards.ts';
-import type { Context, Mode } from './cfr.ts';
+import type { CompactPlan, Context, Mode } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
@@ -25,7 +25,7 @@ import {
 	matchupMass,
 	runoutWeights,
 } from './cfr.ts';
-import { defineSpot, makeRegretStore, makeSumStore, PRECISION_BYTES } from './index.ts';
+import { defineSpot, makeRegretStore, makeSumStore, PRECISION_BYTES, reachWeighted } from './index.ts';
 import type { Precision, SpotConfig } from './index.ts';
 import { buildShowdownTable } from './showdown.ts';
 import { buildHandSpace } from './hands.ts';
@@ -34,11 +34,12 @@ import { lineBoards, lineScales } from './lines.ts';
 import { COMMAND, CONTROL } from './parallel.ts';
 
 const setup = workerData as WorkerSetup;
-const { config, dcfr, precision, simd } = setup.payload as {
+const { config, dcfr, precision, simd, compact } = setup.payload as {
 	config: SpotConfig;
 	dcfr: boolean;
 	precision: Precision;
 	simd: boolean;
+	compact: CompactPlan | null;
 };
 
 const spot = defineSpot(config);
@@ -49,7 +50,8 @@ for (const combo of spot.players[1].combos) relevant[combo] = 1;
 const weights = runoutWeights(spot.runouts);
 const lines = spot.runouts.lines;
 const layout = buildLayout(
-	spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], lines ? lineBoards(lines, spot.tree) : undefined,
+	spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], spot.historyAlias, reachWeighted(config),
+	compact ?? undefined, lines ? lineBoards(lines, spot.tree) : undefined,
 );
 
 const showdown = buildShowdownTable(spot.runouts, relevant);
@@ -65,6 +67,13 @@ const ctx: Context = {
 	strategySum: makeSumStore(precision, setup.strategySum),
 	regretScale: setup.regretScale ? new Float64Array(setup.regretScale) : null,
 	sumScale: setup.sumScale ? new Float64Array(setup.sumScale) : null,
+	compact,
+	compactRegret:
+		setup.compactRegret?.map((chunk) => (compact?.float ? new Float32Array(chunk) : new Int8Array(chunk))) ?? null,
+	handShift: setup.handShift?.map((chunk) => new Uint8Array(chunk)) ?? null,
+	compactSum: setup.compactSum?.map((chunk) => new Uint8Array(chunk)) ?? null,
+	sumShift: setup.sumShift?.map((chunk) => new Uint8Array(chunk)) ?? null,
+	compactScale: setup.compactScale ? new Float64Array(setup.compactScale) : null,
 	scratch: makeTerminalScratch(),
 	chipScale: spot.chipScale,
 	active,
@@ -81,6 +90,8 @@ const ctx: Context = {
 	entryIndexOf: null,
 	expandOrbits: false,
 	simd,
+	// This worker's runouts are its own, so are their blocks and the marks on them.
+	discounted: layout.shared ? new Int32Array(layout.blocks) : null,
 	...(lines ? { lineStarts: lines.chanceStart, lineScales: lineScales(spot.runouts, spot.tree, active, hands) } : {}),
 };
 

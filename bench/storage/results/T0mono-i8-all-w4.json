@@ -1,0 +1,54 @@
+{
+ "spot": "T0mono",
+ "variant": "i8-all",
+ "workers": 4,
+ "engine": "js",
+ "storageMiB": 196,
+ "estimateMiB": 201.1,
+ "peakRssMiB": 597,
+ "setupSeconds": 0.7,
+ "rows": [
+  {
+   "iterations": 40,
+   "trainSeconds": 96.3,
+   "exploitability": 32.5721,
+   "positiveShare": 0.5847,
+   "mae": 7.2746,
+   "max": 40.4265
+  },
+  {
+   "iterations": 80,
+   "trainSeconds": 193.5,
+   "exploitability": 14.9064,
+   "positiveShare": 0.56,
+   "mae": 3.8633,
+   "max": 20.3791
+  },
+  {
+   "iterations": 160,
+   "trainSeconds": 384.1,
+   "exploitability": 8.3182,
+   "positiveShare": 0.5544,
+   "mae": 2.2825,
+   "max": 11.2418
+  },
+  {
+   "iterations": 320,
+   "trainSeconds": 778.6,
+   "exploitability": 4.8752,
+   "positiveShare": 0.5383,
+   "mae": 0.5495,
+   "max": 2.5917
+  }
+ ],
+ "sizeChoice": {
+  "actionMae": 2.9813,
+  "actionMax": 34.5362,
+  "playedActionMae": 0.4955,
+  "playedActionMax": 1.7687,
+  "sameBestAction": 0.4424,
+  "sameBestSize": 0.5991,
+  "sameBestSizeWhereClear": 0.8182,
+  "clearShare": 0.5576
+ }
+}

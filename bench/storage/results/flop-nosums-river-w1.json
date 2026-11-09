@@ -1,0 +1,62 @@
+{
+ "spot": "flop",
+ "variant": "nosums-river",
+ "workers": 1,
+ "engine": "js",
+ "storageMiB": 109.3,
+ "estimateMiB": 127.2,
+ "peakRssMiB": 241,
+ "setupSeconds": 0.4,
+ "rows": [
+  {
+   "iterations": 10,
+   "trainSeconds": 9.8,
+   "exploitability": 15.5891,
+   "mae": 10.3151,
+   "max": 21.4283
+  },
+  {
+   "iterations": 20,
+   "trainSeconds": 19.7,
+   "exploitability": 5.6731,
+   "mae": 2.9885,
+   "max": 9.3669
+  },
+  {
+   "iterations": 40,
+   "trainSeconds": 39.3,
+   "exploitability": 1.9485,
+   "mae": 1.1688,
+   "max": 3.0545
+  },
+  {
+   "iterations": 80,
+   "trainSeconds": 80.9,
+   "exploitability": 0.4446,
+   "mae": 0.1451,
+   "max": 0.6747
+  },
+  {
+   "iterations": 160,
+   "trainSeconds": 165,
+   "exploitability": 0.1386,
+   "mae": 0.0395,
+   "max": 0.2179
+  },
+  {
+   "iterations": 320,
+   "trainSeconds": 324.4,
+   "exploitability": 0.0625,
+   "mae": 0.0194,
+   "max": 0.1108
+  }
+ ],
+ "sizeChoice": {
+  "actionMae": 0.2048,
+  "actionMax": 3.7162,
+  "sameBestAction": 0.7727,
+  "sameBestSize": 1,
+  "sameBestSizeWhereClear": 1,
+  "clearShare": 0
+ }
+}

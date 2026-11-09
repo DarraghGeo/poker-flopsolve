@@ -11,7 +11,7 @@
 import { COMBO_CARDS, COMBOS, comboIndex, formatCards, parseCards } from './cards.ts';
 import type { BetSize, RaiseSizes, Tree } from './tree.ts';
 import type { PerPlayer } from './tree.ts';
-import { ACTION_LABELS, ActionKind, buildTree, forPlayer, isPerPlayer, mapPlayers, NodeKind, raisesPerRound } from './tree.ts';
+import { actionLabel, ActionKind, buildTree, forPlayer, isPerPlayer, mapPlayers, NodeKind, raisesPerRound } from './tree.ts';
 import type { Runouts } from './runouts.ts';
 import type { ResolvedBoard } from './runouts.ts';
 export { rankSwap } from './runouts.ts';
@@ -27,10 +27,11 @@ import { buildHandSpace } from './hands.ts';
 import { createEngine } from './engine.ts';
 import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
+import { aliasHistories } from './history-merge.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
 import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit } from './platform/node.ts';
-import type { Context, PlayerIndex, RegretStore, RootValues, SamplingOptions, Solver, SumStore } from './cfr.ts';
+import type { CompactPlan, Context, PlayerIndex, RegretStore, RootValues, SamplingOptions, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
@@ -50,6 +51,8 @@ export * from './eval7.ts';
 export { activeCombos, parseRange, rangeWeight } from './range.ts';
 export type { ResolvedBoard } from './runouts.ts';
 export type { WarmStartReport } from './warm.ts';
+export { resolveSubgame } from './resolve.ts';
+export type { Gadget, ResolvedSubgame, ResolveOptions } from './resolve.ts';
 export { simdAvailable } from './kernels.ts';
 export type { BetSize } from './tree.ts';
 export type { SamplingOptions, Solver } from './cfr.ts';
@@ -122,6 +125,42 @@ export interface SpotConfig {
 	 * with 0.1, sizes 0.33 and 0.4 become one 0.365. Default 0, none.
 	 */
 	readonly mergeSizes?: number;
+	/**
+	 * Bets, raises and shoves to cut from the tree, with everything below
+	 * them: each the readable path of the node the action leads to, exactly as
+	 * `Solution.path` writes it — `"check bet 18.15"`, `"bet 41.25 raise
+	 * 133.31"`, `"check check / bet 18.15"`, chips being the actor's total
+	 * investment after the action and `/` a deal. Only the line named goes; the
+	 * same size elsewhere stays. Checks, calls and folds cannot be cut, and a
+	 * path that names no such action in the tree is refused.
+	 *
+	 * For a budgeted tree: keep three sizes where they earn their memory, one
+	 * where they do not. A tree's memory is almost all on the river, and each
+	 * flop or turn action multiplies the river subtrees below it, so cutting a
+	 * line saves what its whole subtree stores. Default none; unset, the tree
+	 * is the one the other settings build, unchanged.
+	 */
+	readonly removeActions?: readonly string[];
+	/**
+	 * Thin the bet sizes to a shape that keeps most of what the full ones are
+	 * worth in a fraction of the memory. Every size stays at the root, where
+	 * out of position opens the first round. Everywhere else a decision keeps
+	 * one bet, raise or shove: the one nearest three quarters of the pot, a
+	 * shove where that would be one. Opening the last round after an earlier
+	 * round saw a bet, sizes above the pot and the shove stay as well.
+	 *
+	 * The shape is what growing sizes one at a time by their value per byte
+	 * picked on As Kh 7d and Ks 9s 4s (issue #51). Measured on As Kh 7d, pot
+	 * 55, stack 975, sizes 0.33 / 0.75 / 1.5 with shove-only raises and two
+	 * aggressions: see the `Approximations` notes for its memory and error.
+	 * It is a fixed rule, so it costs nothing to apply. A subgame from
+	 * `Solution.subgameAt` gets the full sizes back unless its betting sets
+	 * this again, and then it is thinned as a tree of its own: bets on the
+	 * streets before it do not count, so a river after a bet on the flop
+	 * keeps only the 0.75 size, where the whole tree also kept its big sizes
+	 * and shove. Default false; unset, the tree is unchanged.
+	 */
+	readonly thinSizes?: boolean;
 	/** Refuse a range wider than this many combinations. */
 	readonly maxCombos?: number;
 	/**
@@ -160,6 +199,57 @@ export interface SpotConfig {
 	 * strategy in the real game, every card dealt. Default false.
 	 */
 	readonly runoutBuckets?: boolean | number;
+	/**
+	 * Share river storage between betting histories that reach the same pot,
+	 * a lossy approximation for fitting a spot in memory (issue #49). Off by
+	 * default.
+	 *
+	 * Every earlier line gets its own copy of the streets below it, yet with
+	 * pot-fraction sizes many lines meet: check, bet, call and bet, call
+	 * reach the same pot, and so does every raise line taken in either order.
+	 * Their subtrees are identical, so their nodes keep one set of regrets and
+	 * strategy sums. Each history is still walked with its own reach, so an
+	 * iteration costs exactly what it did; only storage shrinks. On the
+	 * three-size target spot (AsKh7d, pot 55, stack 975, sizes 33/75/150%, a
+	 * 75% raise and all-in, three aggressions) 173 river starts collapse to 23
+	 * and storage falls 5.9 times: 17.2 GiB to 2.9 at 32 bits, 8.7 to 1.5 at 16.
+	 * There, at 16 bits, a Node solve peaked at 1.6 GiB on one thread and 2.0
+	 * on four (30 s an iteration), and was 12% of pot exploitable after 150
+	 * iterations.
+	 *
+	 * What is lost is recall: a player plays one strategy for every line that
+	 * met, though the ranges each line brings differ. Each history's regret is
+	 * weighted by how often the acting hand plays into it, which cut the cost
+	 * fourfold against plain CFR's sum. Measured on AsKh7d, pot 55, stack
+	 * 975, against the exact solve, 4 threads: with sizes 33/75/150%, an
+	 * all-in raise and two aggressions, 5.8 GiB became 1.22 GiB, and after
+	 * 400 iterations the strategy was 8.0% of pot exploitable, with
+	 * per-combination root EVs 0.72% of pot off on average and 2.5% at worst
+	 * (the exact solve: 0.28%). With one 50% size, 4.0% exploitable after
+	 * 300 iterations, EVs 0.67% off on average and 6.8% at worst.
+	 * Exploitability is measured in the full game, which the strategy covers
+	 * node by node, so it is exact. Do not expect it to approach
+	 * equilibrium: expect a strategy several percent of the pot from it, in
+	 * a spot that otherwise does not fit.
+	 *
+	 * Two consequences of one block serving several histories, both part of
+	 * the approximation: within an iteration, a history visited later plays
+	 * the regrets an earlier one has already updated, so the result depends a
+	 * little on the order of the tree; and under `algorithm: 'cfr+'` each
+	 * history's update is clamped at zero on its own, rather than their sum.
+	 * A spot with it can warm-start only from a solve that shares too.
+	 *
+	 * `true` shares the river. See `ShareHistories` for the turn and for
+	 * lossier buckets.
+	 */
+	readonly shareHistories?: boolean | ShareHistories;
+	/**
+	 * Store regrets and strategy sums at 8 bits — an approximation, off by
+	 * default. See `CompactStorage`. Set here rather than on the solve because it
+	 * decides how much memory the spot needs, which `maxBytes` is checked
+	 * against when the spot is defined.
+	 */
+	readonly compactStorage?: CompactStorage;
 	/**
 	 * Deal coarser turn and river cards in chosen betting lines, and every
 	 * card in the rest: an approximation that shrinks the tree (issue #53).
@@ -224,6 +314,126 @@ export interface SpotConfig {
 	readonly lineRunouts?: LineRunouts;
 }
 
+/**
+ * Compact storage (issue #50): accumulators as 8-bit integers, each hand on
+ * each board scaled by its own power of two, instead of 32- or 16-bit
+ * values. Regret matching and the average strategy both divide a hand's
+ * values by their own total, so a per-hand scale cancels wherever a strategy
+ * is read and costs only a byte per hand. Rounding is at random, with odds
+ * set by the remainder, so every stored value is right on average; the
+ * randomness is a hash of the slot and iteration, so a solve is deterministic
+ * at any thread count.
+ *
+ * Two modes:
+ *
+ * - With strategy sums (the default): regrets and sums at 8 bits, about 2.75
+ *   bytes a slot against 16-bit storage's 4 and 32-bit's 8. Measured, it
+ *   converges like the full solve: on the bench flop (AsKh7d, one size) 0.18%
+ *   of pot at 80 iterations against 0.18%, 0.058% at 160 against 0.052%; on
+ *   the monotone flop with three sizes (Ks9s4s, issue #20's T₀) 1.87% at 160
+ *   against 1.85%. Rounding the sums leaves a floor, near 0.03% of pot on the
+ *   bench flop and 0.1% on a small, narrow-range spot. On issue #20's T₀
+ *   (AsKh7d, three sizes, all-in raise, SPR 18), at 320 iterations it was
+ *   0.81% of pot exploitable where 32-bit storage was 0.69%, per-hand root
+ *   EVs 0.23% of pot off a 0.17% reference, every hand's preferred bet size
+ *   kept, in 1.75 GiB where 32-bit storage took 5.1 and 16-bit 2.6. T itself
+ *   takes 5.9 GiB, 16-bit storage 8.7.
+ * - `sums: false`: no strategy sums, so each node's strategy, wherever one is
+ *   read (`strategyAt`, `reachAt`, EVs, exploitability), is the current
+ *   profile, the regret-matched strategy the next iteration plays. About 1.4
+ *   bytes a slot, 1.03 with `blockScale`: T in 2.2 GiB. Per-hand root EVs stay as close as
+ *   the average's, as `currentProfileEv` found, but the strategy is far more
+ *   exploitable: 2 times at equal iterations on the bench flop, 5 to 8 times
+ *   on deeper or narrower spots (T₀ monotone: 4.0% of pot at 320 iterations
+ *   against 0.71%), and the bet size each hand prefers at the root agreed with
+ *   the reference for 62-82% of the hands where it was clear, against all of
+ *   them for the average. `algorithm: 'cfr+'`, whose current profile swings
+ *   less, is the better rule for the strategy; DCFR's current profile gives
+ *   the closer EVs (on T₀ monotone 0.55% of pot against the average's 1.19%,
+ *   but 4.9% exploitable).
+ *
+ * Rounding regrets to 8 bits costs training almost nothing: with 32-bit
+ * regrets and no sums (`float`) the same runs were no better.
+ *
+ * Training is otherwise the exact solve's; exploitability is measured
+ * exactly, in the full tree. Storage is split in chunks under `chunkBytes`,
+ * because browsers refuse a buffer of 2 GiB. Runs on the JavaScript engine
+ * and its Node worker threads, not the WebAssembly one; an iteration costs
+ * about 1.5 times a 32-bit one there; not with `warmStart`, `coarseStart`,
+ * `chanceSampling`, `analysisOnly` or a `precision`.
+ *
+ * With `shareHistories`, a node sharing another's storage shares its compact
+ * storage too; together they fit issue #20's target T in 0.99 GiB (0.37
+ * without sums). Measured on T₀ at 160 iterations, compact storage added
+ * about a tenth to sharing's own loss: 10.5% of pot exploitable against
+ * 9.5%, root EVs 0.86% of pot off against 0.66%, in a third of the memory.
+ *
+ * What was measured and left out is with the other approximations, in the
+ * comment inside `Approximations`.
+ */
+export interface CompactStorage {
+	/**
+	 * Keep 8-bit strategy sums, and with them the average strategy. Default
+	 * true; false stores only regrets and plays the current profile.
+	 */
+	readonly sums?: boolean;
+	/**
+	 * With `sums: false`, one scale per node and board instead of one per
+	 * hand: about 1.03 bytes a slot instead of 1.4. Under CFR+ it measured
+	 * nearly as accurate (0.077% of pot against 0.064% on the bench flop at
+	 * 320 iterations); under DCFR, whose large negative regrets then crowd
+	 * the scale, clearly less (0.16% against 0.08%).
+	 */
+	readonly blockScale?: boolean;
+	/**
+	 * First round stored compactly, from the spot's first (0); earlier rounds
+	 * keep 32-bit regrets and sums. Default 0. With `sums: false`, an earlier
+	 * round's average above the current profile measured worse than the
+	 * current profile throughout (0.053% of pot against 0.035% on the bench
+	 * flop): the two come from different iterations.
+	 */
+	readonly from?: number;
+	/**
+	 * Largest single buffer to allocate, in bytes; storage is split in chunks
+	 * no bigger, a node never split. Default 1 GiB: Chromium refuses an
+	 * ArrayBuffer of 2 GiB, but gives several smaller ones.
+	 */
+	readonly chunkBytes?: number;
+	/** For measurement: the largest regret magnitude stored, at most 127. */
+	readonly steps?: number;
+	/** For measurement: round regrets to nearest instead of at random. */
+	readonly nearest?: boolean;
+	/** For measurement, with `sums: false`: keep 32-bit regrets, dropping only the sums. */
+	readonly float?: boolean;
+}
+
+/** See `SpotConfig.shareHistories`. */
+export interface ShareHistories {
+	/**
+	 * Also share subtrees of the same actions whose stack-to-pot ratio falls
+	 * in one bucket of this log-width, their amounts and payoffs different.
+	 * Measured, it saves nothing over exact meetings up to a width of 1 on
+	 * one-size trees; on the three-size target, 1.5 times more storage at
+	 * 0.1 and 2 times at 4, where a one-size tree was left 20% of pot
+	 * exploitable. Unset, exact meetings only.
+	 */
+	readonly spr?: number;
+	/**
+	 * First round shared, counted from the spot's first: from a flop, 1
+	 * shares the turn too. Default the river alone. Sharing the turn as well
+	 * saves about 1% more storage on a flop spot, and measured less accurate (9.4% of pot
+	 * exploitability against 8.0%, and 5.7% against 4.0%), so it is rarely
+	 * worth it.
+	 */
+	readonly fromRound?: number;
+	/**
+	 * How a shared node weighs the histories meeting in it. 'reach' (the
+	 * default) weights each one's regret by how often the acting hand plays
+	 * into it; 'counterfactual' adds them as plain CFR would.
+	 */
+	readonly weighting?: 'reach' | 'counterfactual';
+}
+
 /** Projected cost of solving a spot. */
 export interface Estimate {
 	readonly rounds: number;
@@ -242,6 +452,8 @@ export interface Estimate {
 	 * that does not fit at 32 bits is solved with.
 	 */
 	readonly compressedBytes: number;
+	/** Storage with `compactStorage`, which `maxBytes` is then checked against; else null. */
+	readonly compactBytes: number | null;
 	readonly secondsPerThousandIterations: number;
 	/** Whether the spot fits `maxBytes` at 16 bits or better. */
 	readonly fits: boolean;
@@ -253,7 +465,9 @@ export class SpotTooLargeError extends Error {
 	readonly estimate: Estimate;
 	constructor(estimate: Estimate, maxBytes: number) {
 		super(
-			`This spot needs ~${formatBytes(estimate.compressedBytes)} even at 16-bit precision, ` +
+			(estimate.compactBytes !== null
+				? `This spot needs ~${formatBytes(estimate.compactBytes)} even with compact storage, `
+				: `This spot needs ~${formatBytes(estimate.compressedBytes)} even at 16-bit precision, `) +
 				`but the limit is ${formatBytes(maxBytes)}.\n` +
 				`  ${estimate.decisionNodes} decision nodes x up to ${estimate.runouts.toLocaleString()} runouts ` +
 				`x ${Math.max(...estimate.combos)} combos.\n` +
@@ -290,6 +504,8 @@ export interface Spot {
 	readonly stackUnits: number;
 	/** The configuration this was built from, so a worker can rebuild it. */
 	readonly source: SpotConfig;
+	/** Each node's storage owner under `shareHistories`; unset without it. */
+	readonly historyAlias?: Int32Array;
 	/**
 	 * Find the stored board standing for a real one, and how hands relabel
 	 * onto it. Board indices everywhere else — `strategyAt`, `reachAt`,
@@ -390,6 +606,8 @@ export function defineSpot(config: SpotConfig): Spot {
 			allInThreshold: config.allInThreshold,
 			noDonk: config.noDonk,
 			mergeSizes: config.mergeSizes,
+			removeActions: config.removeActions,
+			thinSizes: config.thinSizes,
 			chipScale,
 			minRaiseUnits: chipScale,
 		},
@@ -398,14 +616,25 @@ export function defineSpot(config: SpotConfig): Spot {
 	runouts ??= enumerateLineRunouts(board, symmetries, merge, tree, lineRule!);
 	const boards = runouts.lines ? lineBoards(runouts.lines, tree) : undefined;
 
-	const layout = buildLayout(tree, runouts, players, 4, boards);
+	const historyAlias = config.shareHistories ? shareHistories(tree, runouts, config, chipScale) : undefined;
+	if (boards && (historyAlias || config.compactStorage)) {
+		throw new Error('lineRunouts does not combine with shareHistories or compactStorage yet');
+	}
+	const layout = buildLayout(tree, runouts, players, 4, historyAlias, reachWeighted(config), undefined, boards);
 	const last = runouts.rounds - 1;
 	const showdownBytes = runouts.counts[last] * (2 * COMBOS + COMBOS + 1) * 2;
 	const bytes = layout.bytes + showdownBytes;
-	const compressedBytes = buildLayout(tree, runouts, players, 2, boards).bytes + showdownBytes;
+	const compressedBytes = buildLayout(tree, runouts, players, 2, historyAlias, false, undefined, boards).bytes + showdownBytes;
+	// Shared storage is walked once per history all the same.
+	const walkedSlots = layout.walkedSlots;
+	const compact = config.compactStorage ? compactPlan(config.compactStorage, runouts.rounds) : null;
+	const compactBytes = compact
+		? buildLayout(tree, runouts, players, 4, historyAlias, reachWeighted(config), compact).bytes + showdownBytes
+		: null;
+	const needed = compactBytes ?? compressedBytes;
 
 	const suggestions: string[] = [];
-	if (compressedBytes > maxBytes) {
+	if (needed > maxBytes) {
 		const widest = Math.max(...[0, 1].flatMap((p) => forPlayer(rows, p).map((r) => r.length)));
 		if (widest > 1) suggestions.push(`use fewer bet sizes (currently up to ${widest} per round)`);
 		const raises = [0, 1].flatMap((p) => [forPlayer(config.maxRaises ?? 1, p)].flat());
@@ -422,8 +651,9 @@ export function defineSpot(config: SpotConfig): Spot {
 		totalSlots: layout.totalSlots,
 		bytes,
 		compressedBytes,
-		secondsPerThousandIterations: (layout.totalSlots * 4 * 1000) / OPS_PER_SECOND,
-		fits: compressedBytes <= maxBytes,
+		compactBytes,
+		secondsPerThousandIterations: (walkedSlots * 4 * 1000) / OPS_PER_SECOND,
+		fits: needed <= maxBytes,
 		suggestions,
 	};
 	if (!estimate.fits) throw new SpotTooLargeError(estimate, maxBytes);
@@ -438,11 +668,44 @@ export function defineSpot(config: SpotConfig): Spot {
 		potUnits: Math.round(config.pot * chipScale),
 		stackUnits: Math.round(config.stack * chipScale),
 		source: config,
+		...(historyAlias ? { historyAlias } : {}),
 		resolveBoard(cards, node) {
 			const starts = runouts.lines && node !== undefined ? lineStarts(runouts.lines, node) : undefined;
 			return resolveBoard(runouts, typeof cards === 'string' ? parseCards(cards) : cards, starts);
 		},
 	};
+}
+
+/** Whether shared nodes weight regrets by own reach; see `ShareHistories.weighting`. */
+export function reachWeighted(config: SpotConfig): boolean {
+	const asked = config.shareHistories;
+	return !!asked && (asked === true || asked.weighting !== 'counterfactual');
+}
+
+/** `SpotConfig.shareHistories` resolved into each node's storage owner. */
+function shareHistories(
+	tree: Tree,
+	runouts: Runouts,
+	config: SpotConfig,
+	chipScale: number,
+): Int32Array {
+	const asked: ShareHistories = config.shareHistories === true ? {} : config.shareHistories || {};
+	const width = asked.spr;
+	if (width !== undefined && !(width > 0)) throw new Error(`shareHistories.spr must be positive, got ${width}`);
+	const from = asked.fromRound;
+	if (from !== undefined && !(Number.isInteger(from) && from >= 1 && from < runouts.rounds)) {
+		throw new Error(
+			`shareHistories.fromRound must be a later round of this spot, 1 to ${runouts.rounds - 1}; got ${from}`,
+		);
+	}
+	if (asked.weighting !== undefined && asked.weighting !== 'reach' && asked.weighting !== 'counterfactual') {
+		throw new Error(`shareHistories.weighting must be 'reach' or 'counterfactual', got ${String(asked.weighting)}`);
+	}
+	return aliasHistories(
+		tree, runouts,
+		{ key: width === undefined ? { kind: 'exact' } : { kind: 'spr', width }, fromRound: from ?? runouts.rounds - 1 },
+		Math.round(config.stack * chipScale),
+	).alias;
 }
 
 /** Solver tuning. */
@@ -1003,6 +1266,57 @@ export interface Approximations {
 	 * 0.8–1.0% of pot off T's per combination on Ks9s4s (T itself took 50
 	 * minutes on 4 threads to 0.23%), and T's turn and river sizes would
 	 * need grafts per flop line, which multiplies the solves.
+	 *
+	 * Growing bet sizes adaptively to a byte budget (#51) was built and
+	 * measured. Only the fixed shape it found is offered, as
+	 * `SpotConfig.thinSizes`; `bench/adaptive/` has the growth. Growth starts
+	 * from one size per decision (0.75, a shove facing a bet where there is
+	 * no sized raise). Each round, it probes every cut size in a tree with it
+	 * added, warm-started from the current solve and stepped 60 iterations.
+	 * It scores each by its first-order gain per byte (Σ reach · σ · (Q −
+	 * the best kept action's Q)), whose rank correlation with the true gain
+	 * was 0.81 on a turn spot (0.71 for the best-response gain). It then adds
+	 * the best until the round's share of the budget is spent, and re-solves.
+	 * On As Kh 7d (bench ranges, pot 55, stack 975, 0.33 / 0.75 / 1.5 with a
+	 * shove, shove-only raises, 2 aggressions, 5.8 GiB), 1.7 GiB grown in 4
+	 * rounds had root EVs 1.0 / 1.2% of pot off the exact solve per
+	 * combination (3.9% at most), with 90% of OOP's range picking the same
+	 * size. The issue's static rule (3 sizes on flop and turn opening bets) had
+	 * 1.6 / 1.3% and 13.5% in 2.0 GiB, and `thinSizes` 1.45 / 1.74% and
+	 * 5.6–6.3% in 1.3 GiB. But the probes need a second tree beside the
+	 * current one: the process peaked at 7.5 GiB (8.7 GiB grown from three
+	 * flop sizes, and still 4.8 GiB with probes capped at 0.9 GiB for a
+	 * 0.85 GiB tree), and growth took 31 to 43 minutes on 3 threads before
+	 * the final solve. On Ks 9s 4s, grown from one size, it never added the
+	 * flop sizes it needed and ended worse than the fixed rule (2.9 / 4.1%
+	 * against 2.1 / 1.9%). Its own census of the exact solve also showed that
+	 * how often a size is used is a poor guide to what it is worth. The flop's
+	 * 0.75 bet was used 5% of the time for 0.005% of pot in 29% of the
+	 * storage, while river shove-raises, used 3% of the time, were worth 2%.
+	 *
+	 * Of the storage compressions issue #50 measured, `compactStorage` offers
+	 * 8-bit regrets and sums; these were left out. Against the bench flop's
+	 * 0.016% of pot at 320 iterations with the full average:
+	 *
+	 * - Dropping strategy sums on the turn and river only, the flop keeping
+	 *   its average: 0.053% (river only, 0.063%), worse than dropping them
+	 *   everywhere (0.035%), since an average above a current profile mixes
+	 *   strategies from different iterations. Offered only as `from`.
+	 * - Fewer bits: at 6 bits a floor near 0.15% of pot, at 4 bits near
+	 *   0.4-0.6%, so packing two regrets a byte, which the target spot would
+	 *   need to reach 2 GiB on this alone, does not pay.
+	 * - A log (µ-law) scale per block, 127 levels over 16 or 24 octaves:
+	 *   0.14% and 0.44%. Its few-percent steps sit at the top of the range,
+	 *   which is what regret matching reads; a per-hand linear scale puts the
+	 *   precision there and costs a byte per hand.
+	 * - Sparse regrets, only positive ones stored: 57-68% of regrets were
+	 *   positive at every checkpoint on every spot, so any index costs more
+	 *   than the dense byte.
+	 * - Recomputing the strategy at fold-or-call nodes (facing an all-in or
+	 *   the raise cap, 37-41% of the slots of the 3-size trees): no decision
+	 *   is choice-free, and those call frequencies are mixed bluff-catching
+	 *   choices that a best response recomputed each iteration does not
+	 *   converge to.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
@@ -1134,9 +1448,24 @@ export interface Solution {
 export type SubgameBetting = Partial<
 	Pick<
 		SpotConfig,
-		'betSizes' | 'raiseSizes' | 'maxRaises' | 'allowAllIn' | 'allInThreshold' | 'noDonk' | 'mergeSizes' | 'maxCombos' | 'maxBytes'
+		| 'betSizes'
+		| 'raiseSizes'
+		| 'maxRaises'
+		| 'allowAllIn'
+		| 'allInThreshold'
+		| 'noDonk'
+		| 'mergeSizes'
+		| 'removeActions'
+		| 'thinSizes'
+		| 'maxCombos'
+		| 'maxBytes'
 	>
 >;
+
+/** Subgame settings that shape the tree, which a carried-over cut would not fit. */
+const TREE_SETTINGS = [
+	'betSizes', 'raiseSizes', 'maxRaises', 'allowAllIn', 'allInThreshold', 'noDonk', 'mergeSizes', 'thinSizes',
+] as const satisfies readonly (keyof SubgameBetting)[];
 
 export interface StrategyView {
 	readonly node: number;
@@ -1198,7 +1527,26 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// A saved strategy is loaded as float32 sums, so analysis stays there.
 	const maxBytes = spot.source.maxBytes ?? DEFAULT_MAX_BYTES;
 	const { totalSlots, bytes } = spot.estimate;
-	const precision: Precision = options.analysisOnly
+	const compact = spot.source.compactStorage ? compactPlan(spot.source.compactStorage, spot.runouts.rounds) : null;
+	if (compact) {
+		const clashes: [unknown, string][] = [
+			[options.analysisOnly, 'analysisOnly'],
+			[options.warmStart, 'warmStart'],
+			[options.approximations?.coarseStart, 'coarseStart'],
+			[options.approximations?.chanceSampling, 'chanceSampling'],
+			[options.precision, 'precision'],
+			// Measuring a bucketed spot in the real game warm-starts that from this one.
+			[spot.runouts.approximate, 'runoutBuckets'],
+		];
+		const clash = clashes.find(([set]) => set)?.[1];
+		if (clash) throw new Error(`compactStorage does not combine with ${clash}`);
+	}
+	if (options.warmStart?.solver.ctx.compact) {
+		throw new Error('A run with compactStorage cannot seed a warm start');
+	}
+	const precision: Precision = compact
+		? 'f32'
+		: options.analysisOnly
 		? 'f32'
 		: options.precision ??
 			(bytes <= maxBytes ? 'f32' : 'i16');
@@ -1218,7 +1566,8 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 
 	const showdown = buildShowdownTable(spot.runouts, relevant);
 	const layout = buildLayout(
-		spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], lines ? lineBoards(lines, spot.tree) : undefined,
+		spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], spot.historyAlias, reachWeighted(spot.source),
+		compact ?? undefined, lines ? lineBoards(lines, spot.tree) : undefined,
 	);
 	const weights = runoutWeights(spot.runouts);
 
@@ -1226,7 +1575,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// with WebAssembly SIMD. Decided before the thread count, because the
 	// browser build can only thread the engine.
 	const wantsEngine =
-		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false && !lines;
+		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false && !compact && !lines;
 	// Sampling's state is one thread's; see `Approximations.chanceSampling`.
 	const samplingOptions = options.approximations?.chanceSampling;
 	const requested = samplingOptions ? 1 : resolveWorkers(options, wantsEngine);
@@ -1275,6 +1624,17 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		strategySum: engine ? engine.strategySum : makeSumStore(precision, allocate(layout.totalSlots * width)),
 		regretScale: quantised ? new Float64Array(allocate(layout.blocks * 8)) : null,
 		sumScale: quantised ? new Float64Array(allocate(layout.blocks * 8)) : null,
+		compact,
+		compactRegret: !compact
+			? null
+			: layout.chunkSlots.map((slots) =>
+					compact.float ? new Float32Array(allocate(slots * 4)) : new Int8Array(allocate(slots)),
+				),
+		handShift: compact?.perHand ? layout.chunkHands.map((hands) => new Uint8Array(allocate(hands))) : null,
+		compactSum: compact?.sums ? layout.chunkSlots.map((slots) => new Uint8Array(allocate(slots))) : null,
+		sumShift: compact?.sums ? layout.chunkHands.map((hands) => new Uint8Array(allocate(hands))) : null,
+		compactScale:
+			compact && !compact.perHand && !compact.float ? new Float64Array(allocate(layout.blocks * 8)) : null,
 		scratch: makeTerminalScratch(),
 		chipScale: spot.chipScale,
 		active,
@@ -1297,6 +1657,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		dcfr: (options.algorithm ?? 'dcfr') === 'dcfr',
 	};
 	if (samplingPlan) ctx.sampling = makeSampling(samplingPlan, engine?.sampling ?? undefined);
+	if (layout.shared) ctx.discounted = engine?.discounted ?? new Int32Array(layout.blocks);
 	if (lines) {
 		const writable = ctx as { lineStarts?: Context['lineStarts']; lineScales?: Context['lineScales'] };
 		writable.lineStarts = lines.chanceStart;
@@ -1335,7 +1696,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		if (warm && coarsePlan) coarseMs.set(solver, coarsePlan.elapsed);
 		// The engine runs its own threads; the JavaScript pool is for the rest.
 		pool = plan && !engine
-			? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd }, requested)
+			? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd, compact }, requested)
 			: null;
 	} catch (error) {
 		// The engine's threads would otherwise stay parked on this run for good.
@@ -1392,6 +1753,29 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 				options.approximations?.currentProfileEv === true,
 			);
 		},
+	};
+}
+
+/** Validate `SpotConfig.compactStorage` into the solver's plan. */
+function compactPlan(settings: CompactStorage, rounds: number): CompactPlan {
+	const from = settings.from ?? 0;
+	if (!Number.isInteger(from) || from < 0 || from >= rounds) {
+		throw new Error(`compactStorage.from must be a round of this spot, 0 to ${rounds - 1}; got ${from}`);
+	}
+	const chunkBytes = settings.chunkBytes ?? 2 ** 30;
+	if (!Number.isInteger(chunkBytes) || chunkBytes < 1) {
+		throw new Error(`compactStorage.chunkBytes must be a positive whole number of bytes; got ${chunkBytes}`);
+	}
+	const steps = settings.steps ?? 127;
+	if (!Number.isInteger(steps) || steps < 1 || steps > 127) {
+		throw new Error(`compactStorage.steps must be an integer from 1 to 127; got ${steps}`);
+	}
+	if (settings.sums !== false && (settings.blockScale || settings.float)) {
+		throw new Error('compactStorage.sums keeps a scale per hand, so blockScale and float need sums: false');
+	}
+	return {
+		from, steps, perHand: !settings.blockScale && !settings.float, stochastic: !settings.nearest,
+		float: settings.float === true, chunkBytes, sums: settings.sums ?? true,
 	};
 }
 
@@ -1685,12 +2069,18 @@ function makeSolution(
 		}
 	}
 
-	const label = (edge: number): string => {
-		const kind = tree.edgeAction[edge];
-		const amount = tree.edgeTarget[edge] / spot.chipScale;
-		return kind >= ActionKind.Bet ? `${ACTION_LABELS[kind]} ${amount}` : ACTION_LABELS[kind];
-	};
+	const label = (edge: number): string => actionLabel(tree.edgeAction[edge], tree.edgeTarget[edge], spot.chipScale);
 
+	const path = (node: number): string => {
+		const steps: string[] = [];
+		let current = node;
+		while (parent[current] >= 0) {
+			const owner = parent[current];
+			steps.push(tree.kind[owner] === NodeKind.Decision ? label(viaEdge[current]) : '/');
+			current = owner;
+		}
+		return steps.reverse().join(' ') || '(root)';
+	};
 	// With line runouts, each node stores only the boards of its own line.
 	const checkLineBoard = (node: number, board: number): void => {
 		const lines = spot.runouts.lines;
@@ -1758,16 +2148,7 @@ function makeSolution(
 			for (let a = 0; a < actions; a++) names.push(label(tree.firstEdge[node] + a));
 			return { node, board, player: owner, actions: names, combos: spot.players[owner].combos, probs };
 		},
-		path(node) {
-			const steps: string[] = [];
-			let current = node;
-			while (parent[current] >= 0) {
-				const owner = parent[current];
-				steps.push(tree.kind[owner] === NodeKind.Decision ? label(viaEdge[current]) : '/');
-				current = owner;
-			}
-			return steps.reverse().join(' ') || '(root)';
-		},
+		path,
 		reachAt,
 		subgameAt(node, board, betting = {}) {
 			const opensRound = node === 0 || (parent[node] >= 0 && tree.kind[parent[node]] === NodeKind.Chance);
@@ -1794,6 +2175,30 @@ function makeSolution(
 				value === undefined ? undefined : (mapPlayers(value, (side) => later(side, listed(side)) as T) as PerPlayer<T>);
 			const rows = laterEach(source.betSizes, () => true) as SpotConfig['betSizes'];
 			const raiseRows = laterEach(source.raiseSizes, (side) => side !== undefined && raisesPerRound(side));
+			// Cuts below the node carry over, re-rooted at it, while the tree
+			// keeps the old betting; new betting builds a tree they need not fit.
+			// Settings read with `??` fall back when given as undefined, and an
+			// unset thinSizes is the full tree the cuts were made on.
+			const keeps = (key: keyof SubgameBetting): boolean =>
+				key === 'thinSizes' ? !betting.thinSizes : betting[key] === undefined && ['betSizes', 'maxRaises', 'allowAllIn'].includes(key);
+			const reshaped = TREE_SETTINGS.some((key) => key in betting && !keeps(key));
+			const prefix = node === 0 ? '' : `${path(node)} `;
+			// Chips in a path are the actor's total investment, which a subgame
+			// counts from its own start: each amount drops by what is already in.
+			const rebase = (step: string): string => {
+				const [label, chips] = step.split(' ');
+				return chips === undefined ? step : `${label} ${(Math.round(Number(chips) * spot.chipScale) - invested) / spot.chipScale}`;
+			};
+			const cuts = source.removeActions
+				?.filter((line) => line.startsWith(prefix))
+				.map((line) => line.slice(prefix.length).split(' ').reduce<string[]>((steps, word, i, words) => {
+					// Words come as single actions ("check", "/") or a label and its chips.
+					if (/^-?[\d.]+$/.test(word)) steps[steps.length - 1] = rebase(`${words[i - 1]} ${word}`);
+					else steps.push(word);
+					return steps;
+				}, []).join(' '));
+			const removeActions =
+				'removeActions' in betting ? betting.removeActions : reshaped || !cuts || cuts.length === 0 ? undefined : cuts;
 
 			return {
 				board: formatCards(cards),
@@ -1808,11 +2213,15 @@ function makeSolution(
 				allInThreshold: 'allInThreshold' in betting ? betting.allInThreshold : laterEach(source.allInThreshold, Array.isArray),
 				noDonk: 'noDonk' in betting ? betting.noDonk : source.noDonk === undefined ? undefined : later(source.noDonk, Array.isArray(source.noDonk)),
 				mergeSizes: 'mergeSizes' in betting ? betting.mergeSizes : source.mergeSizes,
+				...(removeActions ? { removeActions } : {}),
+				// The thinned shape is the whole tree's, so a subgame starts full.
+				...(betting.thinSizes ? { thinSizes: true } : {}),
 				minWeight: source.minWeight,
 				isomorphism: source.isomorphism,
 				maxCombos: 'maxCombos' in betting ? betting.maxCombos : source.maxCombos,
 				maxBytes: 'maxBytes' in betting ? betting.maxBytes : source.maxBytes,
 				chipScale: spot.chipScale,
+				compactStorage: source.compactStorage,
 			};
 		},
 	};

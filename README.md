@@ -155,6 +155,12 @@ Each takes a value per round too. On a turn spot with four sizes, two raises and
 Raise caps per round (`maxRaises: [1, 2, 1]`) and a checked-down river (an empty
 `betSizes` row) were already available and trim the same way.
 
+`removeActions` cuts single lines: each a bet, raise or shove named by the path of the node
+it leads to, as `Solution.path` writes it (`'check bet 18.15'`, `'bet 41.25 call / allin
+975'`), with everything below it. Only the line named goes; the same size elsewhere stays.
+Use it to keep three sizes where they matter and one elsewhere; `thinSizes` (below) is a
+ready-made shape of that kind.
+
 `minWeight: 0.05` trims the ranges the same way: combinations weighted under 5% are
 dropped from both, which suits imported ranges full of hands at a percent or two.
 
@@ -258,6 +264,78 @@ re-solve is the better answer there.
 This is *unsafe* re-solving. The subgame is solved for the ranges that arrive, so its
 strategy can be exploitable in ways the original allowed for. It also does not make the
 earlier streets any more accurate than their coarse model of the future.
+
+### Full flop betting, re-solved turns
+
+For a flop whose full tree does not fit, keep the flop's betting as it is and give the turn
+and river one size, then re-solve each turn you look at with the full betting.
+`resolveSubgame` does the re-solve; it is opt-in and tree-shaken away when unused.
+
+```ts
+import { defineSpot, resolveSubgame, solve } from 'poker-flopsolve';
+
+const full = { ...spot, betSizes: [[0.33, 0.75, 1.5]], raiseSizes: [[0.75]], maxRaises: 3, allowAllIn: true };
+const blueprint = solve(
+	defineSpot({
+		...full,
+		betSizes: [[0.33, 0.75, 1.5], [0.75], [0.75]],
+		raiseSizes: [[0.75], [0.75], [0.75]],
+		maxRaises: [3, 1, 1],
+		allowAllIn: [true, false, false],
+		runoutBuckets: 3,
+	}),
+	{ targetPercent: 0.3, precision: 'i16' }, // in a browser, leave f32 (see below)
+);
+const turn = resolveSubgame(blueprint, node, board, {
+	player: 0, // whose strategy to refine
+	betting: { betSizes: full.betSizes, raiseSizes: full.raiseSizes, maxRaises: 3, allowAllIn: true },
+	iterations: 300,
+});
+turn.solution.strategyAt(0, 0);
+```
+
+Measured on Ks 9s 4s (pot 55, stacks 975, the bench ranges) against the full tree solved
+to 0.093% of pot (99 minutes, 2.3 GB at i16 on four threads):
+
+| | blueprint, 1 turn/river size | + 3 runout buckets, i16 |
+|---|---|---|
+| storage | 264 MiB | 97 MiB |
+| solve to 0.3%, Node, 4 threads | 27 s | 55 s |
+| root EV error per hand, OOP / IP | 2.3 / 2.2% of pot (max 10.6 / 20.2) | 2.3 / 2.2% (max 10.1 / 19.5) |
+| root size agreement, OOP / IP after a check | 98.6% / 65.4% | 100% / 62.0% |
+| EV the root play loses at the full tree's values, OOP / IP | 0.027 / 0.022% of pot | 0.028 / 0.020% |
+
+Size agreement compares which bet size each hand's EVs rank best in the blueprint and in
+the full tree. It is fragile where sizes are near-tied. With the current solver, whose
+average strategy changed while these runs were going, OOP's agreement reads 75%, and the
+root EV error 2.0 / 1.9% of pot. The EV the root play loses held: 0.019 / 0.014% of pot.
+That is the number to go by. IP's low size agreement after a check is near-indifference: only 15% of its betting hands
+prefer one size by 0.5% of pot or more, the blueprint agrees on 89% of those, and its play
+loses 0.02% of pot. The per-action EV errors are largest for the flop shove (11–33% of pot
+for IP), a line neither tree plays. More turn/river sizes did worse here: two sizes
+(0.33, 1.5) gave 4.4 / 5.7% EV error and three gave 4.7 / 6.1%, at 336 and 417 MiB. On the
+rainbow As Kh 7d, which has about 4.5 times the runouts, the same blueprint is estimated at
+1.2 GiB f32, 363 MiB with buckets at i16.
+
+A re-solved turn, over the 15 most-reached turn nodes, took about 12 s in Node on one
+thread and 5–40 MiB. Against it, an opponent playing a best response with the full tree's
+ranges gains, weighted by how often each turn is reached, 3.5–4% of the subgame's pot.
+
+`resolveSubgame` can also guard the re-solve with a safety gadget (`gadget: 'resolve'`,
+`'maxmargin'` or `'reach-maxmargin'`), which keeps each opponent hand from doing better
+than it did against the blueprint. Here they made things worse: 4.2–4.6% of the pot with
+`'resolve'` and 4.7–6.2% with either maxmargin gadget. Most of a re-solve's error is the refined player's own range at the
+node, which comes from the blueprint and which no gadget changes, and with more actions in
+the subgame than in the blueprint the guarantees often cannot all be met. So the default
+is `'unsafe'`. A re-solved subgame is a `Solution`, so a river below it can be re-solved
+from it in turn.
+
+In headless Chromium (`poker-flopsolve/threads`, Ks 9s 4s), the blueprint with buckets at
+f32 solved to 0.3% in 84 s on one thread and 25 s on four, and each re-solved turn took
+21 s and 6.6 s with 40 MiB. Use f32 there: only f32 runs on the WebAssembly engine, so
+the i16 blueprint ran on the JavaScript engine in about 190 s however many threads it had.
+A run holds its engine threads until `close()` (which `solve` calls for you), and
+snapshots stay usable after it, so close the blueprint's run before re-solving.
 
 ## In a browser
 
@@ -416,6 +494,101 @@ accuracy. On AhKdQc, 4 threads, to 0.3% of pot in the bucketed game:
 | | 1 | 1,396 | 4.9 s | 0.482% |
 | | 3 | 1,088 | 4.2 s | 0.542% |
 
+### History sharing (approximate, for memory)
+
+`shareHistories: true` keeps one set of river regrets and strategy sums for every betting
+line that reaches the river with the same pot. With pot-fraction sizes many lines meet:
+check, bet, call and bet, call, and every raise line taken in either order. Their river
+subtrees are identical, so their nodes can share storage. Each line is still walked with
+its own reach, so an iteration costs what it did; only storage shrinks. Off by default.
+
+It is lossy. A player plays one river strategy for every line that met, though each line
+brings different ranges. The strategy is still one for the whole game, so
+`exploitabilityPercent()` measures it exactly. Each line's regret is weighted by how often
+the hand plays into it (`weighting: 'reach'`, the default), which cost four times less
+than plain CFR's sum. Bench ranges, As Kh 7d, pot 55, stack 975, 4 threads, root EVs
+against the exact solve:
+
+| Tree | Storage, f32 | Exploitability | Root EV error, mean / max | Iterations |
+|---|---|---|---|---|
+| 3 sizes, all-in raise, 2 aggressions (exact: 0.28%) | 5.8 GiB → 1.22 GiB | 8.0% of pot | 0.72% / 2.5% of pot | 400 |
+| 2 sizes, all-in raise, 2 aggressions (exact: 0.25%) | 1.93 GiB → 0.48 GiB | 5.8% of pot | 0.94% / 2.4% of pot | 400 |
+| 1 size, all-in raise, 2 aggressions (exact: 0.25%) | 0.39 GiB → 0.14 GiB | 4.0% of pot | 0.67% / 6.8% of pot | 300 |
+
+On the two-size tree, out of position's EV at each root action was off by 1.7% of pot on
+average, and 85% of the range still picked the same bet size as the exact solve (70%
+with plain CFR's sum, which was left 24% of pot exploitable).
+
+On the three-size tree with a 75% raise and three aggressions, which does not fit
+otherwise, 173 river starts collapse to 23: 17.2 GiB becomes 2.9 GiB at 32 bits, and
+8.7 GiB becomes 1.5 GiB at 16. In Node at 16 bits the whole process peaked at 1.6 GiB
+on one thread (about 100 s an iteration) and 2.0 GiB on four (30 s an iteration), and the
+strategy was 27% of pot exploitable after 50 iterations, 15% after 100 and 12% after 150. At 32 bits it runs on the
+WebAssembly engine in 10.4 s an iteration on four threads, peaking at 3.2 GiB. An
+iteration costs what the unshared tree's would, so this makes the spot fit, not fast.
+Expect a strategy several percent of the pot from equilibrium, with EVs about 1% off on
+average, in a spot that would not otherwise fit. `{ fromRound: 1 }` shares the turn too, which saves about 1% more and
+measured less accurate (9.4% on the first tree). `{ spr: w }` also merges subtrees of one
+shape whose stack-to-pot ratios fall in a log-bucket of width `w`. On the three-size tree
+that is 1.5 times less storage at `w = 0.1` and 2 times at `w = 4`, but much lossier: a
+one-size tree was left 20% of pot exploitable at `w = 4`. A shared spot can warm-start
+only from another shared solve.
+
+### Thinning bet sizes (approximate, for memory)
+
+`thinSizes: true` keeps the configured sizes only where they earn their memory. The root
+keeps every size. Every other decision keeps the one bet, raise or shove nearest 0.75 of
+the pot, or a shove where that size would be one. A river opening bet after an earlier
+street saw a bet also keeps sizes above the pot and the shove. A tree's memory is almost
+all on the river, and each flop or turn size multiplies the river subtrees below it. This
+rule cuts most of them. It is the shape that growing sizes one at a time by value per
+byte arrived at (issue #51), applied as a fixed rule. It costs nothing to build, and
+unset, the tree is unchanged.
+
+It changes the game. A thinned tree is a smaller game, solved exactly within itself, and
+its strategy has no answer to the sizes that were cut. Measured on bench ranges, pot 55,
+stack 975, sizes 0.33 / 0.75 / 1.5 with a shove. The reference is the full tree with
+shove-only raises and 2 aggressions (T₀), solved exactly to 0.23% of pot. Root EVs per
+combination, % of pot, OOP / IP:
+
+| Tree | Storage, f32 | Root EV error, mean / max | Root size agrees |
+|---|---|---|---|
+| As Kh 7d, T₀ exact | 5.78 GiB | — | — |
+| `thinSizes` | 1.30 GiB | 1.45 / 1.74, max 5.6 / 6.3 | 83% |
+| The issue's rule: 3 sizes on flop and turn opening bets, 1 elsewhere | 1.97 GiB | 1.59 / 1.34, max 13.5 / 5.1 | 76% |
+| One size everywhere (0.75, shove facing a bet) | 0.39 GiB | 4.41 / 6.58, max 29 / 65 | — |
+| Ks 9s 4s, T₀ exact | 1.26 GiB | — | — |
+| `thinSizes` | 0.29 GiB | 2.10 / 1.90, max 6.2 / 5.9 | 96% |
+| 3 sizes on flop opening bets, 1 elsewhere | 0.19 GiB | 1.47 / 1.64, max 4.2 / 5.8 | 70% |
+| The issue's rule | 0.43 GiB | 1.33 / 1.15, max 3.3 / 6.7 | 89% |
+| Ks 9s 4s, T exact (0.75 raise, 3 aggressions) | 3.75 GiB | — | — |
+| `thinSizes` | 0.64 GiB | 1.26 / 1.01, max 4.4 / 2.1 | 100% |
+
+"Root size agrees" is the share of OOP's range whose best root bet size by EV is the same
+as in the exact solve. The max is over combinations weighing at least 1%. On As Kh 7d the
+rule is the most accurate per byte measured: two thirds of the issue's rule's memory, and
+less than half its worst error. On Ks 9s 4s, where the flop's in-position sizes matter
+more, three flop sizes alone did better for less. Peak memory in Node is the tree's: 1.41
+GiB for the first, 0.76 GiB for Ks 9s 4s T.
+
+In headless Chromium (WebAssembly engine), an iteration of the thinned As Kh 7d T₀ takes
+1.9 s on one thread and 0.89 s on four; Ks 9s 4s T₀ 0.66 s and 0.30 s; Ks 9s 4s T 1.44 s
+and 0.64 s. Each reached about 0.2% of pot in 331 iterations, so a solve takes about 11, 4
+and 8 minutes on one thread, and 5, 2 and 3.5 on four.
+
+The growth itself is not offered. It found the shape, and grown trees were more accurate
+again (1.0 / 1.2% mean, 3.9% max, 90% agreement in 1.7 GiB on As Kh 7d). But each round
+probes candidate sizes in a second tree beside the current one, which took 4.8 to 8.7 GiB
+and 30 to 40 minutes. On Ks 9s 4s, starting from one size, it never added the flop sizes
+it needed and ended worse than the fixed rule.
+
+It combines with `shareHistories`, which shares the river storage of lines that meet:
+the target tree of issue #51, As Kh 7d with a 0.75 raise and 3 aggressions (T), is 17.2 GiB
+at 32 bits, 2.9 GiB thinned, and 0.85 GiB thinned and shared (Ks 9s 4s: 3.75, 0.64, 0.19).
+Those are memory estimates. The one combined solve tried (As Kh 7d T₀, thinned and
+shared) stopped improving at about 4.4% of pot from 250 iterations on, against 0.2% for
+the thinned tree alone, so the two together are not yet measured for accuracy.
+
 ### Line runouts (approximate, opt-in)
 
 `lineRunouts: { aggressions: 2 }` deals coarser turn and river cards below every chance
@@ -527,6 +700,57 @@ nearest, small sums lose most of each iteration's contribution and exploitabilit
 near 0.04% of pot. The randomness is a hash of the slot and iteration, so solves stay
 deterministic at any thread count.
 
+### Compact storage (opt-in)
+
+`compactStorage: {}` in the spot's config stores regrets and strategy sums as 8-bit
+integers, each hand on each board scaled by its own power of two. Regret matching and the
+average strategy divide each hand's values by their own total, so the scale cancels
+wherever a strategy is read, and costs a byte per hand. Values round up or down at random,
+weighted by the remainder, as 16-bit sums do. It is set on the spot rather than the solve,
+because `maxBytes` is checked against it when the spot is defined
+(`estimate.compactBytes`).
+
+`compactStorage: { sums: false }` keeps no strategy sums. Each node then plays the current
+profile, the regret-matched strategy the next iteration would play. It is cheaper again but
+much more exploitable on deep trees. `blockScale: true` takes the per-hand byte away too.
+
+Storage and peak memory on issue #20's target spots (AsKh7d and Ks9s4s, pot 55, stack 975,
+three bet sizes, a 75% raise, three aggressions), measured on four threads in Node:
+
+| Storage | Bytes per slot | T | Monotone T |
+|---|---|---|---|
+| 32-bit | 8.0 | 17.2 GiB | 3.75 GiB |
+| 16-bit | 4.0 | 8.7 GiB | 1.90 GiB |
+| compact | 2.75 | 5.9 GiB (peak 6.4 GB), 35 s an iteration | 1.29 GiB (peak 1.7 GB) |
+| compact, `sums: false, blockScale: true` | 1.03 | 2.2 GiB (peak 2.7 GB), 24 s an iteration | 0.48 GiB (peak 0.8 GB) |
+
+Accuracy at 320 iterations, against reference solves to 0.17% of pot (T₀: AsKh7d, three
+sizes, all-in as the only raise) and 0.22% (the same tree on Ks9s4s). Exploitability is
+true, in the full tree; EV error is per combination at the root, range-weighted, in % of pot;
+"same size" is the share of OOP's hands, among those whose best root bet size beats the
+next by 0.5% of pot in the reference, that still prefer it:
+
+| Storage | T₀: exploitability, EV error, same size | Monotone T₀ |
+|---|---|---|
+| 32-bit | 0.69% (the reference run itself) | 0.71%, 1.19%, 100% |
+| compact | 0.81%, 0.23%, 100% | 0.83%, 1.09%, 100% |
+| compact, `sums: false, blockScale: true`, CFR+ | 4.76%, 0.17%, 78% | 4.08%, 1.28%, 62% |
+
+It combines with `shareHistories` (one set of storage for betting lines that reach the same
+pot), and the pair is what brings T under 2 GiB: 0.99 GiB with sums, peaking at 1.5 GB on four
+threads, and 0.37 GiB with `sums: false, blockScale: true`. Sharing is lossy on its own; on
+T₀ at 160 iterations it was 9.5% of pot exploitable in 1.06 GiB at 32 bits, with root EVs
+0.66% of pot off and 97% of clear bet-size choices kept; with compact storage added, 10.5%,
+0.86% and 84%, in 0.36 GiB.
+
+It runs on the JavaScript engine, like 16-bit storage, on Node worker threads but on one
+thread in the browser. In headless Chromium on one thread, monotone T₀ took 10.1 s an
+iteration compact, 8.1 s at 16 bits and 2.3 s at 32 bits on WebAssembly; T itself, at
+`sums: false, blockScale: true`, allocated its 2.2 GiB and ran at 95 s an iteration. Storage is split into buffers under 1 GiB, because Chromium refuses
+an ArrayBuffer of 2 GiB or more. `bench/storage/` has the measurements and the variants
+that were left out: 4- and 6-bit regrets, a log scale, sparse regrets, and dropping sums on
+the later streets only.
+
 ### Algorithm and benchmark
 
 The default update rule is Discounted CFR (`algorithm: 'dcfr'`, α 1.5, β 0, γ 3, with
@@ -632,6 +856,12 @@ Measured on a 133 vs 145 combo spot, 8 cores:
 `workers: 'auto'` uses one less than the machine's parallelism, but never fewer than two, so
 a 2-core machine still splits; `workers: 1` stays on one thread. A river spot has a single runout and silently stays single-threaded whatever is
 asked for.
+
+A thread that fails mid-iteration fails the solve instead of hanging it: the step throws, as
+does every step after, and the run must be closed and solved again. A thread killed without
+any chance to report it (a Node worker out of heap, a worker the browser kills) is caught by
+a backstop instead: the main thread waits for the others at most 20× its own share of the
+step, and never less than a minute, before it gives up on them.
 
 Results are bitwise deterministic at a fixed worker count, but agree with a different count
 only to floating point: a worker sums its own slice before the totals are summed across

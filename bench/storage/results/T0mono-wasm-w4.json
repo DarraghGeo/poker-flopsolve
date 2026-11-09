@@ -1,0 +1,54 @@
+{
+ "spot": "T0mono",
+ "variant": "wasm",
+ "workers": 4,
+ "engine": "wasm",
+ "storageMiB": 1143.9,
+ "estimateMiB": 1149,
+ "peakRssMiB": 1314,
+ "setupSeconds": 0.3,
+ "rows": [
+  {
+   "iterations": 40,
+   "trainSeconds": 33.2,
+   "exploitability": 15.593,
+   "positiveShare": 0.5906,
+   "mae": 10.369,
+   "max": 62.8057
+  },
+  {
+   "iterations": 80,
+   "trainSeconds": 64.5,
+   "exploitability": 4.7607,
+   "positiveShare": 0.5677,
+   "mae": 5.7902,
+   "max": 30.9848
+  },
+  {
+   "iterations": 160,
+   "trainSeconds": 125.3,
+   "exploitability": 1.8535,
+   "positiveShare": 0.5651,
+   "mae": 3.0654,
+   "max": 15.6851
+  },
+  {
+   "iterations": 320,
+   "trainSeconds": 246.6,
+   "exploitability": 0.7066,
+   "positiveShare": 0.5539,
+   "mae": 1.1926,
+   "max": 5.9149
+  }
+ ],
+ "sizeChoice": {
+  "actionMae": 1.478,
+  "actionMax": 12.2455,
+  "playedActionMae": 1.0092,
+  "playedActionMax": 3.8421,
+  "sameBestAction": 0.9862,
+  "sameBestSize": 0.9355,
+  "sameBestSizeWhereClear": 1,
+  "clearShare": 0.5576
+ }
+}
