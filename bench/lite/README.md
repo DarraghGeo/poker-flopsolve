@@ -13,7 +13,7 @@ blueprint from `bench/blueprint-share/measure.ts <board> none` with
 | `napkin.ts [count] [variant]` | napkinpoker's postflop-solver spots: root play at the stored per-action EVs |
 
 The results are in `src/lite.ts` (`solveLite`'s notes), the README's "Lite mode" and
-the `Approximations` notes in `src/index.ts`.
+`docs/APPROXIMATIONS.md` (once the `Approximations` notes in `src/index.ts`).
 
 `out/` holds what they printed:
 
@@ -29,4 +29,4 @@ the `Approximations` notes in `src/index.ts`.
 - `*.json`: the scripts' structured output, overwritten by later runs of the same name.
 
 The re-solve warm-start numbers in `trimmed/acc-rainbow.log` come from a prototype
-since removed (see the `Approximations` notes).
+since removed (see `docs/APPROXIMATIONS.md`).
