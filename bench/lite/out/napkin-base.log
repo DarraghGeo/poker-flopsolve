@@ -1,0 +1,9 @@
+f00 BU vs BB · KcKs7h · flop (SRP, paired rainbow): 422 MiB, settled at 340 it, 92.8 s; root play loss 0.001 / 0.013% of pot (stored solve's own 0.001 / 0.005)
+f02 CO vs BB · 7hJd9h · flop (SRP, two-tone): 320 MiB, settled at 440 it, 96.5 s; root play loss 0.000 / 0.013% of pot (stored solve's own 0.001 / 0.044)
+f03 SB vs BU 3bet · 7c6sJc · flop (3BP, two-tone): 150 MiB, settled at 300 it, 34.7 s; root play loss 0.054 / 0.060% of pot (stored solve's own 0.069 / 0.061)
+f06 CO vs BB · Kh9s6c · flop (SRP, rainbow): 597 MiB, settled at 420 it, 139.1 s; root play loss 0.000 / 0.025% of pot (stored solve's own 0.002 / 0.022)
+f11 SB vs BU 3bet · 2h6sJc · flop (3BP, rainbow): 283 MiB, settled at 340 it, 57.5 s; root play loss 0.140 / 0.795% of pot (stored solve's own 0.073 / 0.781)
+f23 SB vs BU 3bet · 2d3h2c · flop (3BP, paired rainbow): 166 MiB, settled at 320 it, 35.3 s; root play loss 0.047 / 0.108% of pot (stored solve's own 0.026 / 0.083)
+f48 BU vs BB · 3sQh3h · flop (SRP, paired two-tone): 442 MiB, settled at 440 it, 117.3 s; root play loss 0.001 / 0.042% of pot (stored solve's own 0.002 / 0.022)
+f79 SB vs BU 3bet · 4s7c4c · flop (3BP, paired two-tone): 159 MiB, settled at 320 it, 34.2 s; root play loss 0.071 / 0.033% of pot (stored solve's own 0.037 / 0.027)
+mean root play loss 0.039 / 0.136% of pot; stored solve's own 0.027 / 0.131
