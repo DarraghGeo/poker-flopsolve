@@ -5,34 +5,34 @@
  "engine": "js",
  "storageMiB": 371.2,
  "estimateMiB": 389,
- "peakRssMiB": 909,
- "setupSeconds": 1.1,
+ "peakRssMiB": 921,
+ "setupSeconds": 1.2,
  "rows": [
   {
    "iterations": 80,
-   "trainSeconds": 876,
-   "exploitability": 14.0373,
-   "positiveShare": 0.6054,
-   "mae": 1.5606,
-   "max": 14.4034
+   "trainSeconds": 1005.8,
+   "exploitability": 12.1147,
+   "positiveShare": 0.5876,
+   "mae": 1.5494,
+   "max": 10.1963
   },
   {
    "iterations": 160,
-   "trainSeconds": 1734.1,
-   "exploitability": 10.4785,
-   "positiveShare": 0.5935,
-   "mae": 0.8636,
-   "max": 4.6896
+   "trainSeconds": 1999.4,
+   "exploitability": 9.0397,
+   "positiveShare": 0.5769,
+   "mae": 0.6335,
+   "max": 2.2699
   }
  ],
  "sizeChoice": {
-  "actionMae": 1.3112,
-  "actionMax": 10.0147,
-  "playedActionMae": 0.896,
-  "playedActionMax": 4.1841,
-  "sameBestAction": 0.4596,
-  "sameBestSize": 0.6717,
-  "sameBestSizeWhereClear": 0.8438,
+  "actionMae": 1.0844,
+  "actionMax": 8.398,
+  "playedActionMae": 0.7728,
+  "playedActionMax": 5.4842,
+  "sameBestAction": 0.5202,
+  "sameBestSize": 0.8182,
+  "sameBestSizeWhereClear": 1,
   "clearShare": 0.1616
  }
 }

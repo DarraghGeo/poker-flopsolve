@@ -255,11 +255,14 @@ describe('compact storage', () => {
 			const before = q.slice();
 			const scaleBefore = ctx.compactScale?.slice();
 			const shiftBefore = ctx.handShift?.[chunk].slice();
+			// Each encode is the block's first visit this iteration, so is discounted (issue #86).
+			const marksBefore = ctx.discounted?.slice();
 			// Values a third of a step apart, so stochastic rounding has room to differ.
 			const restore = (): void => {
 				q.set(before);
 				if (scaleBefore) ctx.compactScale!.set(scaleBefore);
 				if (shiftBefore) ctx.handShift![chunk].set(shiftBefore);
+				if (marksBefore) ctx.discounted!.set(marksBefore);
 			};
 			const encode = (node: number): Int8Array => {
 				restore();
