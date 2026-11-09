@@ -85,8 +85,8 @@ describe('liteConfig', () => {
 	});
 
 	it('keeps the caller\'s own shareHistories unless the options give one', () => {
-		expect(liteConfig({ ...flop, shareHistories: { fromRound: 1 } }).shareHistories).toEqual({ fromRound: 1 });
-		expect(liteConfig({ ...flop, shareHistories: { fromRound: 1 } }, { shareHistories: true }).shareHistories).toBe(true);
+		expect(liteConfig({ ...flop, shareHistories: { keepLines: [] } }).shareHistories).toEqual({ keepLines: [] });
+		expect(liteConfig({ ...flop, shareHistories: { keepLines: [] } }, { shareHistories: true }).shareHistories).toBe(true);
 	});
 
 	it('drops cut lines the flop cap leaves out of the tree', () => {
@@ -106,8 +106,7 @@ describe('liteConfig', () => {
 		expect(() => defineSpot(capped)).not.toThrow();
 	});
 
-	it('refuses lineRunouts and bad settings', () => {
-		expect(() => liteConfig({ ...flop, lineRunouts: { aggressions: 1 } })).toThrow(/lineRunouts/);
+	it('refuses bad settings', () => {
 		expect(() => liteConfig(flop, { laterSize: 0 })).toThrow(/laterSize/);
 		expect(() => liteConfig(flop, { flopMaxRaises: 0 })).toThrow(/flopMaxRaises/);
 	});

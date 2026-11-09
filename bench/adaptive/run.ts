@@ -18,7 +18,6 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { defineSpot } from '../../src/index.ts';
 import type { SolveRun, SpotConfig } from '../../src/index.ts';
 import { ActionKind } from '../../src/tree.ts';
 import type { GrowRound } from './grow.ts';

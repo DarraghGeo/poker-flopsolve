@@ -1,7 +1,7 @@
 /**
  * History merging against the exact solve (issue #49, step 2).
  *
- *   node --import tsx bench/history-merge/measure.ts --spot M3 --variants exact,river,spr0.25 --iters 300
+ *   node --import tsx bench/history-merge/measure.ts --spot M3 --variants off,river --iters 300
  *
  * The reference is the unshared spot solved to `--target` % of pot (default
  * 0.3), cached in `results/ref-<spot>.json`; `--target none` skips it, for
@@ -38,17 +38,8 @@ export const SPOTS: Record<string, SpotConfig> = {
 /** A variant: what `shareHistories` it sets. */
 const VARIANTS: Record<string, SpotConfig['shareHistories']> = {
 	off: false,
-	// Turn and river, exact meetings: the turn's roots as well as the river's.
-	exact: { fromRound: 1 },
-	'exact-cf': { fromRound: 1, weighting: 'counterfactual' },
-	// The default: the river alone.
 	river: true,
-	'river-cf': { weighting: 'counterfactual' },
 };
-for (const w of [0.1, 0.25, 0.5, 1, 4]) {
-	VARIANTS[`spr${w}`] = { spr: w, fromRound: 1 };
-	VARIANTS[`river-spr${w}`] = { spr: w };
-}
 
 const args: Record<string, string> = {};
 for (let i = 2; i < process.argv.length; i += 2) args[process.argv[i].slice(2)] = process.argv[i + 1];
@@ -204,7 +195,7 @@ console.log(
 console.log('| variant | storage f32 | storage i16 | iterations | exploitability % | EV MAE % pot | EV max % pot | root action EV MAE | same best size | s/iter | engine | peak RSS |');
 console.log('|---|---|---|---|---|---|---|---|---|---|---|---|');
 const checkpoints = (args.checkpoints ?? `${iterations}`).split(',').map(Number);
-for (const variant of (args.variants ?? 'exact').split(',')) {
+for (const variant of (args.variants ?? 'river').split(',')) {
 	const spot = defineSpot({ ...config, shareHistories: VARIANTS[variant] });
 	const run = createRun(spot, { workers, precision, engine });
 	let elapsed = 0;

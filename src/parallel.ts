@@ -187,25 +187,6 @@ export function planShards(tree: Tree, runouts: Runouts, workers: number): Shard
 
 	const bounds = new Int32Array(workers + 1);
 	for (let w = 0; w <= workers; w++) bounds[w] = Math.round((boards * w) / workers);
-	if (runouts.lines) {
-		// Line runouts deal far fewer boards below a coarse board than below a
-		// fine one, so the split follows the boards below each.
-		const weight = new Float64Array(boards).fill(1);
-		for (const fam of runouts.lines.families) {
-			if (fam.round !== round + 1) continue;
-			const above = runouts.lines.families[fam.parent];
-			for (let b = above.from; b < above.to; b++) weight[b] += fam.childStart[b + 1] - fam.childStart[b];
-		}
-		let total = 0;
-		for (let b = 0; b < boards; b++) total += weight[b];
-		let sum = 0;
-		let w = 1;
-		for (let b = 0; b < boards && w < workers; b++) {
-			sum += weight[b];
-			while (w < workers && sum >= (total * w) / workers) bounds[w++] = b + 1;
-		}
-		for (let k = 1; k < workers; k++) if (bounds[k] <= bounds[k - 1]) bounds[k] = Math.min(boards, bounds[k - 1] + 1);
-	}
 
 	return { round, boards, entryNodes: Int32Array.from(entryNodes), entryIndexOf, bounds };
 }

@@ -70,47 +70,6 @@ export interface Runouts {
 	readonly approximate: boolean;
 	/** The board as given. */
 	readonly initial: readonly number[];
-	/**
-	 * With `SpotConfig.lineRunouts` only: which boards each betting line
-	 * deals, see `lines.ts`. `childStart` is then just one line's view.
-	 */
-	readonly lines?: RunoutLines;
-}
-
-/** Per-line runout sets: each chance node deals its own family of boards. */
-export interface RunoutLines {
-	/** Each node's family at its round; see `families`. */
-	readonly family: Int32Array;
-	/** Per chance node, the family its deal makes; else -1. */
-	readonly chance: Int32Array;
-	/**
-	 * Each family's own continuation at the next round — the child family
-	 * coarse after coarse and fine after fine, or else any — or -1.
-	 */
-	readonly continuation: Int32Array;
-	/** Per chance node, the children table its deal uses, as `childStart[round]`; else null. */
-	readonly chanceStart: readonly (Int32Array | null)[];
-	readonly families: readonly RunoutFamily[];
-	/**
-	 * Per round, per orbit member: the map that carries the real deal and every
-	 * card after it onto the stored board, where that differs from
-	 * `orbitMap` (which relabels hands); see `lines.ts`.
-	 */
-	readonly orbitResolve: readonly Int32Array[];
-}
-
-/** One set of boards at a round, dealt from one family of the round before. */
-export interface RunoutFamily {
-	readonly round: number;
-	/** Family of the parent boards; -1 at round 0. */
-	readonly parent: number;
-	/** Whether its deal folds cards by class. */
-	readonly coarse: boolean;
-	/** Its boards: `from` to `to` at its round. */
-	readonly from: number;
-	readonly to: number;
-	/** Children of each parent board, indexed like `childStart[round]`; empty at round 0. */
-	readonly childStart: Int32Array;
 }
 
 /**
@@ -381,10 +340,9 @@ export interface ResolvedBoard {
  *
  * @param runouts the enumeration
  * @param board every card, the given board first and then the cards dealt in order
- * @param starts with `lines`, the children tables of the line read, per round
  * @throws if the cards do not extend the given board legally
  */
-export function resolveBoard(runouts: Runouts, board: readonly number[], starts?: readonly Int32Array[]): ResolvedBoard {
+export function resolveBoard(runouts: Runouts, board: readonly number[]): ResolvedBoard {
 	const start = runouts.initial.length;
 	for (let i = 0; i < start; i++) {
 		if (board[i] !== runouts.initial[i]) {
@@ -398,8 +356,8 @@ export function resolveBoard(runouts: Runouts, board: readonly number[], starts?
 		const round = i - start + 1;
 		const dealt = runouts.maps.card[map][board[i]];
 		let found = -1;
-		const children = (starts ?? runouts.childStart)[round];
-		const relabel = runouts.lines ? runouts.lines.orbitResolve[round] : runouts.orbitMap[round];
+		const children = runouts.childStart[round];
+		const relabel = runouts.orbitMap[round];
 		for (let child = children[index]; child < children[index + 1] && found < 0; child++) {
 			for (let m = runouts.orbitStart[round][child]; m < runouts.orbitStart[round][child + 1]; m++) {
 				if (runouts.orbitCard[round][m] !== dealt) continue;

@@ -15,4 +15,3 @@ export const MEASURE: Record<string, SpotConfig> = {
 	wide: { ...SPOTS.flop, oop: WIDE_OOP, ip: WIDE_IP },
 	flopPB: { ...SPOTS.flop, oop: PAIRS_BROADWAY, ip: PAIRS_BROADWAY },
 };
-

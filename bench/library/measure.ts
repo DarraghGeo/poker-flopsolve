@@ -198,4 +198,3 @@ export function evsOf(spot: Spot, solution: Solution): [ComboEv, ComboEv] {
 }
 
 export const fmt = (e: EvError): string => `${e.mae.toFixed(3)} / ${e.max.toFixed(2)} / ${e.range.toFixed(3)}`;
-

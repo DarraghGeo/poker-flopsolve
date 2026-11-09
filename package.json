@@ -43,7 +43,8 @@
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "lint": "node --import tsx scripts/lint.ts",
     "solve": "node --import tsx bin/solve.ts",
     "ui": "node --import tsx ui/server.ts",
     "bench": "node --import tsx bin/bench.ts",

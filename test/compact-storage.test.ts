@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { createRun, defineSpot, SpotTooLargeError } from '../src/index.ts';
-import type { CompactStorage, SolveOptions, SpotConfig } from '../src/index.ts';
+import type { CompactStorage, SpotConfig } from '../src/index.ts';
 import { updateCompact } from '../src/cfr.ts';
 
 const flop: SpotConfig = {

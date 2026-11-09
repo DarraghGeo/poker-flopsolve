@@ -215,7 +215,7 @@ function storageEngineFor(lowBytes: number, threads: number, quantised: boolean,
 	const spot = defineSpot(turn);
 	const relevant = new Uint8Array(COMBOS);
 	for (const player of spot.players) for (const combo of player.combos) relevant[combo] = 1;
-	const layout = buildLayout(spot.tree, spot.runouts, spot.players, quantised ? 2 : 4, undefined, false, compact ?? undefined);
+	const layout = buildLayout(spot.tree, spot.runouts, spot.players, quantised ? 2 : 4, undefined, compact ?? undefined);
 	const showdown = buildShowdownTable(spot.runouts, relevant);
 	const active = buildActiveLists(spot.runouts, spot.players, showdown);
 	const hands = buildHandSpace(spot.runouts, spot.players, active);

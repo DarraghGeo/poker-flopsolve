@@ -19,7 +19,7 @@ export const SPOTS: Record<string, SpotConfig> = {
 /**
  * A combination named by `+`-joined levers:
  * - `thin`: `thinSizes`;
- * - `share`: river `shareHistories` (`share1` from the turn);
+ * - `share`: river `shareHistories`;
  * - `i16`: 16-bit storage; `compact`: `compactStorage` with sums;
  * - `b3`: `runoutBuckets: 3`;
  * - `sample`: `chanceSampling` at its defaults;
@@ -28,13 +28,12 @@ export const SPOTS: Record<string, SpotConfig> = {
  */
 export function combination(name: string): { config: Partial<SpotConfig>; options: SolveOptions } {
 	const levers = name.split('+');
-	const known = new Set(['exact', 'thin', 'share', 'share1', 'i16', 'compact', 'b3', 'sample', 'js']);
+	const known = new Set(['exact', 'thin', 'share', 'i16', 'compact', 'b3', 'sample', 'js']);
 	for (const lever of levers) if (!known.has(lever)) throw new Error(`unknown lever ${lever}`);
 	const has = (lever: string): boolean => levers.includes(lever);
 	const config: Partial<SpotConfig> = {
 		...(has('thin') ? { thinSizes: true } : {}),
 		...(has('share') ? { shareHistories: true } : {}),
-		...(has('share1') ? { shareHistories: { fromRound: 1 } } : {}),
 		...(has('compact') ? { compactStorage: {} } : {}),
 		...(has('b3') ? { runoutBuckets: 3 } : {}),
 	};

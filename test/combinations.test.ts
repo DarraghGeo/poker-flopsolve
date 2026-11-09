@@ -3,15 +3,13 @@
  * (#86, #88, #94) appeared only when two options met, so every pair of
  *
  *   shareHistories, compactStorage, thinSizes, runoutBuckets, chanceSampling,
- *   coarseStart, lineRunouts, wasmStorage at 16 bits, resolveSubgame,
+ *   coarseStart, wasmStorage at 16 bits, resolveSubgame,
  *
  * and the two presets built from them (issue #115), `litePreset` (what
  * `solveLite` solves) and `largeTree`, each applied to the spot and settings
  * the other side of the pair leaves, as a caller would hand them over,
- * is solved here on one small turn spot, and either runs or is refused:
+ * is solved here on one small turn spot, and every pair runs:
  *
- * - refused: exactly the pairs `REFUSED` lists, each with an error naming
- *   both sides;
  * - repeatable: two solves on two threads leave every stored value equal,
  *   and one thread agrees with two to float rounding;
  * - off is identical: each option set to its off value beside another
@@ -25,7 +23,7 @@ import { describe, expect, it } from 'vitest';
 import { parseCards } from '../src/cards.ts';
 import { engineAvailable } from '../src/engine.ts';
 import { createRun, defineSpot, litePreset, NodeKind, resolveSubgame } from '../src/index.ts';
-import type { Solution, SolveOptions, SolveRun, SpotConfig } from '../src/index.ts';
+import type { Solution, SolveOptions, SpotConfig } from '../src/index.ts';
 import { largeTree, wasmStorage } from '../src/wasm-storage.ts';
 import { compareStorage, copyStorage, storageArrays } from './wasm-storage-helpers.ts';
 
@@ -74,7 +72,6 @@ const OPTIONS: readonly Option[] = [
 		solve: { approximations: { coarseStart: { iterations: 6, runoutBuckets: 6 } } },
 		off: { solve: { approximations: { coarseStart: { iterations: 0 } } } },
 	},
-	{ name: 'lineRunouts', config: { lineRunouts: { aggressions: 1 } } },
 	// At 32 bits the engine runs as it always has, wasmStorage or not.
 	{ name: 'wasmStorage i16', solve: { precision: 'i16', wasmStorage }, off: { solve: { wasmStorage } } },
 	{ name: 'resolveSubgame', resolve: true },
@@ -102,16 +99,6 @@ const OPTIONS: readonly Option[] = [
 		honours: ['chanceSampling'],
 	},
 ];
-
-/** Pairs refused, with a pattern each refusal's message matches. */
-const REFUSED: Record<string, RegExp> = {
-	'shareHistories + lineRunouts': /lineRunouts does not combine with shareHistories or compactStorage/,
-	'compactStorage + lineRunouts': /lineRunouts does not combine with shareHistories or compactStorage/,
-	'chanceSampling + lineRunouts': /lineRunouts does not combine with chanceSampling, coarseStart/,
-	'coarseStart + lineRunouts': /lineRunouts does not combine with chanceSampling, coarseStart/,
-	'lineRunouts + litePreset': /lineRunouts does not combine with the lite blueprint/,
-	'lineRunouts + largeTree': /lineRunouts does not combine with chanceSampling, coarseStart/,
-};
 
 const ITERATIONS = 12;
 
@@ -160,7 +147,7 @@ function solveWith(parts: readonly Option[], workers: number, override: SolveOpt
 		if (resolve) {
 			run.close();
 			const node = riverNode(sol);
-			const board = sol.spot.resolveBoard([...sol.spot.board, ...parseCards('2h')], node).board;
+			const board = sol.spot.resolveBoard([...sol.spot.board, ...parseCards('2h')]).board;
 			const sub = resolveSubgame(sol, node, board, {
 				player: 0,
 				iterations: ITERATIONS,
@@ -187,10 +174,9 @@ const maxDiff = (a: ArrayLike<number>, b: ArrayLike<number>): number => {
 };
 
 describe.runIf(engineAvailable())('opt-in options in pairs', () => {
-	it('lists every pair once: 55 of them, 6 refused', () => {
-		expect(pairs).toHaveLength(55);
-		expect(Object.keys(REFUSED)).toHaveLength(6);
-		for (const name of Object.keys(REFUSED)) expect(pairs.map(([a, b]) => key(a, b))).toContain(name);
+	it('lists every pair once: 45 of them', () => {
+		expect(pairs).toHaveLength(45);
+		expect(new Set(pairs.map(([a, b]) => key(a, b))).size).toBe(45);
 	});
 
 	const alone = new Map<string, Outcome>();
@@ -202,13 +188,6 @@ describe.runIf(engineAvailable())('opt-in options in pairs', () => {
 
 	for (const [a, b] of pairs) {
 		const name = key(a, b);
-		const refusal = REFUSED[name];
-		if (refusal) {
-			it(`${name}: refused`, () => {
-				expect(() => solveWith([a, b], 2)).toThrow(refusal);
-			});
-			continue;
-		}
 		it(`${name}: runs, repeats on 2 threads, matches 1 thread, and is no worse than its halves`, () => {
 			const first = solveWith([a, b], 2);
 			const again = solveWith([a, b], 2);
@@ -226,7 +205,7 @@ describe.runIf(engineAvailable())('opt-in options in pairs', () => {
 
 	for (const option of OPTIONS) {
 		for (const other of OPTIONS) {
-			if (other === option || !other.off || REFUSED[key(option, other)] || REFUSED[key(other, option)]) continue;
+			if (other === option || !other.off) continue;
 			// wasmStorage is what moves compact storage onto the engine: no off value there.
 			if (other.name === 'wasmStorage i16' && option.name === 'compactStorage') continue;
 			if (option.honours?.includes(other.name)) continue;
@@ -247,18 +226,13 @@ describe.runIf(engineAvailable())('opt-in options in pairs', () => {
 
 	for (const [a, b] of pairs) {
 		const name = key(a, b);
-		if (REFUSED[name]) continue;
 		const { config, solve } = merge([a, b]);
 		it(`${name}: the WebAssembly engine follows JavaScript step for step where it runs the pair`, () => {
 			// Compact storage reaches the engine through wasmStorage.
 			const engine = createRun(defineSpot(config), { workers: 2, ...solve, ...(config.compactStorage ? { wasmStorage } : {}) });
 			const js = createRun(defineSpot(config), { workers: 1, ...solve, engine: 'js' });
 			try {
-				if (engine.engine !== 'wasm') {
-					// Only line runouts keep a pair on JavaScript.
-					expect([a.name, b.name]).toContain('lineRunouts');
-					return;
-				}
+				expect(engine.engine).toBe('wasm');
 				expect(js.engine).toBe('js');
 				for (let t = 1; t <= 4; t++) {
 					copyStorage(engine, js);

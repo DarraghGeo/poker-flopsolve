@@ -1,7 +1,7 @@
 /**
  * Issue #47 in headless Chromium: a blueprint solved to 0.3% of pot on one
  * thread and on four (`poker-flopsolve/threads`), then a turn subgame
- * re-solved at T's full betting with each gadget.
+ * re-solved at T's full betting.
  *
  *   node --import tsx bench/nested/browser.ts <rainbow|monotone> <variant> [workers...]
  */
@@ -23,7 +23,7 @@ const turn = boardName === 'rainbow' ? '2c' : '2h';
 interface Out {
 	threads: number;
 	solves: { workers: number; ms: number; iterations: number; exploitability: number; engine: string; heap: number | null }[];
-	resolves: { gadget: string; workers: number; ms: number; bytes: number }[];
+	resolves: { workers: number; ms: number; bytes: number }[];
 }
 
 const out = await runInBrowser<Out>(
@@ -71,12 +71,10 @@ const out = await runInBrowser<Out>(
 			}
 		}
 		const board = sol.spot.resolveBoard([...sol.spot.board, ...parseCards(${JSON.stringify(turn)})]).board;
-		for (const gadget of ['unsafe', 'resolve', 'maxmargin', 'reach-maxmargin']) {
-			for (const workers of [1, Math.min(4, threads)]) {
-				const started = performance.now();
-				const r = resolveSubgame(sol, node, board, { player: 0, gadget, betting: LATER, iterations: 300, solve: { workers } });
-				out.resolves.push({ gadget, workers, ms: performance.now() - started, bytes: r.solution.spot.estimate.bytes });
-			}
+		for (const workers of [1, Math.min(4, threads)]) {
+			const started = performance.now();
+			const r = resolveSubgame(sol, node, board, { player: 0, betting: LATER, iterations: 300, solve: { workers } });
+			out.resolves.push({ workers, ms: performance.now() - started, bytes: r.solution.spot.estimate.bytes });
 		}
 		return out;
 	}
@@ -93,6 +91,6 @@ for (const s of out.solves) {
 	);
 }
 for (const r of out.resolves) {
-	console.log(`  re-solve ${r.gadget.padEnd(15)} ${r.workers} thread(s): ${(r.ms / 1000).toFixed(1)} s, ${(r.bytes / 2 ** 20).toFixed(1)} MiB`);
+	console.log(`  re-solve ${r.workers} thread(s): ${(r.ms / 1000).toFixed(1)} s, ${(r.bytes / 2 ** 20).toFixed(1)} MiB`);
 }
 console.log(JSON.stringify(out));

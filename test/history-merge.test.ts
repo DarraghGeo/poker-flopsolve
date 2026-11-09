@@ -1,5 +1,5 @@
 /**
- * History merging (issue #49): turn and river storage shared between betting
+ * History merging (issue #49): river storage shared between betting
  * histories that reach the same round start.
  */
 
@@ -46,20 +46,28 @@ function run(config: SpotConfig, iterations: number, options: SolveOptions) {
 }
 
 describe('history merging', () => {
-	it('shares the turn between lines that reach the same pot, and no others', () => {
+	it('shares the river between lines that reach the same pot, and no others', () => {
 		const spot = defineSpot(flop);
 		const { Check, Bet, Call } = ActionKind;
-		const share = aliasHistories(spot.tree, spot.runouts, { key: { kind: 'exact' }, fromRound: 1 });
-		const betCall = follow(spot.tree, [Bet, Call]);
-		const checkBetCall = follow(spot.tree, [Check, Bet, Call]);
-		const checkCheck = follow(spot.tree, [Check, Check]);
-		expect(spot.tree.round[betCall]).toBe(1);
-		// The check is built first, so its line owns the storage.
-		expect(share.alias[betCall]).toBe(checkBetCall);
-		expect(share.alias[checkBetCall]).toBe(checkBetCall);
+		const share = aliasHistories(spot.tree, spot.runouts);
+		// One bet called, on the flop or on the turn: the same river pot.
+		const betCall = follow(spot.tree, [Bet, Call, Check, Check]);
+		const checkBetCall = follow(spot.tree, [Check, Bet, Call, Check, Check]);
+		const turnBetCall = follow(spot.tree, [Check, Check, Check, Bet, Call]);
+		const checkCheck = follow(spot.tree, [Check, Check, Check, Check]);
+		expect(spot.tree.round[betCall]).toBe(2);
+		// Checks are built first, so the line checking longest owns the storage.
+		expect(share.alias[betCall]).toBe(turnBetCall);
+		expect(share.alias[checkBetCall]).toBe(turnBetCall);
+		expect(share.alias[turnBetCall]).toBe(turnBetCall);
 		expect(share.alias[checkCheck]).toBe(checkCheck);
 		// Node by node below, not only at the root.
-		expect(share.alias[follow(spot.tree, [Bet, Call, Check])]).toBe(follow(spot.tree, [Check, Bet, Call, Check]));
+		expect(share.alias[follow(spot.tree, [Bet, Call, Check, Check, Check])]).toBe(
+			follow(spot.tree, [Check, Check, Check, Bet, Call, Check]),
+		);
+		// The turn keeps storage of its own.
+		const turn = follow(spot.tree, [Bet, Call]);
+		expect(share.alias[turn]).toBe(turn);
 	});
 
 	it('leaves a spot untouched when off', () => {
@@ -74,16 +82,10 @@ describe('history merging', () => {
 
 	it('cuts storage by the shared nodes', () => {
 		const plain = defineSpot(flop);
-		const shared = defineSpot({ ...flop, shareHistories: { fromRound: 1 } });
+		const shared = defineSpot({ ...flop, shareHistories: true });
 		expect(shared.estimate.bytes).toBeLessThan(plain.estimate.bytes);
 		expect(shared.estimate.compressedBytes).toBeLessThan(plain.estimate.compressedBytes);
-		// The river alone by default, which keeps the turn.
-		const river = defineSpot({ ...flop, shareHistories: true });
-		expect(river.estimate).toEqual(defineSpot({ ...flop, shareHistories: { fromRound: 2 } }).estimate);
-		expect(river.estimate.bytes).toBeLessThan(plain.estimate.bytes);
-		expect(river.estimate.bytes).toBeGreaterThan(shared.estimate.bytes);
-		const spr = defineSpot({ ...flop, shareHistories: { spr: 1, fromRound: 1 } });
-		expect(spr.estimate.bytes).toBeLessThanOrEqual(shared.estimate.bytes);
+		expect(defineSpot({ ...flop, shareHistories: {} }).estimate).toEqual(shared.estimate);
 	});
 
 	it('changes nothing where no two histories meet', () => {
@@ -105,12 +107,6 @@ describe('history merging', () => {
 		expect(late.exploitability).toBeLessThan(2.5);
 	});
 
-	it('weights shared regrets by own reach unless asked not to', () => {
-		const reach = run({ ...flop, shareHistories: true }, 200, { precision: 'f32' });
-		const plain = run({ ...flop, shareHistories: { weighting: 'counterfactual' } }, 200, { precision: 'f32' });
-		expect(reach.exploitability).toBeLessThan(plain.exploitability / 2);
-	});
-
 	it('discounts a shared block once an iteration, in every engine and precision', () => {
 		// DCFR halves negative regrets and discounts the sums from iteration 2.
 		// Discounting a shared block once per history put the JavaScript
@@ -118,17 +114,15 @@ describe('history merging', () => {
 		// iteration, they agree to 4e-7. Compared at 2 iterations because
 		// from 3 on, regret matching amplifies float32 against float64
 		// rounding (as it does threads') faster than tolerances can follow.
-		for (const weighting of ['reach', 'counterfactual'] as const) {
-			const shared = { ...flop, shareHistories: { weighting } };
-			const js = run(shared, 2, { engine: 'js', precision: 'f64' });
-			const wasm = run(shared, 2, { precision: 'f32' });
-			const i16 = run(shared, 2, { precision: 'i16' });
-			expect(wasm.engine).toBe('wasm');
-			expect(wasm.ev).toBeCloseTo(js.ev, 3);
-			expect(wasm.exploitability).toBeCloseTo(js.exploitability, 2);
-			expect(i16.ev).toBeCloseTo(js.ev, 2);
-			expect(i16.exploitability).toBeCloseTo(js.exploitability, 1);
-		}
+		const shared = { ...flop, shareHistories: true };
+		const js = run(shared, 2, { engine: 'js', precision: 'f64' });
+		const wasm = run(shared, 2, { precision: 'f32' });
+		const i16 = run(shared, 2, { precision: 'i16' });
+		expect(wasm.engine).toBe('wasm');
+		expect(wasm.ev).toBeCloseTo(js.ev, 3);
+		expect(wasm.exploitability).toBeCloseTo(js.exploitability, 2);
+		expect(i16.ev).toBeCloseTo(js.ev, 2);
+		expect(i16.exploitability).toBeCloseTo(js.exploitability, 1);
 	});
 
 	/**
@@ -242,17 +236,6 @@ describe('history merging', () => {
 			expect(Math.abs(same / n - 0.5)).toBeLessThan(0.02);
 			expect(Math.abs(product / n - 0.25)).toBeLessThan(0.01);
 		}
-	});
-
-	it('refuses settings it cannot honour', () => {
-		expect(() => defineSpot({ ...flop, shareHistories: { fromRound: 1.5 } })).toThrow(/fromRound/);
-		expect(() => defineSpot({ ...flop, shareHistories: { fromRound: Number.NaN } })).toThrow(/fromRound/);
-		expect(() => defineSpot({ ...flop, shareHistories: { fromRound: 0 } })).toThrow(/fromRound/);
-		expect(() => defineSpot({ ...flop, shareHistories: { fromRound: 3 } })).toThrow(/fromRound/);
-		expect(() => defineSpot({ ...flop, shareHistories: { weighting: 'cfr' as never } })).toThrow(/weighting/);
-		expect(() => defineSpot({ ...flop, shareHistories: { spr: 0 } })).toThrow(/spr/);
-		const spot = defineSpot(flop);
-		expect(() => aliasHistories(spot.tree, spot.runouts, { key: { kind: 'spr', width: 1 }, fromRound: 1 })).toThrow(/stack/);
 	});
 
 	it('warm-starts shared storage only from shared storage', () => {

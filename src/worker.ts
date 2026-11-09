@@ -27,12 +27,11 @@ import {
 	planSampling,
 	runoutWeights,
 } from './cfr.ts';
-import { defineSpot, makeRegretStore, makeSumStore, PRECISION_BYTES, reachWeighted } from './index.ts';
+import { defineSpot, makeRegretStore, makeSumStore, PRECISION_BYTES } from './index.ts';
 import type { Approximations, Precision, SpotConfig } from './index.ts';
 import { buildShowdownTable } from './showdown.ts';
 import { buildHandSpace } from './hands.ts';
 import type { WorkerSetup } from './parallel.ts';
-import { lineBoards, lineScales } from './lines.ts';
 import { COMMAND, CONTROL } from './parallel.ts';
 
 const setup = workerData as WorkerSetup;
@@ -51,10 +50,8 @@ for (const combo of spot.players[0].combos) relevant[combo] = 1;
 for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 const weights = runoutWeights(spot.runouts);
-const lines = spot.runouts.lines;
 const layout = buildLayout(
-	spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], spot.historyAlias, reachWeighted(config),
-	compact ?? undefined, lines ? lineBoards(lines, spot.tree) : undefined,
+	spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], spot.historyAlias, compact ?? undefined,
 );
 
 const showdown = buildShowdownTable(spot.runouts, relevant);
@@ -95,7 +92,6 @@ const ctx: Context = {
 	simd,
 	// This worker's runouts are its own, so are their blocks and the marks on them.
 	discounted: layout.shared ? new Int32Array(layout.blocks) : null,
-	...(lines ? { lineStarts: lines.chanceStart, lineScales: lineScales(spot.runouts, spot.tree, active, hands) } : {}),
 };
 
 // Chance sampling's state lives in shared memory; this worker's runouts own

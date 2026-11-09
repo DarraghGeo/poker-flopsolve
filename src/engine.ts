@@ -20,7 +20,7 @@
  * as the JavaScript engine's buffers are.
  */
 
-import { COMBOS, DECK } from './cards.ts';
+import { COMBOS } from './cards.ts';
 import type { ActiveLists, CompactPlan, Layout, PlayerIndex, RegretStore, RootTraversal, SamplingPlan, SumStore } from './cfr.ts';
 import { dcfrFactors, Mode, treeDepth } from './cfr.ts';
 import type { HandSpace } from './hands.ts';

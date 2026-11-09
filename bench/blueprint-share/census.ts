@@ -8,8 +8,7 @@
  * 1.5 pot, a 0.75 raise, all-in, three aggressions) and one 0.75 bet on the
  * turn and river with no raise. Each row is `defineSpot(...).estimate`: f32
  * is what the WebAssembly engine holds, i16 the JavaScript engine's 16-bit
- * storage. "river" is `shareHistories: true`; "turn+river" is
- * `{ fromRound: 1 }`.
+ * storage. "river" is `shareHistories: true`.
  */
 
 import { defineSpot } from '../../src/index.ts';
@@ -21,7 +20,6 @@ const MiB = 2 ** 20;
 const SHARES: Record<string, SpotConfig['shareHistories']> = {
 	none: undefined,
 	river: true,
-	'turn+river': { fromRound: 1 },
 };
 
 console.log('| board | buckets | share | f32 MiB | i16 MiB | saving | turn nodes → owners | river nodes → owners |');

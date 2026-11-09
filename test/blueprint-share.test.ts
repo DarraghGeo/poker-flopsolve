@@ -156,10 +156,10 @@ describe('turn subgames of a blueprint whose river is shared', () => {
 		}
 	});
 
-	it('re-solves a turn from it with a gadget', () => {
+	it('re-solves a turn from it, measured against the blueprint', () => {
 		const node = turnAfter(blueprint, 'bet 39.6 call /');
 		const resolved = resolveSubgame(blueprint, node, 3, {
-			player: 0, gadget: 'resolve', iterations: 60, betting: { betSizes: [[0.33, 0.75]] },
+			player: 0, iterations: 60, betting: { betSizes: [[0.33, 0.75]] }, measure: true,
 		});
 		expect(resolved.solution.spot.historyAlias).toBeUndefined();
 		const alternative = resolved.alternative!;

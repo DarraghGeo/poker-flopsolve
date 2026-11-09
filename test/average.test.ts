@@ -31,7 +31,6 @@ describe('average strategy where a hand has no strategy sum at the node', () => 
 		let notUniform = 0;
 		for (const node of spot.tree.decisionNodes) {
 			const owner = spot.tree.player[node] as 0 | 1;
-			const index = spot.players[owner];
 			const actions = spot.tree.numEdges[node];
 			const round = spot.tree.round[node];
 			for (let board = 0; board < spot.runouts.counts[round]; board++) {

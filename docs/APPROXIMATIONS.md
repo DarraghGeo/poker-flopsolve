@@ -508,8 +508,8 @@ peak. These were left out:
 - `compactStorage` in place of 16 bits: the same root play in 1.48 GiB
   peak instead of 1.97, about 10% slower, exploitability 0.53% of pot
   at 1600 iterations against 0.35. Offered as `storage: 'compact'`.
-- `lineRunouts` (JavaScript engine only) was not measured on T: the
-  round asked for the WebAssembly engine on 4 threads.
+- `lineRunouts` (JavaScript engine only, since removed) was not measured
+  on T: the round asked for the WebAssembly engine on 4 threads.
 
 What `thinSizes` itself costs against the full tree was measured on T₀
 against an exact solve (561 iterations, 0.22% of pot): root play 0.04%
@@ -530,7 +530,7 @@ subgame pot as `keepLines` gives them, plain sharing 3.05 / 2.15):
 - More blueprint iterations: 800 gave 2.48 / 2.36. The ranges' distance
   from the unshared ones went only from 0.086 to 0.081 (total
   variation, OOP), so the ranges do not settle later than the root.
-- `weighting: 'counterfactual'`: 7.2 / 6.5, 15% of pot exploitable.
+- `weighting: 'counterfactual'` (since removed): 7.2 / 6.5, 15% of pot exploitable.
 - Noise, which #105 found moves a shared solve's plateau: with
   `chanceSampling` at p 0.5, 0.7 and 0.9, 2.52 / 2.26, 2.78 / 1.99
   and 3.43 / 2.30; with 8-bit `compactStorage`, 2.38 / 1.89. The
@@ -540,3 +540,49 @@ subgame pot as `keepLines` gives them, plain sharing 3.05 / 2.15):
   1.89. The 400 shared iterations' average barely moves in 60.
 - Keeping the top 3 lines but continuing from the picking solve
   rather than from cold: 1.66 / 0.89, against 1.10 / 0.83.
+
+## Removed before 0.5.0 (#125)
+
+Three options shipped on `staging` during 0.5.0's development, were deprecated by issue #115, and were removed before the release, so no published version has them. The implementations are in this repository's history at commit `3c98470`.
+
+### Line runouts (#53)
+
+`SpotConfig.lineRunouts` dealt coarser turn and river cards in chosen betting lines: below every chance node whose betting held `aggressions` bets and raises or `raises` raises, a deal stored one card per class of cards that pair, flush and straight the board alike, with ranks folded in bands of `band` (default 3). It ran on the JavaScript engine only, and it refused `shareHistories`, `compactStorage`, `chanceSampling`, `coarseStart`, warm starts and `solveLite`.
+
+Storage, three sizes a street, pot 55, stack 975:
+
+| Spot | Exact | `{ aggressions: 2 }` | with `runoutBuckets: 3` too | `{ raises: 1 }` |
+|---|---|---|---|---|
+| As Kh 7d, raise 0.75 + all-in, 3 aggressions (i16) | 8.67 GiB | 3.91 GiB | 2.66 GiB | 5.53 GiB |
+| Ks 9s 4s, same tree (f32) | 3.75 GiB | 2.66 GiB | 2.18 GiB | |
+
+Accuracy against exact solves to 0.30% of pot, run as long, 4 threads, in % of pot. "Size kept" is the share of the out-of-position range that still prefers the exact solve's root bet size:
+
+| Spot | Rule | Storage (f32) | True exploitability | Root EV error, mean (worst) | Size kept |
+|---|---|---|---|---|---|
+| Ks 9s 4s | exact | 3.75 GiB | 0.30 | | |
+| | `{ aggressions: 2 }` | 2.66 GiB | 3.8 | 0.6–0.8 (3.5) | 100% |
+| | the same with `runoutBuckets: 3` | 2.18 GiB | 2.5 | 0.4–0.6 (2.9) | 98% |
+| | `{ aggressions: 2, band: 13 }` | 1.68 GiB | 13.7 | 2.2–2.4 (14.7) | 97% |
+| | `{ raises: 1, band: 13 }` | 2.40 GiB | 8.0 | 1.9–3.1 (11.2) | 100% |
+| | `runoutBuckets: 3` alone | 2.66 GiB | 0.97 | 0.3 (2.0) | 95% |
+| As Kh 7d (all-in raise, 2 aggressions) | exact | 5.78 GiB | 0.30 | | |
+| | `{ aggressions: 2 }` | 3.43 GiB | 16.7 | 3.8–4.0 (19.2) | 29% |
+
+What a rule cost followed how often its lines were played, not how many bytes they held. Lines with two aggressions reached 9.8% of river deals on Ks 9s 4s and 22% on As Kh 7d, with the big pots; lines with a raise reached 1.3% and 0.2%, and even those cost several % of pot, because a best response walks into the coarse subtrees. On napkinpoker's 3-bet spots (#103) `{ aggressions: 2 }` took 0.73× the storage and 1.65× the time of the exact solve, moved flop play by 0.25% of pot and left 5.9% exploitable. `largeTree` and `thinSizes` fit the same trees for less. The census and storage projection lived in `bench/history-runouts/`.
+
+### History sharing variants (#49)
+
+`ShareHistories` had three settings beside `keepLines`:
+
+- `fromRound: 1` shared the turn as well as the river. It saved about 1% more storage on a flop spot and measured less accurate: 9.4% of pot exploitable against 8.0%, and 5.7% against 4.0%.
+- `spr: w` also merged subtrees of one action shape whose stack-to-pot ratios fell in one log-bucket of width `w`, amounts and payoffs ignored. It saved nothing over exact meetings up to `w = 1` on one-size trees; on the three-size tree, 1.5× less storage at `w = 0.1` and 2× at `w = 4`, where a one-size tree was left 20% of pot exploitable.
+- `weighting: 'counterfactual'` added the histories' regrets as plain CFR would, instead of weighting each by how often the acting hand plays into it. It was four times as exploitable as reach weighting: 24% of pot on the two-size tree, 15% on #101's blueprint.
+
+Sharing now covers the river alone, with exact meetings and reach weighting.
+
+### Safe re-solving gadgets (#47)
+
+`ResolveOptions.gadget` guarded a re-solve against the opponent: `'resolve'` (Burch, Johanson & Bowling, 2014) let each opponent hand choose by regret matching between its blueprint value and entering the subgame; `'maxmargin'` (Moravčík et al., 2016) picked which hand entered to maximise the smallest margin over its blueprint value; `'reach-maxmargin'` (Brown & Sandholm, 2017) raised each hand's blueprint value by what it gave up on the path. `ResolveOptions.values: 'blueprint'` used the blueprint's own values instead of best responses.
+
+On Ks 9s 4s, a flop blueprint with three flop sizes and one turn/river size, its turns re-solved at three sizes with raises: an opponent's best response under a full-tree reference's ranges gained, weighted by turn reach, 3.5–4% of the subgame's pot against plain re-solving, 4.2–4.6% against `'resolve'` and 4.7–6.2% against either maxmargin gadget. Most of what is left is the refined player's own range at the node, which comes from the blueprint and which no gadget changes; with more actions in the subgame than in the blueprint, the guarantees often cannot all be met. Keeping the busiest lines unshared (`ShareHistories.keepLines`, #101) is what makes re-solves from a shared blueprint trustworthy.

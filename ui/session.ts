@@ -25,7 +25,7 @@ import {
 	formatCards,
 	NodeKind,
 } from '../src/index.ts';
-import type { Progress, SolveRun, Spot, SpotConfig } from '../src/index.ts';
+import type { Progress, SolveRun, SpotConfig } from '../src/index.ts';
 import { predictCrossing } from '../src/index.ts';
 
 if (!parentPort) throw new Error('session worker must be started as a worker thread');
@@ -57,14 +57,6 @@ let links: Map<number, { parent: number; via: string; action: number; dealt: boo
 const yieldToMessages = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 /** Reach of a player at a node, by their storage slot rather than by combination. */
-/** The boards a node's line deals at its round, `[from, to)`: every board without `lineRunouts`. */
-function lineRange(spot: Spot, node: number): [number, number] {
-	const lines = spot.runouts.lines;
-	if (!lines) return [0, spot.runouts.counts[spot.tree.round[node]]];
-	const family = lines.families[lines.family[node]];
-	return [family.from, family.to];
-}
-
 function reachAt(node: number, board: number, player: 0 | 1): Float64Array {
 	const index = run!.spot.players[player];
 	const byCombo = run!.snapshot().reachAt(node, board, player);
@@ -84,8 +76,7 @@ port.on('message', (message: Record<string, unknown>) => {
 	try {
 		const spot = run.spot;
 		const { node } = request;
-		// The page counts boards within the node's own line (see `lineBoards`).
-		const board = lineRange(spot, node)[0] + request.board;
+		const board = request.board;
 		const view = run.snapshot().strategyAt(node, board);
 		const reach = reachAt(node, board, view.player);
 		const round = spot.tree.round[node];
@@ -180,7 +171,7 @@ async function main(): Promise<void> {
 				player: tree.player[node],
 				round: tree.round[node],
 				pot: tree.pot[node] / spot.chipScale,
-				boards: lineRange(spot, node)[1] - lineRange(spot, node)[0],
+				boards: spot.runouts.counts[spot.tree.round[node]],
 			};
 		}),
 		// Every combination either player holds, so the page can lay out a grid.

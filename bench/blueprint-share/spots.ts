@@ -20,7 +20,6 @@ export const TURNS: Record<Board, readonly string[]> = {
 export const SHARES: Record<string, SpotConfig['shareHistories']> = {
 	none: undefined,
 	river: true,
-	'turn+river': { fromRound: 1 },
 };
 
 /** The full tree T on `board`. */

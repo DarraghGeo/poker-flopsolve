@@ -1,9 +1,9 @@
 /**
  * Issue #47: solve a blueprint (T's flop betting, simplified turn and river),
  * measure it against a reference from `reference.ts`, then re-solve the
- * sampled turn nodes at T's full betting with each gadget and measure those.
+ * sampled turn nodes at T's full betting and measure those.
  *
- *   node --import tsx bench/nested/run.ts <rainbow|monotone> <variant> [iterations] [gadgets]
+ *   node --import tsx bench/nested/run.ts <rainbow|monotone> <variant> [iterations]
  *
  * Writes `scratch/nested/<board>-T/run-<variant>.json` and prints a summary.
  */
@@ -14,18 +14,14 @@ import type { Solution, SolveRun, SpotConfig } from '../../src/index.ts';
 import { Mode, matchupMass } from '../../src/cfr.ts';
 import { resolveSubgame } from '../../src/resolve.ts';
 import { copySubtree } from '../../src/subtree.ts';
-import type { Gadget } from '../../src/resolve.ts';
 import { configFromJson, fromJson, lineNode, nodeEvs, openMass, rootActionEvs, rootEvs, toJson, turnBoard } from './lib.ts';
 import { blueprint, small, target, VARIANTS, type BoardName } from './spots.ts';
 
 
-const [boardName, variantName, iterArg, gadgetArg] = process.argv.slice(2) as [BoardName, string, string?, string?];
+const [boardName, variantName, iterArg] = process.argv.slice(2) as [BoardName, string, string?];
 const variant = VARIANTS[variantName];
 if (!variant) throw new Error(`unknown variant ${variantName}`);
 const RESOLVE_ITERATIONS = Number(iterArg ?? 300);
-const GADGETS = (gadgetArg ?? 'unsafe,resolve,maxmargin,reach-maxmargin').split(',') as Gadget[];
-// NESTED_VALUES=blueprint guarantees blueprint values instead of best responses.
-const VALUES = process.env.NESTED_VALUES === 'blueprint' ? 'blueprint' : 'best-response';
 // NESTED_REF=T0 measures against the smaller tree's reference instead; NESTED_TAG suffixes the output file.
 const refTree = process.env.NESTED_REF === 'T0' ? 'T0' : 'T';
 const full = (refTree === 'T0' ? small : target)(boardName);
@@ -318,57 +314,53 @@ for (const key of keys) {
 			`reference self-gain ${(row.referenceGain as number[]).map((x) => x.toFixed(3)).join('/')}`,
 	);
 	bpSub.close();
-	for (const gadget of GADGETS) {
-		for (const player of [0, 1] as const) {
-			const t = performance.now();
-			const resolved = resolveSubgame(bp, node, board, { player, gadget, betting: later, iterations: RESOLVE_ITERATIONS, values: VALUES, measure: true });
-			const ms = performance.now() - t;
-			const sub = resolved.solution;
-			if (sub.spot.tree.nodeCount !== ref.spot.tree.nodeCount) throw new Error(`${key}: re-solved tree differs from the reference's`);
-			let margin = Number.NaN;
-			if (resolved.alternative && resolved.entered) {
-				// Range-weighted mean of (best response - guaranteed), chips → % pot.
-				const w = sub.spot.players[1 - player].weights;
-				let s = 0;
-				let m = 0;
-				for (let h = 0; h < COMBOS; h++) {
-					if (!(w[h] > 0) || Number.isNaN(resolved.entered[h])) continue;
-					s += w[h] * (resolved.entered[h] - resolved.alternative[h]);
-					m += w[h];
-				}
-				margin = (100 * s) / m / refPot;
+	for (const player of [0, 1] as const) {
+		const t = performance.now();
+		const resolved = resolveSubgame(bp, node, board, { player, betting: later, iterations: RESOLVE_ITERATIONS, measure: true });
+		const ms = performance.now() - t;
+		const sub = resolved.solution;
+		if (sub.spot.tree.nodeCount !== ref.spot.tree.nodeCount) throw new Error(`${key}: re-solved tree differs from the reference's`);
+		let margin = Number.NaN;
+		if (resolved.alternative && resolved.entered) {
+			// Range-weighted mean of (best response - blueprint best response), chips → % pot.
+			const w = sub.spot.players[1 - player].weights;
+			let s = 0;
+			let m = 0;
+			for (let h = 0; h < COMBOS; h++) {
+				if (!(w[h] > 0) || Number.isNaN(resolved.entered[h])) continue;
+				s += w[h] * (resolved.entered[h] - resolved.alternative[h]);
+				m += w[h];
 			}
-			const result = {
-				gadget,
-				player,
-				ms,
-				bytes: sub.spot.estimate.bytes,
-				tv: turnTv(sub, ref, player, false),
-				classTv: turnTv(sub, ref, player, true),
-				gain: gain(sub, ref, player),
-				missing: missing(sub, ref),
-				margin,
-			};
-			(row.resolves as unknown[]).push(result);
-			console.log(
-				`  ${gadget.padEnd(15)} p${player}: ${(ms / 1000).toFixed(1)} s, ${(result.bytes / MiB).toFixed(1)} MiB, ` +
-					`TV ${result.tv.toFixed(3)}, class-TV ${result.classTv.toFixed(3)}, gain ${result.gain.toFixed(3)}% pot, ` +
-					`excess over blueprint ${Number.isNaN(margin) ? '-' : margin.toFixed(3)}%`,
-			);
+			margin = (100 * s) / m / refPot;
 		}
+		const result = {
+			player,
+			ms,
+			bytes: sub.spot.estimate.bytes,
+			tv: turnTv(sub, ref, player, false),
+			classTv: turnTv(sub, ref, player, true),
+			gain: gain(sub, ref, player),
+			missing: missing(sub, ref),
+			margin,
+		};
+		(row.resolves as unknown[]).push(result);
+		console.log(
+			`  p${player}: ${(ms / 1000).toFixed(1)} s, ${(result.bytes / MiB).toFixed(1)} MiB, ` +
+				`TV ${result.tv.toFixed(3)}, class-TV ${result.classTv.toFixed(3)}, gain ${result.gain.toFixed(3)}% pot, ` +
+				`excess over blueprint ${Number.isNaN(margin) ? '-' : margin.toFixed(3)}%`,
+		);
 	}
 	refRun.close();
 	nodeResults.push(row);
 }
 
 writeFileSync(
-	new URL(`run-${variantName}${VALUES === 'blueprint' ? '-ev' : ''}${process.env.NESTED_TAG ?? ''}.json`, REF),
+	new URL(`run-${variantName}${process.env.NESTED_TAG ?? ''}.json`, REF),
 	JSON.stringify(
 		{
 			board: boardName,
 			variant: variantName,
 			resolveIterations: RESOLVE_ITERATIONS,
-			values: VALUES,
 			blueprint: {
 				nodes: spot.estimate.decisionNodes,
 				runouts: spot.estimate.runouts,

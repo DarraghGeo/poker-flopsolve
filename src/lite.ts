@@ -131,7 +131,7 @@ export interface LiteSolution {
 	/**
 	 * Re-solve the subgame at a node opening the turn or river, at the
 	 * caller's full betting for the streets from there, the caller's cuts
-	 * below the node included: `resolveSubgame`, 'unsafe' and 200 iterations
+	 * below the node included: `resolveSubgame` with 200 iterations
 	 * unless `options` say otherwise, with the blueprint's `workers`,
 	 * `precision` and `wasmStorage`.
 	 */
@@ -153,7 +153,6 @@ export interface LiteSolution {
 export function liteConfig(config: SpotConfig, options: LiteOptions = {}): SpotConfig {
 	const target = options.laterSize ?? 0.75;
 	if (!(target > 0)) throw new Error(`laterSize must be above 0; got ${target}`);
-	if (config.lineRunouts) throw new Error('lineRunouts does not combine with the lite blueprint, which shares histories');
 	const rounds = 6 - parseCards(config.board).length;
 	if (!(rounds >= 1 && rounds <= 3)) throw new Error(`A board has 3, 4 or 5 cards; got ${config.board}`);
 	const flopCap = options.flopMaxRaises;
@@ -242,7 +241,7 @@ function nearest(row: readonly BetSize[], target: number): BetSize[] {
  * (solved to 0.05% of pot), % of pot, with that blueprint's own loss as the
  * floor; it measures what sharing, sampling and stopping early cost, not
  * distance to the full game. Re-solve gain is the opponent's best response
- * against a turn re-solved at the full betting (300 iterations, 'unsafe'),
+ * against a turn re-solved at the full betting (300 iterations),
  * under the unshared blueprint's ranges, % of the subgame's pot, weighted
  * over 3 lines × 3 turns by how often each is reached:
  *

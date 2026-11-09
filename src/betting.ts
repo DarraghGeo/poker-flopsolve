@@ -54,7 +54,7 @@ export function treeConfig(config: SpotConfig, rows: PerPlayer<readonly (readonl
 /**
  * The betting tree `defineSpot(config)` would build, alone: no ranges,
  * runouts or storage, so it is cheap for any tree, and `maxBytes` is not
- * checked. Line runouts do not change the betting tree.
+ * checked.
  */
 export function bettingTree(config: SpotConfig): Tree {
 	const rounds = 6 - parseCards(config.board).length;

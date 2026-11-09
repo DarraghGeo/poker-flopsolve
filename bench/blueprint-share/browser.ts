@@ -4,7 +4,7 @@
  * when exploitability and the root play stop improving, seconds per
  * iteration, and the tab's peak memory.
  *
- *   [KEEP_TOP=k | KEEP_MIB=m] [PICK=80] [WARM=1 | PICK_PROXY=1] [PRECISION=i16] node --import tsx bench/blueprint-share/browser.ts <board> <none|river|turn+river> [workers,...] [cap] [sampling]
+ *   [KEEP_TOP=k | KEEP_MIB=m] [PICK=80] [WARM=1 | PICK_PROXY=1] [PRECISION=i16] node --import tsx bench/blueprint-share/browser.ts <board> <none|river> [workers,...] [cap] [sampling]
  *
  * The clock counts solving only (`step`). Every 20 iterations, off the
  * clock, it measures exploitability and the root play: OOP at the root and

@@ -5,7 +5,7 @@
  *   node --import tsx bench/blueprint-share/recover.ts <rainbow|two-tone|monotone> <name> '<json>'
  *
  * `json` picks the blueprint and what is done with it:
- * - `share`: 'river' (default), 'none' or 'turn+river'; `weighting`: 'counterfactual';
+ * - `share`: 'river' (default) or 'none';
  * - `keep`: lines whose rivers stay unshared (`ShareHistories.keepLines`),
  *   or `keepTop`/`keepReach`/`keepMiB` (`linesWithin`, storage in MiB): the
  *   lines `turnLineReach` ranks highest after a
@@ -43,7 +43,6 @@ import { blueprintOf, checkedDownRiver, full as fullTree, type Board } from './s
 
 interface Plan {
 	share?: string;
-	weighting?: 'counterfactual';
 	keep?: string[];
 	keepTop?: number;
 	keepReach?: number;
@@ -78,12 +77,12 @@ const later = {
 };
 const REF = new URL(`../../scratch/blueprint-share/${boardName}-none/`, import.meta.url);
 
-/** The blueprint config with `keepLines` and weighting applied. */
+/** The blueprint config with `keepLines` applied. */
 function configWith(keep: readonly string[]): SpotConfig {
 	const base: SpotConfig = { ...blueprintOf(boardName, plan.share ?? 'river'), ...(plan.compact ? { compactStorage: plan.compact } : {}) };
 	const asked = base.shareHistories;
 	if (asked === undefined) return base;
-	const options = { ...(asked === true ? {} : asked), ...(plan.weighting ? { weighting: plan.weighting } : {}) };
+	const options = asked === true ? {} : asked;
 	return { ...base, shareHistories: keep.length > 0 ? { ...options, keepLines: keep } : (Object.keys(options).length ? options : true) };
 }
 

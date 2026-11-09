@@ -8,7 +8,7 @@ with the full tree, solved as a reference. The spots are in `spots.ts`.
 |---|---|
 | `estimate.ts` | memory estimates for the full tree and each blueprint, on both boards |
 | `reference.ts <board> T i16` | solves the full tree to 0.3% of pot on four threads; saves root EVs, the whole strategy, and the subtree below 15 turn nodes (5 most-reached flop lines × 3 turns). `NESTED_LOAD=1` cuts the subtrees from the saved strategy again without solving |
-| `run.ts <board> <variant> [iterations] [gadgets]` | solves a blueprint; reports its root EV error and size agreement against the reference, then re-solves each saved turn node with each gadget and measures the opponent's best-response gain under the reference ranges |
+| `run.ts <board> <variant> [iterations]` | solves a blueprint; reports its root EV error and size agreement against the reference, then re-solves each saved turn node and measures the opponent's best-response gain under the reference ranges |
 | `sizes.ts <board> <variants...>` | the cost of the blueprint's root size choices, valued at the reference's per-action EVs |
 | `browser.ts <board> <variant>` | blueprint and re-solve wall times in headless Chromium on 1 and 4 threads |
 
@@ -18,8 +18,9 @@ with the full tree, solved as a reference. The spots are in `spots.ts`.
   for flop lines with a bet are wrong. They were cut before the bet-size matching fix and read
   130–180% local exploitability.
 - `ref-monotone-T.cut.log`: the same subtrees cut again after the fix, at 0.04–0.57%.
-- `run-*.json`, `run-monotone-*.log`: one per blueprint variant. `-ev` uses blueprint values
-  instead of best responses for the gadgets.
+- `run-*.json`, `run-monotone-*.log`: one per blueprint variant. They predate the removal of the
+  safe gadgets (#125) and include a run per gadget; `-ev` used blueprint values instead of best
+  responses for them. The gadgets' numbers are in `docs/APPROXIMATIONS.md`.
 - `sizes-monotone.log`, `browser-*.log`: the other two scripts.
 - `sizes-monotone-current.log`, `run-smoke.log`: blueprints solved again after #8 changed how
   average strategies are summed. That change merged while the runs above were going, so the
