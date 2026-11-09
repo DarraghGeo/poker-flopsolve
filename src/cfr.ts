@@ -597,6 +597,44 @@ function cachedFactors(t: number): { keepPositive: number; keepNegative: number;
 }
 
 /**
+ * What DCFR has a block keep as iteration `iterWeight` (counted from 1)
+ * updates it, for every storage the update runs at. The order matters:
+ * first, a shared block another history already discounted this iteration
+ * keeps everything; then, with chance sampling, the discounts of the
+ * iterations a skipped block missed are multiplied in. Marks the block
+ * discounted and updated at `iterWeight`. assembly/engine.ts has the same
+ * as its `blockFactors`.
+ */
+function blockFactors(
+	ctx: Context,
+	block: number,
+	iterWeight: number,
+): { keepPositive: number; keepNegative: number; keepSum: number } {
+	let { keepPositive, keepNegative, keepSum } = dcfrFactors(iterWeight);
+	const discounted = ctx.discounted;
+	if (discounted !== undefined && discounted !== null) {
+		// Another history already discounted this shared block this iteration.
+		if (discounted[block] === iterWeight) keepPositive = keepNegative = keepSum = 1;
+		discounted[block] = iterWeight;
+	}
+	const sampling = ctx.sampling;
+	if (sampling !== undefined && sampling !== null) {
+		// A subtree chance sampling skipped missed those iterations'
+		// discounts; nothing was added meanwhile, so each sign held.
+		if (sampling.catchUp) {
+			for (let s = sampling.lastUpdate[block] + 1; s < iterWeight; s++) {
+				const f = cachedFactors(s);
+				keepPositive *= f.keepPositive;
+				keepNegative *= f.keepNegative;
+				keepSum *= f.keepSum;
+			}
+		}
+		sampling.lastUpdate[block] = iterWeight;
+	}
+	return { keepPositive, keepNegative, keepSum };
+}
+
+/**
  * Completions remaining after each round, both players' cards removed.
  * Constant across hands because the two hands are always disjoint.
  */
@@ -1285,29 +1323,7 @@ export function traverse(
 		);
 	} else if (isTraverser && mode === Mode.Train && ctx.applyUpdates && ctx.dcfr) {
 		// `iterWeight` is the iteration number, counted from 1.
-		let { keepPositive, keepNegative, keepSum } = dcfrFactors(iterWeight);
-		const discounted = ctx.discounted;
-		if (discounted !== undefined && discounted !== null) {
-			// Another history already discounted this shared block this iteration.
-			const block = ctx.layout.blockOffset[node] + board;
-			if (discounted[block] === iterWeight) keepPositive = keepNegative = keepSum = 1;
-			discounted[block] = iterWeight;
-		}
-		const sampling = ctx.sampling;
-		if (sampling !== undefined && sampling !== null) {
-			// A subtree chance sampling skipped missed those iterations'
-			// discounts; nothing was added meanwhile, so each sign held.
-			const block = ctx.layout.blockOffset[node] + board;
-			if (sampling.catchUp) {
-				for (let s = sampling.lastUpdate[block] + 1; s < iterWeight; s++) {
-					const f = cachedFactors(s);
-					keepPositive *= f.keepPositive;
-					keepNegative *= f.keepNegative;
-					keepSum *= f.keepSum;
-				}
-			}
-			sampling.lastUpdate[block] = iterWeight;
-		}
+		const { keepPositive, keepNegative, keepSum } = blockFactors(ctx, ctx.layout.blockOffset[node] + board, iterWeight);
 		const regret = ctx.regret;
 		const strategySum = ctx.strategySum;
 		for (let a = 0; a < actions; a++) {
@@ -1448,14 +1464,8 @@ function updateQuantised(
 	let weight = iterWeight;
 	const clamp = !ctx.dcfr;
 	if (ctx.dcfr) {
-		({ keepPositive, keepNegative, keepSum } = dcfrFactors(iterWeight));
+		({ keepPositive, keepNegative, keepSum } = blockFactors(ctx, block, iterWeight));
 		weight = 1;
-		const discounted = ctx.discounted;
-		if (discounted !== undefined && discounted !== null) {
-			// Another history already discounted this shared block this iteration.
-			if (discounted[block] === iterWeight) keepPositive = keepNegative = keepSum = 1;
-			discounted[block] = iterWeight;
-		}
 	}
 
 	let largestRegret = 0;
@@ -1553,28 +1563,8 @@ export function updateCompact(
 	let weight = iterWeight;
 	const clamp = !ctx.dcfr;
 	if (ctx.dcfr) {
-		({ keepPositive, keepNegative, keepSum } = dcfrFactors(iterWeight));
+		({ keepPositive, keepNegative, keepSum } = blockFactors(ctx, block, iterWeight));
 		weight = 1;
-		const discounted = ctx.discounted;
-		if (discounted !== undefined && discounted !== null) {
-			// Another history already discounted this shared block this iteration.
-			if (discounted[block] === iterWeight) keepPositive = keepNegative = keepSum = 1;
-			discounted[block] = iterWeight;
-		}
-		const sampling = ctx.sampling;
-		if (sampling !== undefined && sampling !== null) {
-			// A subtree chance sampling skipped missed those iterations'
-			// discounts, as in the 32-bit update.
-			if (sampling.catchUp) {
-				for (let s = sampling.lastUpdate[block] + 1; s < iterWeight; s++) {
-					const f = cachedFactors(s);
-					keepPositive *= f.keepPositive;
-					keepNegative *= f.keepNegative;
-					keepSum *= f.keepSum;
-				}
-			}
-			sampling.lastUpdate[block] = iterWeight;
-		}
 	}
 
 	if (plan.float) {
