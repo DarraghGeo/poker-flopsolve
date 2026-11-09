@@ -169,8 +169,11 @@ export interface EngineWorkerSetup {
 	 * passed them: its state is in the shared memory, and each thread walks
 	 * and marks only its own runouts' deals.
 	 */
-	readonly sampling?: readonly number[];
+	readonly sampling?: SamplingArgs;
 }
+
+/** `EngineExports.setSampling`'s arguments, in order. */
+export type SamplingArgs = Parameters<EngineExports['setSampling']>;
 
 /** How a pool starts its workers; the platform layer supplies it. */
 export type SpawnEngineWorker = (setup: EngineWorkerSetup, onError: (error: Error) => void) => { terminate(): void };
@@ -363,7 +366,7 @@ export function createEngine(
 	exports.init(offsets[own[0].header]);
 	exports.setMaxActions(maxActions);
 	let samplingViews: Engine['sampling'] = null;
-	let samplingArgs: number[] | null = null;
+	let samplingArgs: SamplingArgs | null = null;
 	if (plan && sample) {
 		let mask = 0;
 		for (let r = 0; r < plan.rounds.length; r++) if (plan.rounds[r]) mask |= 1 << r;

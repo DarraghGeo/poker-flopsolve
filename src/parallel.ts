@@ -281,6 +281,16 @@ export function startPool(
 	const threads: WorkerHandle[] = [];
 	let failure: Error | null = null;
 
+	// Workers wrap each of sampling's buffers whole, so each must be its own shared buffer.
+	const samplingBuffers = ctx.sampling
+		? ([ctx.sampling.baseline, ctx.sampling.lastWalk, ctx.sampling.lastUpdate] as const).map((view) => {
+				if (!(view.buffer instanceof SharedArrayBuffer) || view.byteOffset !== 0 || view.byteLength !== view.buffer.byteLength) {
+					throw new Error('chanceSampling on worker threads needs its state in shared buffers of its own');
+				}
+				return view.buffer;
+			})
+		: null;
+
 	for (let w = 0; w < spawned; w++) {
 		const setup: WorkerSetup = {
 			workerId: w,
@@ -297,13 +307,7 @@ export function startPool(
 			compactSum: ctx.compactSum?.map((chunk) => chunk.buffer as SharedArrayBuffer) ?? null,
 			sumShift: ctx.sumShift?.map((chunk) => chunk.buffer as SharedArrayBuffer) ?? null,
 			compactScale: (ctx.compactScale?.buffer as SharedArrayBuffer | undefined) ?? null,
-			sampling: ctx.sampling
-				? [
-						ctx.sampling.baseline.buffer as SharedArrayBuffer,
-						ctx.sampling.lastWalk.buffer as SharedArrayBuffer,
-						ctx.sampling.lastUpdate.buffer as SharedArrayBuffer,
-					]
-				: null,
+			sampling: samplingBuffers ? [samplingBuffers[0], samplingBuffers[1], samplingBuffers[2]] : null,
 			control: controlBuffer,
 			exchange: exchangeBuffer,
 			entryCount,

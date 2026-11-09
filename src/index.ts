@@ -39,6 +39,7 @@ import {
 	buildPlayerIndex,
 	makeSampling,
 	planSampling,
+	sampledRounds,
 	samplingBytes,
 	makeSolver,
 	makeTerminalScratch,
@@ -1634,7 +1635,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// sampled round above it would be sampled by the main thread after the
 	// threads had walked it, so such a spot stays on one thread; the split
 	// sits at the first round with more than one board, so no flop or turn
-	// spot has one.
+	// spot has one: this is a guard, not a case a real spot reaches.
 	const plan = shards && samplingOptions && sampledRounds(samplingOptions, spot.runouts.rounds).some((r) => r < shards.round)
 		? null
 		: shards;
@@ -1834,12 +1835,6 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			);
 		},
 	};
-}
-
-/** The rounds `chanceSampling` samples, as `planSampling` picks them. */
-function sampledRounds(options: SamplingOptions, rounds: number): number[] {
-	const asked = options.rounds ?? Array.from({ length: rounds }, (_, r) => r);
-	return asked.filter((r) => r > 0 && r < rounds);
 }
 
 /** Validate `SpotConfig.compactStorage` into the solver's plan. */

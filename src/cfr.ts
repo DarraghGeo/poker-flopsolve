@@ -491,6 +491,12 @@ export interface Sampling extends SamplingPlan {
 	readonly bytes: number;
 }
 
+/** The rounds chance sampling samples, of a spot with `rounds` betting rounds. */
+export function sampledRounds(options: SamplingOptions, rounds: number): number[] {
+	const asked = options.rounds ?? Array.from({ length: rounds }, (_, r) => r);
+	return asked.filter((r) => r > 0 && r < rounds);
+}
+
 /** Lay out sampling state for a spot. */
 export function planSampling(
 	tree: Tree,
@@ -500,8 +506,7 @@ export function planSampling(
 	options: SamplingOptions,
 ): SamplingPlan {
 	const rounds = new Uint8Array(runouts.rounds);
-	const asked = options.rounds ?? Array.from({ length: runouts.rounds }, (_, r) => r);
-	for (const r of asked) if (r > 0 && r < runouts.rounds) rounds[r] = 1;
+	for (const r of sampledRounds(options, runouts.rounds)) rounds[r] = 1;
 	const boardOffset = new Int32Array(active.roundBase[runouts.rounds] * 2);
 	const perNode = new Float64Array(runouts.rounds);
 	for (let r = 1; r < runouts.rounds; r++) {
