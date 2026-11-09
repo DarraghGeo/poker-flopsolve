@@ -102,14 +102,12 @@ describe('line runouts', () => {
 		four.close();
 	});
 
-	it('take the recommended rule from `true`', () => {
-		const on = defineSpot({ ...turn, lineRunouts: true });
-		const spelled = defineSpot({ ...turn, lineRunouts: { aggressions: 2, band: 3 } });
-		const neither = defineSpot({ ...turn, lineRunouts: {} });
-		expect(on.runouts.counts).toEqual(spelled.runouts.counts);
-		expect(neither.runouts.counts).toEqual(spelled.runouts.counts);
-		expect(on.estimate.bytes).toBe(spelled.estimate.bytes);
+	it('need a rule spelled out', () => {
+		expect(() => defineSpot({ ...turn, lineRunouts: {} })).toThrow(/needs a rule/);
+		expect(() => defineSpot({ ...turn, lineRunouts: { band: 3 } })).toThrow(/needs a rule/);
 		expect(() => defineSpot({ ...turn, lineRunouts: { raises: 1.5 } })).toThrow(/whole number/);
+		const banded = defineSpot({ ...turn, lineRunouts: { aggressions: 2 } });
+		expect(banded.runouts.counts).toEqual(defineSpot({ ...turn, lineRunouts: { aggressions: 2, band: 3 } }).runouts.counts);
 	});
 
 	it('read boards per line', () => {

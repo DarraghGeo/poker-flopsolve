@@ -19,7 +19,7 @@ import type { RunoutMerge } from './runouts.ts';
 import { boardAtRound, enumerateRunouts, rankSwap, resolveBoard } from './runouts.ts';
 import { suitSymmetries } from './abstraction.ts';
 import type { LineRunouts } from './lines.ts';
-import { DEFAULT_LINE_RUNOUTS, enumerateLineRunouts, lineBoards, lineScales, lineStarts } from './lines.ts';
+import { enumerateLineRunouts, lineBoards, lineScales, lineStarts } from './lines.ts';
 export type { LineRunouts } from './lines.ts';
 import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
@@ -161,39 +161,52 @@ export interface SpotConfig {
 	 */
 	readonly runoutBuckets?: boolean | number;
 	/**
-	 * Deal coarser turn and river cards in the betting lines that are rarely
-	 * reached, and every card in the rest — an approximation that shrinks the
-	 * tree (issue #53). A chance node deals coarsely once the betting before
-	 * it, all streets so far, holds `aggressions` bets and raises or `raises`
-	 * raises, and every chance node below a coarse one does too. A coarse deal
-	 * stores one card per class of cards that pair, flush and straight the
-	 * board alike, with ranks folded in bands of `band`; each other card of
-	 * the class plays as it, hands unchanged. `true` is the recommended
-	 * `{ aggressions: 2, band: 3 }`. Off by default; unset, nothing changes.
+	 * Deal coarser turn and river cards in chosen betting lines, and every
+	 * card in the rest: an approximation that shrinks the tree (issue #53).
+	 * A chance node deals coarsely once the betting before it, all streets
+	 * so far, holds `aggressions` bets and raises or `raises` raises; every
+	 * chance node below a coarse one does too. A coarse deal stores one card
+	 * per class of cards that pair, flush and straight the board alike, with
+	 * ranks folded in bands of `band` (default 3); each other card of the
+	 * class plays as it, hands unchanged. There is no default rule: one that
+	 * picks out rare play on one board picks out common play on another, so
+	 * the caller names it. Off by default; unset, nothing changes.
 	 *
-	 * Measured on Ks 9s 4s with the round's three-size tree (pot 55, stack
-	 * 975, one raise size and all-in, three aggressions), 510 iterations on 4
-	 * threads against an exact solve to 0.30% of pot. Exploitability is in
-	 * the full game; EV error is per combination at the root, % of pot;
-	 * "size kept" is the share of the out-of-position range whose best root
-	 * bet size is still the exact solve's:
+	 * Measured with the round's three-size trees (pot 55, stack 975), against
+	 * exact solves to 0.30% of pot run for as many iterations, 4 threads.
+	 * Exploitability is in the full game; EV error is per combination at the
+	 * root, % of pot; "size kept" is the share of the out-of-position range
+	 * whose best root bet size is still the exact solve's.
+	 *
+	 * Ks 9s 4s, one raise size and all-in, three aggressions (510 iterations):
 	 *
 	 * | rule | f32 storage | exploitability | EV error mean (oop / ip) | worst | size kept |
 	 * |---|---|---|---|---|---|
 	 * | exact | 3.75 GiB | 0.30% | | | |
-	 * | `true` (aggressions 2, band 3) | 2.66 GiB | 3.8% | 0.6 / 0.8 | 2.6 / 3.5 | 100% |
+	 * | aggressions 2, band 3 | 2.66 GiB | 3.8% | 0.6 / 0.8 | 2.6 / 3.5 | 100% |
+	 * | aggressions 2, band 3, `runoutBuckets: 3` | 2.18 GiB | 2.5% | 0.4 / 0.6 | 1.7 / 2.9 | 98% |
 	 * | aggressions 2, band 13 | 1.68 GiB | 13.7% | 2.2 / 2.4 | 9.6 / 14.7 | 97% |
 	 * | raises 1, band 13 | 2.40 GiB | 8.0% | 1.9 / 3.1 | 7.0 / 11.2 | 100% |
+	 * | `runoutBuckets: 3` alone | 2.66 GiB | 0.97% | 0.3 / 0.3 | 2.0 / 1.7 | 95% |
 	 *
-	 * Rare lines are cheap to reach but not cheap to get wrong: raise lines
-	 * held 49% of the storage and 1.4% of the river deals reached, yet a best
-	 * response walks into a coarse subtree, and its strategy there shifts what
-	 * the earlier streets play. On the round's rainbow target (As Kh 7d, 8.7
-	 * GiB at 16 bits) the rules project to 3.9 GiB (`true`), 3.0 GiB
-	 * (aggressions 2, band 13) and 5.0 GiB (raises 1, band 13) at 16 bits;
-	 * `bench/history-runouts/plan.ts` projects any spot, and `census.ts`
-	 * splits a tree's storage by line. It multiplies with storage-side
-	 * savings rather than replacing them.
+	 * As Kh 7d, all-in the only raise, two aggressions (770 iterations):
+	 *
+	 * | rule | f32 storage | exploitability | EV error mean (oop / ip) | worst | size kept |
+	 * |---|---|---|---|---|---|
+	 * | exact | 5.78 GiB | 0.30% | | | |
+	 * | aggressions 2, band 3 | 3.43 GiB | 16.7% | 4.0 / 3.8 | 19.2 / 18.1 | 29% |
+	 *
+	 * What a rule costs follows how often its lines are played, not how
+	 * many bytes they hold. Lines with two aggressions reached 9.8% of river
+	 * deals on Ks 9s 4s and 22% on As Kh 7d, with the big pots; lines with a
+	 * raise reached 1.3% and 0.2%. Even rare lines cost several % of pot, as
+	 * a best response walks into a coarse subtree and the earlier streets play
+	 * around it. On the round's target T (As Kh 7d, 8.7 GiB at 16 bits) rules
+	 * project to 3.9 GiB (aggressions 2, band 3), 3.0 (aggressions 2, band
+	 * 13), 5.5 (raises 1, band 3) and 5.1 (raises 1, band 13) at 16 bits.
+	 * `bench/history-runouts/plan.ts` projects any spot and rule, `census.ts`
+	 * splits a tree's storage by line. It stacks with `runoutBuckets`, and
+	 * with savings on the storage side.
 	 *
 	 * Coarse deals miscount card removal: a hand holding the stored card is
 	 * dead on it and misses its whole class, and each hand's value is rescaled
@@ -208,7 +221,7 @@ export interface SpotConfig {
 	 * whose threads run the WebAssembly engine); not with `chanceSampling`,
 	 * `coarseStart` or a `warmStart` into it.
 	 */
-	readonly lineRunouts?: boolean | LineRunouts;
+	readonly lineRunouts?: LineRunouts;
 }
 
 /** Projected cost of solving a spot. */
@@ -382,7 +395,7 @@ export function defineSpot(config: SpotConfig): Spot {
 		},
 		runouts ?? { rounds },
 	);
-	runouts ??= enumerateLineRunouts(board, symmetries, merge, tree, lineRule === true ? DEFAULT_LINE_RUNOUTS : lineRule!);
+	runouts ??= enumerateLineRunouts(board, symmetries, merge, tree, lineRule!);
 	const boards = runouts.lines ? lineBoards(runouts.lines, tree) : undefined;
 
 	const layout = buildLayout(tree, runouts, players, 4, boards);

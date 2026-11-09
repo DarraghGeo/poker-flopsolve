@@ -175,7 +175,7 @@ if (mode === 'ref') {
 	console.log('reach by class:', reference.reach);
 } else {
 	const reference = JSON.parse(readFileSync(refFile, 'utf8'), (_, v: unknown) => (v === null ? NaN : v)) as Reference;
-	// `--lines` alone is `lineRunouts: true`; `--raises`/`--aggressions`/`--band` spell a rule;
+	// `--lines` alone is { aggressions: 2, band: 3 }; `--raises`/`--aggressions`/`--band` spell a rule;
 	// `--buckets g` adds the global `runoutBuckets`, alone or stacked.
 	const spelled = opt('raises') !== undefined || opt('aggressions') !== undefined;
 	const rule = spelled

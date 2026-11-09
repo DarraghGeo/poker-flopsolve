@@ -42,10 +42,7 @@ export interface LineRunouts {
 	 * by raises.
 	 */
 	readonly raises?: number;
-	/**
-	 * Or this many aggressive actions, bets and raises alike. Unset, never by
-	 * aggressions — unless `raises` is unset too, when it is 2.
-	 */
+	/** Or this many aggressive actions, bets and raises alike. Unset, never by aggressions. */
 	readonly aggressions?: number;
 	/**
 	 * Ranks per band among cards that pair nothing: 1 keeps every rank apart
@@ -55,8 +52,6 @@ export interface LineRunouts {
 	readonly band?: number;
 }
 
-/** What `lineRunouts: true` means: the rule measured as the best trade. */
-export const DEFAULT_LINE_RUNOUTS: LineRunouts = { aggressions: 2, band: 3 };
 
 /** A card's class on a board: what it does to pairs, flushes and straights, and its rank band. */
 export function cardClass(cards: ArrayLike<number>, base: number, width: number, card: number, band: number): number {
@@ -102,7 +97,10 @@ export function enumerateLineRunouts(
 	const band = rule.band ?? 3;
 	if (!(Number.isInteger(band) && band >= 1 && band <= 13)) throw new Error(`lineRunouts.band must be 1 to 13; got ${band}`);
 	const raisesAt = rule.raises;
-	const aggressionsAt = rule.aggressions ?? (rule.raises === undefined ? 2 : undefined);
+	const aggressionsAt = rule.aggressions;
+	if (raisesAt === undefined && aggressionsAt === undefined) {
+		throw new Error('lineRunouts needs a rule: `raises`, `aggressions` or both (see SpotConfig.lineRunouts)');
+	}
 	for (const [key, value] of [['raises', raisesAt], ['aggressions', aggressionsAt]] as const) {
 		if (value !== undefined && !(Number.isInteger(value) && value >= 0)) {
 			throw new Error(`lineRunouts.${key} must be a whole number of actions; got ${value}`);
