@@ -150,7 +150,10 @@ export interface SpotConfig {
 	 * aggressions: see the `Approximations` notes for its memory and error.
 	 * It is a fixed rule, so it costs nothing to apply. A subgame from
 	 * `Solution.subgameAt` gets the full sizes back unless its betting sets
-	 * this again. Default false; unset, the tree is unchanged.
+	 * this again, and then it is thinned as a tree of its own: bets on the
+	 * streets before it do not count, so a river after a bet on the flop
+	 * keeps only the 0.75 size, where the whole tree also kept its big sizes
+	 * and shove. Default false; unset, the tree is unchanged.
 	 */
 	readonly thinSizes?: boolean;
 	/** Refuse a range wider than this many combinations. */
@@ -1796,6 +1799,16 @@ function makeSolution(
 
 	const label = (edge: number): string => actionLabel(tree.edgeAction[edge], tree.edgeTarget[edge], spot.chipScale);
 
+	const path = (node: number): string => {
+		const steps: string[] = [];
+		let current = node;
+		while (parent[current] >= 0) {
+			const owner = parent[current];
+			steps.push(tree.kind[owner] === NodeKind.Decision ? label(viaEdge[current]) : '/');
+			current = owner;
+		}
+		return steps.reverse().join(' ') || '(root)';
+	};
 	const reachAt = (node: number, board: number, player: 0 | 1): Float64Array => {
 		const index = spot.players[player];
 		const reach = new Float64Array(COMBOS);
@@ -1851,16 +1864,7 @@ function makeSolution(
 			for (let a = 0; a < actions; a++) names.push(label(tree.firstEdge[node] + a));
 			return { node, board, player: owner, actions: names, combos: spot.players[owner].combos, probs };
 		},
-		path(node) {
-			const steps: string[] = [];
-			let current = node;
-			while (parent[current] >= 0) {
-				const owner = parent[current];
-				steps.push(tree.kind[owner] === NodeKind.Decision ? label(viaEdge[current]) : '/');
-				current = owner;
-			}
-			return steps.reverse().join(' ') || '(root)';
-		},
+		path,
 		reachAt,
 		subgameAt(node, board, betting = {}) {
 			const opensRound = node === 0 || (parent[node] >= 0 && tree.kind[parent[node]] === NodeKind.Chance);
@@ -1888,8 +1892,12 @@ function makeSolution(
 			const raiseRows = laterEach(source.raiseSizes, (side) => side !== undefined && raisesPerRound(side));
 			// Cuts below the node carry over, re-rooted at it, while the tree
 			// keeps the old betting; new betting builds a tree they need not fit.
-			const reshaped = TREE_SETTINGS.some((key) => key in betting);
-			const prefix = node === 0 ? '' : `${this.path(node)} `;
+			// Settings read with `??` fall back when given as undefined, and an
+			// unset thinSizes is the full tree the cuts were made on.
+			const keeps = (key: keyof SubgameBetting): boolean =>
+				key === 'thinSizes' ? !betting.thinSizes : betting[key] === undefined && ['betSizes', 'maxRaises', 'allowAllIn'].includes(key);
+			const reshaped = TREE_SETTINGS.some((key) => key in betting && !keeps(key));
+			const prefix = node === 0 ? '' : `${path(node)} `;
 			// Chips in a path are the actor's total investment, which a subgame
 			// counts from its own start: each amount drops by what is already in.
 			const rebase = (step: string): string => {

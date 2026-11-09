@@ -160,6 +160,7 @@ export function warmStart(
 	cards?: Uint8Array,
 	tolerance = SIZE_TOLERANCE,
 ): WarmStartReport {
+	if (!(tolerance >= 1)) throw new Error(`warmStart: the size tolerance is a ratio of at least 1, not ${tolerance}`);
 	// Each node is copied on its own, so into shared storage every history of
 	// a group would overwrite the same block and the last would win. From
 	// shared storage the copy is exact: each node takes its owner's block.

@@ -442,7 +442,8 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 		}
 
 		actions.forEach((entry, i) => {
-			const line = extend(path, actionLabel(entry.action, entry.target, chipScale));
+			// Labels only matter to a cut, so a tree without one formats none.
+			const line = remove ? extend(path, actionLabel(entry.action, entry.target, chipScale)) : '';
 			const invested: [number, number] =
 				me === 0 ? [entry.target, theirs] : [theirs, entry.target];
 			let child: number;
@@ -491,8 +492,10 @@ export function buildTree(config: TreeConfig, runouts: Runouts): Tree {
 	}, '');
 
 	if (remove && removed.size < remove.size) {
-		const missing = [...remove].filter((line) => !removed.has(line));
-		throw new Error(
+		// A line below a cut one went with it, so the tree never reached it.
+		const under = (line: string): boolean => [...removed].some((cut) => line.startsWith(`${cut} `));
+		const missing = [...remove].filter((line) => !removed.has(line) && !under(line));
+		if (missing.length > 0) throw new Error(
 			`removeActions: no bet, raise or shove in this tree ends the line ${missing.map((m) => `"${m}"`).join(', ')}. ` +
 				'Give each as Solution.path writes the node the action leads to, e.g. "check bet 18.15"; ' +
 				'checks, calls and folds cannot be removed',

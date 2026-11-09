@@ -112,7 +112,22 @@ describe('removeActions', () => {
 		expect(() => defineSpot(sub)).not.toThrow();
 		// New betting for the subgame leaves the old tree's cuts behind.
 		expect(solution.subgameAt(node, 0, { betSizes: [[0.5]] }).removeActions).toBeUndefined();
+		// Betting that leaves the tree as it was keeps them.
+		expect(solution.subgameAt(node, 0, { thinSizes: false, betSizes: undefined }).removeActions).toEqual(['bet 19.8']);
+		// Without its receiver, as a callback.
+		const { subgameAt } = solution;
+		expect(subgameAt(node, 0).removeActions).toEqual(['bet 19.8']);
 		run.close();
+	});
+
+	it('accepts a line below another cut line', () => {
+		const deeper = paths(base).path.find((p) => p.startsWith('bet 19.8 raise '))!;
+		expect(deeper).toBeDefined();
+		const one = paths({ ...base, removeActions: ['bet 19.8'] });
+		const both = paths({ ...base, removeActions: ['bet 19.8', deeper] });
+		expect(both.path).toEqual(one.path);
+		// A line under a cut that the tree never had is still an error.
+		expect(() => defineSpot({ ...base, removeActions: ['bet 19.8', 'check bet 1234'] })).toThrow(/check bet 1234/);
 	});
 
 	it('counts the chips of a re-rooted cut from the subgame start', () => {
