@@ -236,6 +236,27 @@ export interface SpotConfig {
 	 * history's update is clamped at zero on its own, rather than their sum.
 	 * A spot with it can warm-start only from a solve that shares too.
 	 *
+	 * On issue #47's blueprint (issue #85; T's flop betting, one 0.75 bet on
+	 * the turn and river with no raise, `runoutBuckets: 3`) it saves 4.1 times
+	 * on rainbow, two-tone and monotone flops alike, because the flop's sizes
+	 * and raises still meet at a few turn pots: 196 river decisions keep 44
+	 * blocks. On AsKh7d 707 MiB becomes 173 at 32 bits, so the blueprint stays
+	 * on the WebAssembly engine; in Chromium on 4 threads the tab peaked at
+	 * 327 MiB, against 860 unshared. An iteration costs what an unshared one
+	 * does (458 ms there). Exploitability stops falling near 2.7% of pot by
+	 * 160 iterations and never reaches 0.3%; the root play goes on settling.
+	 * Judged at the unshared blueprint's own per-action values (solved to
+	 * 0.045%), after 300 iterations (138 s) its root play lost 0.011% of pot
+	 * where the unshared blueprint's lost 0.008%, but at 60 s it was 0.054%:
+	 * the unshared one needs 115 s to reach 0.3% itself. Per-hand root EVs
+	 * came out 0.4–0.6% of pot from the unshared ones (2–3% at worst), and
+	 * turns re-solved from it with T's betting gave the opponent 2.2–3.0% of
+	 * their pot under the unshared ranges, against 0.5–0.7% from the unshared
+	 * blueprint. `chanceSampling` composes, on one thread: 238 ms an
+	 * iteration, the root settled in 109 s, 453 MiB. `coarseStart` composes
+	 * but finds no coarser copy at a gap of 3. `bench/blueprint-share/` has
+	 * the scripts and figures.
+	 *
 	 * `true` shares the river. See `ShareHistories` for the turn and for
 	 * lossier buckets.
 	 */
