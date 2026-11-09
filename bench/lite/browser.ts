@@ -44,7 +44,8 @@ const lite: LiteOptions = {
 const pArg = variants.find((v) => v.startsWith('p='));
 const approximations: Approximations = variants.includes('nosample') ? {} : { chanceSampling: pArg ? { p: Number(pArg.slice(2)) } : {} };
 const full = { ...fullTree(boardName), maxBytes: 3.5 * 2 ** 30 };
-const later = { betSizes: full.betSizes, raiseSizes: full.raiseSizes, maxRaises: full.maxRaises, allowAllIn: full.allowAllIn };
+// T's betting; the blueprint forbids donk bets, T does not.
+const later = { betSizes: full.betSizes, raiseSizes: full.raiseSizes, maxRaises: full.maxRaises, allowAllIn: full.allowAllIn, noDonk: false };
 const reference = JSON.parse(
 	readFileSync(new URL(`../../scratch/blueprint-share/${boardName}-none/root.json`, import.meta.url), 'utf8'),
 ) as { actions: { actions: string[]; evs: (number | null)[][]; reach: (number | null)[] }[] };

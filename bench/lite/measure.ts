@@ -76,6 +76,8 @@ const full = fullTree(boardName);
 const config: SpotConfig = { ...liteConfig(full, lite), ...(compact ? { compactStorage: {} } : {}) };
 const later = {
 	betSizes: full.betSizes, raiseSizes: full.raiseSizes, maxRaises: full.maxRaises, allowAllIn: full.allowAllIn, maxBytes: full.maxBytes,
+	// The blueprint forbids donk bets; T's betting does not.
+	noDonk: false,
 };
 const REF = new URL(`../../scratch/blueprint-share/${boardName}-none/`, import.meta.url);
 const reference = JSON.parse(readFileSync(new URL('root.json', REF), 'utf8')) as {
