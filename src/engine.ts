@@ -164,7 +164,16 @@ export interface EngineWorkerSetup {
 	readonly shared?: readonly [number, number, number];
 	/** Set for the storage engine, whose updates need the iteration on every walk. */
 	readonly storage?: boolean;
+	/**
+	 * With chance sampling, `setSampling`'s arguments as the main thread
+	 * passed them: its state is in the shared memory, and each thread walks
+	 * and marks only its own runouts' deals.
+	 */
+	readonly sampling?: SamplingArgs;
 }
+
+/** `EngineExports.setSampling`'s arguments, in order. */
+export type SamplingArgs = Parameters<EngineExports['setSampling']>;
 
 /** How a pool starts its workers; the platform layer supplies it. */
 export type SpawnEngineWorker = (setup: EngineWorkerSetup, onError: (error: Error) => void) => { terminate(): void };
@@ -357,14 +366,17 @@ export function createEngine(
 	exports.init(offsets[own[0].header]);
 	exports.setMaxActions(maxActions);
 	let samplingViews: Engine['sampling'] = null;
+	let samplingArgs: SamplingArgs | null = null;
 	if (plan && sample) {
 		let mask = 0;
 		for (let r = 0; r < plan.rounds.length; r++) if (plan.rounds[r]) mask |= 1 << r;
-		exports.setSampling(
+		samplingArgs = [
 			mask, plan.p, plan.every, plan.unbiased ? 1 : 0, plan.catchUp ? 1 : 0,
 			offsets[sample.baseOffset], offsets[sample.boardOffset], offsets[sample.walkOffset],
 			offsets[sample.baseline], offsets[sample.lastWalk], offsets[sample.lastUpdate], offsets[sample.blockOffset],
-		);
+		];
+		const a = samplingArgs;
+		exports.setSampling(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11]);
 		samplingViews = {
 			baseline: new Float32Array(memory.buffer, offsets[sample.baseline], plan.values),
 			lastWalk: new Int32Array(memory.buffer, offsets[sample.lastWalk], plan.walks),
@@ -435,6 +447,7 @@ export function createEngine(
 				stride, control: controlBuffer, settings: settingsBuffer,
 				...(share ? { shared: [offsets[share.marks], offsets[share.blockOffset], weightedAt] as const } : {}),
 				...(stored ? { storage: true } : {}),
+				...(samplingArgs ? { sampling: samplingArgs } : {}),
 			};
 			workers.push(pool.spawn(setup, (error) => {
 				failure ??= error;

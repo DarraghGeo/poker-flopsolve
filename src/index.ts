@@ -39,6 +39,7 @@ import {
 	buildPlayerIndex,
 	makeSampling,
 	planSampling,
+	sampledRounds,
 	samplingBytes,
 	makeSolver,
 	makeTerminalScratch,
@@ -240,6 +241,44 @@ export interface SpotConfig {
 	 * little on the order of the tree; and under `algorithm: 'cfr+'` each
 	 * history's update is clamped at zero on its own, rather than their sum.
 	 * A spot with it can warm-start only from a solve that shares too.
+	 *
+	 * On issue #47's blueprint (issue #85; T's flop betting, one 0.75 bet on
+	 * the turn and river with no raise, `runoutBuckets: 3`) it saves 4.1 times
+	 * on rainbow, two-tone and monotone flops alike, because the flop's sizes
+	 * and raises still meet at a few turn pots: 196 river decisions keep 44
+	 * blocks. On AsKh7d 707 MiB becomes 173 at 32 bits, so the blueprint stays
+	 * on the WebAssembly engine; in Chromium on 4 threads the tab peaked at
+	 * 327 MiB, against 860 unshared. An iteration costs what an unshared one
+	 * does (458 ms there). Exploitability stops falling near 2.7% of pot by
+	 * 160 iterations and never reaches 0.3%; the root play goes on settling.
+	 * Judged at the unshared blueprint's own per-action values (solved to
+	 * 0.045%), after 300 iterations (138 s) its root play lost 0.011% of pot
+	 * where the unshared blueprint's lost 0.008%, but at 60 s it was 0.054%:
+	 * the unshared one needs 115 s to reach 0.3% itself. Per-hand root EVs
+	 * came out 0.4–0.6% of pot from the unshared ones (2–3% at worst), and
+	 * turns re-solved from it with T's betting gave the opponent 2.2–3.0% of
+	 * their pot under the unshared ranges, against 0.5–0.7% from the unshared
+	 * blueprint. `chanceSampling` composes: on one thread 238 ms an iteration,
+	 * the root settled in 109 s, 453 MiB; on 4 threads (issue #99) 70 ms, the
+	 * root settled in 33 s at the same iteration, 452 MiB. `coarseStart` composes
+	 * but finds no coarser copy at a gap of 3. `bench/blueprint-share/` has
+	 * the scripts and figures.
+	 *
+	 * Where a shared solve stops depends on its first few iterations (issue
+	 * #105). A shared block plays one strategy for every history meeting in
+	 * it, so the game has many stable points, and which one the solve settles
+	 * on is decided early, when regret matching plays nearly pure. Any
+	 * randomness then picks another: chance sampling, 8-bit stochastic
+	 * rounding, even float rounding under CFR+. On #103's turn spot
+	 * (exploitability 5.8% of pot), sampling at p 0.9 ended at 0.3–1.6%
+	 * over six different sets of draws. On a second turn spot (0.7%) it
+	 * changed nothing. On the blueprint above, neither sampling at p 0.9
+	 * (2.9%) nor 8-bit stochastic storage (2.5%) moved the plateau beyond
+	 * that spread, against 2.6% shared alone. Do not count on noise to
+	 * lower it. Of the deterministic changes tried (other regret
+	 * weighting, discount start, uniform play mixed into the first
+	 * iterations), none was a reliable gain. `bench/share-noise/` has the
+	 * measurements.
 	 *
 	 * `true` shares the river. See `ShareHistories` for the turn and for
 	 * lossier buckets.
@@ -1362,8 +1401,23 @@ export interface Approximations {
 	 *
 	 * Costs: one float per hand per stored deal per chance node, 6–31 MB on
 	 * those flops (about 12–20% beside their storage), counted against
-	 * `maxBytes`; always one thread (`workers` is ignored); 32- or 64-bit
-	 * storage, or `compactStorage` over either. With `targetPercent`, a sampled solve runs more
+	 * `maxBytes`; 32- or 64-bit storage, or `compactStorage` over either.
+	 *
+	 * Threads (issue #99): it runs on `workers` threads, in the JavaScript
+	 * pool and on the WebAssembly engine's threads alike. Threads split the
+	 * runouts as for an exact solve, and the state sampling keeps (baselines,
+	 * when each deal was last walked, when each block was last updated for
+	 * the catch-up) lives in shared memory, each thread's runouts' entries
+	 * its own. There is no per-thread random stream: whether a deal is walked
+	 * on an iteration is a hash of its chance node, the deal and the
+	 * iteration, in both engines, so every thread count walks the same deals
+	 * on the same iterations. A fixed count is then bitwise repeatable, and
+	 * different counts differ only as unsampled ones do (see `workers`). A
+	 * spot sampling a round above the threads' split, which no flop or turn
+	 * spot has, runs on one thread. Measured in Chromium on issue #47's
+	 * blueprint, 4 threads ran 3.1–3.2 times faster than 1 on three flops,
+	 * and the shared AsKh7d blueprint's root play settled in 33 s against
+	 * 105 s (`bench/blueprint-share/README.md`). With `targetPercent`, a sampled solve runs more
 	 * iterations, so it makes a few more exploitability checks.
 	 * Off, nothing changes; at `p: 1` it is the exact solve, bit for bit.
 	 */
@@ -1594,10 +1648,17 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const wantsEngine =
 		options.engine !== 'js' && !options.analysisOnly && options.simd !== false && !lines &&
 		((precision === 'f32' && !compact) || storageEngine);
-	// Sampling's state is one thread's; see `Approximations.chanceSampling`.
 	const samplingOptions = options.approximations?.chanceSampling;
-	const requested = samplingOptions ? 1 : resolveWorkers(options, wantsEngine);
-	const plan = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
+	const requested = resolveWorkers(options, wantsEngine);
+	const shards = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
+	// Threads sample the deals of their own runouts, below the split. A
+	// sampled round above it would be sampled by the main thread after the
+	// threads had walked it, so such a spot stays on one thread; the split
+	// sits at the first round with more than one board, so no flop or turn
+	// spot has one: this is a guard, not a case a real spot reaches.
+	const plan = shards && samplingOptions && sampledRounds(samplingOptions, spot.runouts.rounds).some((r) => r < shards.round)
+		? null
+		: shards;
 
 	// Workers need the accumulators in shared memory. Allocating shared for a
 	// single-threaded solve would cost nothing but buys nothing either.
@@ -1695,7 +1756,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		totalMass: matchupMass(spot.players[0].weights, spot.players[1].weights) * weights[0],
 		dcfr: (options.algorithm ?? 'dcfr') === 'dcfr',
 	};
-	if (samplingPlan) ctx.sampling = makeSampling(samplingPlan, engine?.sampling ?? undefined);
+	if (samplingPlan) ctx.sampling = makeSampling(samplingPlan, engine?.sampling ?? undefined, allocate);
 	if (layout.shared) ctx.discounted = engine?.discounted ?? new Int32Array(layout.blocks);
 	if (lines) {
 		const writable = ctx as { lineStarts?: Context['lineStarts']; lineScales?: Context['lineScales'] };

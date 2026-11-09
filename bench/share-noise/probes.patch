@@ -1,0 +1,65 @@
+diff --git a/src/cfr.ts b/src/cfr.ts
+index 230f7ea..71e68ed 100644
+--- a/src/cfr.ts
++++ b/src/cfr.ts
+@@ -570,7 +570,7 @@ function sampled(s: Sampling, node: number, board: number, t: number): boolean {
+ 		h ^= h >>> 16;
+ 		return ((h >>> 0) + t) % s.every === 0;
+ 	}
+-	h ^= Math.imul(t, 0x27d4eb2f);
++	h ^= Math.imul(t + ((globalThis as any).__seed ?? 0) * 7919, 0x27d4eb2f);
+ 	h ^= h >>> 15;
+ 	h = Math.imul(h, 0xc2b2ae35);
+ 	h ^= h >>> 13;
+@@ -1207,6 +1207,11 @@ export function traverse(
+ 		averageStrategy(ctx.strategySum, slotBase, actions, stride, strategy, ctx.regret);
+ 	}
+ 
++	const EPS = (globalThis as any).__eps as ((t: number) => number) | undefined;
++	if (EPS && mode === Mode.Train) {
++		const e = EPS(iterWeight);
++		if (e > 0) for (let k = 0; k < actions * stride; k++) strategy[k] = (1 - e) * strategy[k] + e / actions;
++	}
+ 	if (isTraverser && mode === Mode.BestResponse) {
+ 		for (let a = 0; a < actions; a++) {
+ 			const value = traverse(
+@@ -1262,6 +1267,20 @@ export function traverse(
+ 			}
+ 		}
+ 	}
++	const P = (globalThis as any).__probe as Map<number, { sum: Float64Array; max: Float64Array }> | undefined;
++	if (P && isTraverser && mode === Mode.Train) {
++		// Probe pass (issue #105): each shared block's own reach, summed and largest over its histories.
++		if (weighted !== null && weighted[node] === 1) {
++			const key = ctx.layout.blockOffset[node] + board;
++			let acc = P.get(key);
++			if (!acc) P.set(key, (acc = { sum: new Float64Array(activeCount), max: new Float64Array(activeCount) }));
++			for (let i = 0; i < activeCount; i++) {
++				acc.sum[i] += reachMe[i];
++				if (reachMe[i] > acc.max[i]) acc.max[i] = reachMe[i];
++			}
++		}
++		return out;
++	}
+ 	if (isTraverser && mode === Mode.Train && ctx.applyUpdates && compactNode) {
+ 		updateCompact(
+ 			ctx, node, chunk, ctx.layout.blockOffset[node] + board, slotBase,
+@@ -1300,6 +1319,9 @@ export function traverse(
+ 		}
+ 		const regret = ctx.regret;
+ 		const strategySum = ctx.strategySum;
++		const G = globalThis as any;
++		const isShared = ctx.layout.reachWeighted !== null && ctx.layout.reachWeighted[node] === 1;
++		const w = G.__dither && isShared && iterWeight > G.__from && iterWeight <= G.__until ? 1 + G.__dither * Math.sqrt(3) * (2 * Math.random() - 1) : 1;
+ 		for (let a = 0; a < actions; a++) {
+ 			const offset = a * activeCount;
+ 			const slotRow = slotBase + a * stride;
+@@ -1307,7 +1329,7 @@ export function traverse(
+ 			for (let i = 0; i < activeCount; i++) {
+ 				const at = slotRow + i;
+ 				const accumulated = regret[at];
+-				regret[at] = accumulated * (accumulated > 0 ? keepPositive : keepNegative) + actionValues[offset + i] - out[i];
++				regret[at] = accumulated * (accumulated > 0 ? keepPositive : keepNegative) + w * (actionValues[offset + i] - out[i]);
+ 				strategySum[at] = strategySum[at] * keepSum + strategy[row + i];
+ 			}
+ 		}
