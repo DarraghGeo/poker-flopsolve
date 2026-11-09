@@ -17,6 +17,10 @@ A minor release. Every approximation below is opt-in and off by default. The REA
   setting set or dropped (#115).
 - `litePreset` (#115) returns what `solveLite` solves, without solving it, for a page that steps its
   own run.
+- `keepBudget` on `solveLite` / `litePreset` (#113): keep the most-reached flop lines unshared within
+  a storage budget, ranked on a short solve of the blueprint with its river checked down
+  (`checkedDown`, `keepWithin`); `LiteSolution.kept` lists them. On issue #47's flops, 150 MiB at 16
+  bits cut a turn re-solve's best-response gain by a third to a half, root play unchanged.
 
 ### New opt-ins since 0.4.1
 

@@ -419,7 +419,7 @@ Pick a goal below, not a dozen options.
 |---|---|---|---|---|
 | Fastest flop answer in a browser | [`solveLite`](#lite-mode-solvelite) | 35 s, 511 MiB; root loss 0.023 / 0.014 | 21 s, 426 MiB; 0.118 / 0.076 | 12 s, 253 MiB; 0.059 / 0.037 |
 | Fits a phone, 512 MiB or less | `solveLite` on a spot with `compactStorage: {}`, solved with `wasmStorage` | 300 MiB, 27% slower (Node) | not measured | not measured |
-| Turn re-solves you can trust, in a tab | `solveLite` with `shareHistories: { keepLines }` (`linesWithin`), `precision: 'i16'`, `wasmStorage` | 392 MiB; re-solve gain 1.47 / 0.92 | not measured | not measured |
+| Better turn re-solves, in a tab | `solveLite` with `keepBudget: 150 * 2 ** 20`, `precision: 'i16'`, `wasmStorage` | 35 s, 534 MiB; re-solve gain 2.5 / 1.7 (1.3 / 1.1 at 800 it, 59 s) | 22 s, 469 MiB; 1.9 / 1.3 | 11 s, 317 MiB; 2.6 / 1.9 |
 | The whole tree, in 2 GiB or less | [`largeTree`](#fitting-a-large-tree-largetree) | T: 155 s, 1.97 GiB (1.87 in Chromium); root loss 0.031 / 0.020 | not measured | `thinSizes` alone: 0.64 GiB at 32 bits |
 | Exact | `solve(spot, { targetPercent })` | 9.2 s, 708 MiB (0.2%, Chromium) | 10.3 s (Node) | 5.6 s (Node) |
 
@@ -428,9 +428,10 @@ How each row was measured, all on 4 threads:
   pot 55, stack 975, the bench ranges), headless Chromium. Time is until the root play settles. Peak
   memory includes a turn re-solve. Root loss is what OOP's root play / IP's play after a check give up
   at the unshared blueprint's per-action values, % of pot. The phone row's 300 MiB is Node's peak on
-  rainbow. The re-solve row is issue #101's: the same blueprint at 16 bits, with the 150 MiB of
-  `keepLines` that `linesWithin` picked. Its gain is an opponent's best response to a re-solved turn, %
-  of the subgame pot: 3.1 / 2.7 from plain lite, 0.67 / 0.50 from an unshared blueprint.
+  rainbow. The re-solve row is issue #113's: the same blueprint at 16 bits, keeping the most-reached
+  flop lines that 150 MiB holds, the pick included in the time. Its gain is an opponent's best response
+  to a re-solved turn, % of the subgame pot: plain lite gives 3.1 / 2.7, 4.0 / 3.3 and 3.6 / 3.6, an
+  unshared blueprint 0.4–0.7.
 - **`largeTree`**: T, which is As Kh 7d with issue #47's betting on every street (17.2 GiB at 32 bits), in Node. Time is until
   OOP's root loss comes within 0.02% of pot of its final value. Root loss is measured at the per-action values of
   `thinSizes` alone at 32 bits, solved for 600 iterations, whose own play loses the same: the floor.
@@ -504,7 +505,7 @@ against the exact solve at equal iterations, root loss OOP / IP in % of pot (the
 | `solveLite` / `litePreset` | preset | both | `lineRunouts` | settled at 2.6× the iterations: 0.22× storage, 0.30× time, root 0.052 / 0.068, turn nodes 0.127, 1.89% exploitable ([Lite mode](#lite-mode-solvelite)) |
 | `largeTree` | preset | WebAssembly | `lineRunouts` | at 4× the iterations: 0.38× storage, 0.58× time, root 0.057 / 0.289 (IP's cut 0.33 bet), 0.39% exploitable in its own tree ([Fitting a large tree](#fitting-a-large-tree-largetree)) |
 | `shareHistories` | preset-internal (lite) | both | `lineRunouts` | 0.40× storage, 1.00× time, root 0.061 / 0.068, 1.89% exploitable |
-| `shareHistories.keepLines`, `linesWithin` | advanced (a lite option) | both | — | turn re-solve gain within 0.1–0.8% of the subgame pot of an unshared blueprint's, against 3.0–4.2% from plain sharing ([History sharing](#history-sharing)) |
+| `keepBudget` (`solveLite`), `shareHistories.keepLines`, `linesWithin` | advanced (a lite option) | both | — | turn re-solve gain within 0.1–0.8% of the subgame pot of an unshared blueprint's, against 3.0–4.2% from plain sharing ([History sharing](#history-sharing)) |
 | `shareHistories.spr`, `.fromRound`, `.weighting` | deprecated | both | — | `spr: 4`: 20% exploitable; `fromRound: 1`: 1% less storage, 9.4% against 8.0%; `'counterfactual'`: 4× the exploitability |
 | `runoutBuckets` | preset-internal (lite) | both | — | folds nothing on napkinpoker's weighted ranges. Bench ranges, gap 3: 0.61× time, true exploitability 0.302 against 0.271 ([Runout buckets](#runout-buckets-and-coarse-start)) |
 | `approximations.chanceSampling` | preset-internal (both) | both, threaded | `lineRunouts` | at 4× the iterations: 0.69× time, root 0.057 / 0.056, 0.60% exploitable |
@@ -803,10 +804,35 @@ Peak memory includes a re-solve. Against exact solves of the full game:
 
 `laterRaise: true` keeps a turn and river raise: 1.74 times the time and 546 MiB.
 `noDonk` and `flopMaxRaises: 2` save 44% an iteration together, but on Ts 9s 4h they
-quadrupled the re-solve gain. So they are off unless asked for. To recover turn
-re-solves instead, keep the most-reached flop lines unshared: `shareHistories:
-{ keepLines: linesWithin(...) }` (issue #101; see [History sharing](#history-sharing)). `bench/lite/` has the scripts and
-logs.
+quadrupled the re-solve gain. So they are off unless asked for.
+
+**Better turn re-solves: `keepBudget`.** It keeps the most-reached flop lines unshared, as
+many as a storage budget allows (issue #113; see [History sharing](#history-sharing)).
+The lines are ranked on a short solve of the blueprint with its river checked down
+(`checkedDown`), and the blueprint is solved with them kept. `litePreset` runs that
+ranking too, and `keepWithin` does it alone:
+
+```ts
+import { wasmStorage } from 'poker-flopsolve/wasm-storage';
+
+const lite = solveLite(spot, { workers: 4, keepBudget: 150 * 2 ** 20, precision: 'i16', wasmStorage });
+lite.kept; // ['check check /', 'bet 18.15 call /', 'bet 82.5 call /'] on As Kh 7d
+```
+
+Measured the same way, the ranking included in the time:
+
+| flop | kept | settled, 1 / 2 / 4 threads | peak memory, 1 / 2 / 4 | root play loss, % pot | re-solve gain, % |
+|---|---|---|---|---|---|
+| As Kh 7d | 3 lines | 123 / 61 / 35 s | 489 / 509 / 534 MiB | 0.026 / 0.011 | 2.5 / 1.7 |
+| Ts 9s 4h | 6 lines | 69 / 37 / 22 s | 437 / 463 / 469 MiB | 0.115 / 0.063 | 1.9 / 1.3 |
+| Ks 9s 4s | all 19 | 32 / 19 / 11 s | 290 / 301 / 317 MiB | 0.056 / 0.036 | 2.6 / 1.9 |
+
+The root play is unchanged, and the re-solve gain falls by a third to a half. The rest is
+the early stop: the root settles before the ranges reaching the turn do. With every line
+kept, monotone still re-solved at 2.6 / 1.9 when it settled, but at 1.0 / 0.6 after 800
+iterations. Run longer with `settle: false, iterations: 800`: As Kh 7d then re-solves at
+1.3 / 1.1 in 59 s on 4 threads (533 MiB), where plain sharing gives 2.2 / 2.4.
+`bench/lite/` has the scripts and logs.
 
 ### Fitting a large tree (`largeTree`)
 
