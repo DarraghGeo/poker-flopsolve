@@ -8,10 +8,8 @@
  * and the two presets built from them (issue #115), `litePreset` (what
  * `solveLite` solves) and `largeTree`, each applied to the spot and settings
  * the other side of the pair leaves, as a caller would hand them over,
- * is solved here on one small turn spot, and either runs or is refused:
+ * is solved here on one small turn spot, and every pair runs:
  *
- * - refused: exactly the pairs `REFUSED` lists, each with an error naming
- *   both sides;
  * - repeatable: two solves on two threads leave every stored value equal,
  *   and one thread agrees with two to float rounding;
  * - off is identical: each option set to its off value beside another
@@ -102,9 +100,6 @@ const OPTIONS: readonly Option[] = [
 	},
 ];
 
-/** Pairs refused, with a pattern each refusal's message matches. Every pair runs today. */
-const REFUSED: Record<string, RegExp> = {};
-
 const ITERATIONS = 12;
 
 /** Options merged, approximations included. */
@@ -179,10 +174,9 @@ const maxDiff = (a: ArrayLike<number>, b: ArrayLike<number>): number => {
 };
 
 describe.runIf(engineAvailable())('opt-in options in pairs', () => {
-	it('lists every pair once: 45 of them, none refused', () => {
+	it('lists every pair once: 45 of them', () => {
 		expect(pairs).toHaveLength(45);
-		expect(Object.keys(REFUSED)).toHaveLength(0);
-		for (const name of Object.keys(REFUSED)) expect(pairs.map(([a, b]) => key(a, b))).toContain(name);
+		expect(new Set(pairs.map(([a, b]) => key(a, b))).size).toBe(45);
 	});
 
 	const alone = new Map<string, Outcome>();
@@ -194,13 +188,6 @@ describe.runIf(engineAvailable())('opt-in options in pairs', () => {
 
 	for (const [a, b] of pairs) {
 		const name = key(a, b);
-		const refusal = REFUSED[name];
-		if (refusal) {
-			it(`${name}: refused`, () => {
-				expect(() => solveWith([a, b], 2)).toThrow(refusal);
-			});
-			continue;
-		}
 		it(`${name}: runs, repeats on 2 threads, matches 1 thread, and is no worse than its halves`, () => {
 			const first = solveWith([a, b], 2);
 			const again = solveWith([a, b], 2);
@@ -218,7 +205,7 @@ describe.runIf(engineAvailable())('opt-in options in pairs', () => {
 
 	for (const option of OPTIONS) {
 		for (const other of OPTIONS) {
-			if (other === option || !other.off || REFUSED[key(option, other)] || REFUSED[key(other, option)]) continue;
+			if (other === option || !other.off) continue;
 			// wasmStorage is what moves compact storage onto the engine: no off value there.
 			if (other.name === 'wasmStorage i16' && option.name === 'compactStorage') continue;
 			if (option.honours?.includes(other.name)) continue;
@@ -239,7 +226,6 @@ describe.runIf(engineAvailable())('opt-in options in pairs', () => {
 
 	for (const [a, b] of pairs) {
 		const name = key(a, b);
-		if (REFUSED[name]) continue;
 		const { config, solve } = merge([a, b]);
 		it(`${name}: the WebAssembly engine follows JavaScript step for step where it runs the pair`, () => {
 			// Compact storage reaches the engine through wasmStorage.

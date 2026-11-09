@@ -20,23 +20,22 @@
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const DIRECTORIES = ['src', 'test', 'bin', 'scripts', 'ui', 'examples', 'assembly', 'bench'];
 const SKIP = new Set(['node_modules', 'dist', 'scratch', 'target', 'results', 'out', 'logs']);
 const KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*(\.[a-z0-9]+)*\.(ts|js)$/;
 
-/** Every `.ts` and `.js` file under `dir`, skipping build output and recorded results. */
+/**
+ * Every `.ts` and `.js` file under `dir`, skipping build output and recorded
+ * results. A directory that cannot be read throws, so a wrong root never
+ * passes as clean.
+ */
 function sources(dir: string): string[] {
 	const found: string[] = [];
-	let entries;
-	try {
-		entries = readdirSync(dir, { withFileTypes: true });
-	} catch {
-		return found;
-	}
-	for (const entry of entries) {
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
 		if (SKIP.has(entry.name)) continue;
 		const path = join(dir, entry.name);
 		if (entry.isDirectory()) found.push(...sources(path));
@@ -46,22 +45,27 @@ function sources(dir: string): string[] {
 }
 
 /**
- * Lines (0-based) that start inside a template literal, whose text is not
- * code, and lines holding a `debugger` statement.
+ * Lines (0-based) that start inside a template literal, those that end inside
+ * one (its text is the string's value, not code), and lines holding a
+ * `debugger` statement.
  */
-function scan(file: ts.SourceFile): { template: Set<number>; debuggers: number[] } {
-	const template = new Set<number>();
+function scan(file: ts.SourceFile): { startsIn: Set<number>; endsIn: Set<number>; debuggers: number[] } {
+	const startsIn = new Set<number>();
+	const endsIn = new Set<number>();
 	const debuggers: number[] = [];
 	const lineOf = (position: number): number => file.getLineAndCharacterOfPosition(position).line;
 	const visit = (node: ts.Node): void => {
 		if (ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node)) {
-			for (let line = lineOf(node.getStart(file)) + 1; line <= lineOf(node.getEnd()); line++) template.add(line);
+			const first = lineOf(node.getStart(file));
+			const last = lineOf(node.getEnd());
+			for (let line = first; line < last; line++) endsIn.add(line);
+			for (let line = first + 1; line <= last; line++) startsIn.add(line);
 		}
 		if (node.kind === ts.SyntaxKind.DebuggerStatement) debuggers.push(lineOf(node.getStart(file)));
 		ts.forEachChild(node, visit);
 	};
 	visit(file);
-	return { template, debuggers };
+	return { startsIn, endsIn, debuggers };
 }
 
 const problems: string[] = [];
@@ -77,16 +81,16 @@ for (const path of DIRECTORIES.flatMap((dir) => sources(join(ROOT, dir)))) {
 	if (text.endsWith('\n\n')) report(text.split('\n').length - 2, 'end the file with one newline, not several');
 
 	const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
-	const { template: inTemplate, debuggers } = scan(source);
+	const { startsIn, endsIn, debuggers } = scan(source);
 	for (const line of debuggers) report(line, 'remove the debugger statement');
 	const lines = text.split('\n');
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
-		if (/[ \t]+$/.test(line)) report(i, 'trailing whitespace');
-		if (inTemplate.has(i)) continue;
+		if (!endsIn.has(i) && /[ \t]+$/.test(line)) report(i, 'trailing whitespace');
+		if (startsIn.has(i)) continue;
 		// A doc comment's continuation lines are a space and a star.
 		if (/^\t* +(?!\*)\S/.test(line)) report(i, 'indent with tabs');
-		if (/^test\//.test(name) && /\b(it|describe|test)\.only\(/.test(line)) report(i, 'a focused test skips the rest of the suite');
+		if (/^test\//.test(name) && /\b(it|describe|test)\.only\b/.test(line)) report(i, 'a focused test skips the rest of the suite');
 	}
 }
 

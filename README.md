@@ -940,8 +940,7 @@ its own reach, so an iteration costs what it did; only storage shrinks. Off by d
 It is lossy. A player plays one river strategy for every line that met, though each line
 brings different ranges. The strategy is still one for the whole game, so
 `exploitabilityPercent()` measures it exactly. Each line's regret is weighted by how often
-the hand plays into it (`weighting: 'reach'`, the default), which cost four times less
-than plain CFR's sum. Bench ranges, As Kh 7d, pot 55, stack 975, 4 threads, root EVs
+the hand plays into it, which cost four times less than plain CFR's sum. Bench ranges, As Kh 7d, pot 55, stack 975, 4 threads, root EVs
 against the exact solve:
 
 | Tree | Storage, f32 | Exploitability | Root EV error, mean / max | Iterations |
