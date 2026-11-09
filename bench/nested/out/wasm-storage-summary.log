@@ -1,0 +1,54 @@
+=== rainbow i16 4 00:51:08
+rainbow i16 in Chromium (4 threads), storage 363 MiB, tab peak RSS 577 MiB
+  4 thread(s), wasm: 85.9 s to 0.254% in 200 it (0.429 s/it with checks; checks 2.2 s)
+  turn re-solve, 1 thread(s): 36.0 s, 32 MiB
+  turn re-solve, 4 thread(s): 10.6 s, 32 MiB
+=== rainbow compact 4 00:53:21
+rainbow compact in Chromium (4 threads), storage 272 MiB, tab peak RSS 462 MiB
+  4 thread(s), wasm: 105.6 s to 0.290% in 200 it (0.528 s/it with checks; checks 2.2 s)
+  turn re-solve, 1 thread(s): 40.7 s, 21 MiB
+  turn re-solve, 4 thread(s): 12.2 s, 21 MiB
+=== rainbow f32 4 00:56:00
+rainbow f32 in Chromium (4 threads), storage 707 MiB, tab peak RSS 985 MiB
+  4 thread(s), wasm: 106.3 s to 0.216% in 280 it (0.380 s/it with checks; checks 3.1 s)
+  turn re-solve, 1 thread(s): 29.6 s, 64 MiB
+  turn re-solve, 4 thread(s): 8.5 s, 64 MiB
+=== rainbow i16 1 00:58:26
+rainbow i16 in Chromium (1 threads), storage 363 MiB, tab peak RSS 526 MiB
+  1 thread(s), wasm: 287.8 s to 0.295% in 200 it (1.439 s/it with checks; checks 7.8 s)
+  turn re-solve, 1 thread(s): 34.6 s, 32 MiB
+=== rainbow compact 1 01:03:49
+rainbow compact in Chromium (1 threads), storage 272 MiB, tab peak RSS 427 MiB
+  1 thread(s), wasm: 434.6 s to 0.239% in 240 it (1.811 s/it with checks; checks 9.1 s)
+  turn re-solve, 1 thread(s): 39.9 s, 21 MiB
+=== monotone i16 4 01:11:44
+monotone i16 in Chromium (4 threads), storage 97 MiB, tab peak RSS 264 MiB
+  4 thread(s), wasm: 23.8 s to 0.275% in 160 it (0.149 s/it with checks; checks 0.7 s)
+  turn re-solve, 1 thread(s): 23.8 s, 20 MiB
+  turn re-solve, 4 thread(s): 7.0 s, 20 MiB
+=== monotone compact 4 01:12:39
+monotone compact in Chromium (4 threads), storage 73 MiB, tab peak RSS 223 MiB
+  4 thread(s), wasm: 35.1 s to 0.246% in 200 it (0.175 s/it with checks; checks 0.8 s)
+  turn re-solve, 1 thread(s): 30.0 s, 14 MiB
+  turn re-solve, 4 thread(s): 8.6 s, 14 MiB
+=== monotone f32 4 01:13:54
+monotone f32 in Chromium (4 threads), storage 187 MiB, tab peak RSS 394 MiB
+  4 thread(s), wasm: 32.5 s to 0.221% in 240 it (0.135 s/it with checks; checks 0.9 s)
+  turn re-solve, 1 thread(s): 21.5 s, 40 MiB
+  turn re-solve, 4 thread(s): 7.3 s, 40 MiB
+=== monotone i16 1 01:14:56
+monotone i16 in Chromium (1 threads), storage 97 MiB, tab peak RSS 236 MiB
+  1 thread(s), wasm: 118.5 s to 0.202% in 240 it (0.494 s/it with checks; checks 3.0 s)
+  turn re-solve, 1 thread(s): 24.8 s, 20 MiB
+=== monotone compact 1 01:17:20
+monotone compact in Chromium (1 threads), storage 73 MiB, tab peak RSS 205 MiB
+  1 thread(s), wasm: 119.2 s to 0.246% in 200 it (0.596 s/it with checks; checks 2.7 s)
+  turn re-solve, 1 thread(s): 30.3 s, 14 MiB
+=== monotone f32 1 01:19:50
+monotone f32 in Chromium (1 threads), storage 187 MiB, tab peak RSS 346 MiB
+  1 thread(s), wasm: 103.6 s to 0.254% in 240 it (0.432 s/it with checks; checks 2.9 s)
+  turn re-solve, 1 thread(s): 22.0 s, 40 MiB
+=== rainbow f32 1 01:21:56
+rainbow f32 in Chromium (1 threads), storage 707 MiB, tab peak RSS 902 MiB
+  1 thread(s), wasm: 302.8 s to 0.232% in 240 it (1.262 s/it with checks; checks 8.7 s)
+  turn re-solve, 1 thread(s): 28.7 s, 64 MiB

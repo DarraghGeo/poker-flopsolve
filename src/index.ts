@@ -22,6 +22,7 @@ import { activeCombos, parseRange, rangeWeight } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
 import { buildHandSpace } from './hands.ts';
 import { createEngine } from './engine.ts';
+import type { WasmStorage } from './engine.ts';
 import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
 import { aliasHistories } from './history-merge.ts';
@@ -53,6 +54,7 @@ export type { Gadget, ResolvedSubgame, ResolveOptions } from './resolve.ts';
 export { simdAvailable } from './kernels.ts';
 export type { BetSize } from './tree.ts';
 export type { SamplingOptions, Solver } from './cfr.ts';
+export type { WasmStorage } from './engine.ts';
 export { ACTION_LABELS, ActionKind, NodeKind } from './tree.ts';
 export type { PerPlayer, RaiseSizes } from './tree.ts';
 /** 'node' or 'browser': which build is running. */
@@ -293,9 +295,13 @@ export interface SpotConfig {
  * Training is otherwise the exact solve's; exploitability is measured
  * exactly, in the full tree. Storage is split in chunks under `chunkBytes`,
  * because browsers refuse a buffer of 2 GiB. Runs on the JavaScript engine
- * and its Node worker threads, not the WebAssembly one; an iteration costs
- * about 1.5 times a 32-bit one there; not with `warmStart`, `coarseStart`,
- * `chanceSampling`, `analysisOnly` or a `precision`.
+ * and its Node worker threads, where an iteration costs about 1.5 times a
+ * 32-bit one, or on the WebAssembly engine, threads included, with
+ * `SolveOptions.wasmStorage` (issue #84). Not with `analysisOnly`, which
+ * loads float32 sums. `precision` sets the rounds before `from`; a warm
+ * start, a coarse start or `runoutBuckets`' measure of the real game reads
+ * and writes compact storage, rounded to nearest; `chanceSampling` applies
+ * its DCFR catch-up to compact nodes too.
  *
  * With `shareHistories`, a node sharing another's storage shares its compact
  * storage too; together they fit issue #20's target T in 0.99 GiB (0.37
@@ -772,10 +778,25 @@ export interface SolveOptions {
 	readonly simd?: boolean;
 	/**
 	 * Which traversal runs. Unset, the WebAssembly engine wherever it applies
-	 * — one thread, 32-bit storage, WebAssembly SIMD available — and the
-	 * JavaScript one otherwise. 'js' forces JavaScript, to compare the two.
+	 * — 32-bit storage (or 16-bit and compact with `wasmStorage`), WebAssembly
+	 * SIMD available — and the JavaScript one otherwise. 'js' forces
+	 * JavaScript, to compare the two.
 	 */
 	readonly engine?: 'js';
+	/**
+	 * 16-bit and compact storage on the WebAssembly engine (issue #84): pass
+	 * `wasmStorage` from `poker-flopsolve/wasm-storage`. With it, a solve at
+	 * `precision: 'i16'` or of a `compactStorage` spot runs on the engine,
+	 * threads included, rather than on JavaScript. Its updates are the
+	 * JavaScript ones, step for step, worked in 32-bit floats rather than
+	 * 64-bit ones, so a stored value differs only where it lies within float32
+	 * precision of a rounding boundary; the random rounding hashes the same
+	 * slot and iteration, read to 24 bits rather than 32. Compact scales
+	 * below 2^-126 (regrets under 10^-35) are taken as 0. Unset, those solves run on
+	 * JavaScript as before; 32-bit solves run on the default engine either
+	 * way, and `precision: 'f64'` on JavaScript.
+	 */
+	readonly wasmStorage?: WasmStorage;
 }
 
 /** See `SolveOptions.approximations`. */
@@ -1268,7 +1289,7 @@ export interface Approximations {
 	 * Costs: one float per hand per stored deal per chance node, 6–31 MB on
 	 * those flops (about 12–20% beside their storage), counted against
 	 * `maxBytes`; always one thread (`workers` is ignored); 32- or 64-bit
-	 * storage only. With `targetPercent`, a sampled solve runs more
+	 * storage, or `compactStorage` over either. With `targetPercent`, a sampled solve runs more
 	 * iterations, so it makes a few more exploitability checks.
 	 * Off, nothing changes; at `p: 1` it is the exact solve, bit for bit.
 	 */
@@ -1457,22 +1478,15 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const compact = spot.source.compactStorage ? compactPlan(spot.source.compactStorage, spot.runouts.rounds) : null;
 	if (compact) {
 		const clashes: [unknown, string][] = [
+			// An analysis-only run loads float32 sums, which compact nodes do not have.
 			[options.analysisOnly, 'analysisOnly'],
-			[options.warmStart, 'warmStart'],
-			[options.approximations?.coarseStart, 'coarseStart'],
-			[options.approximations?.chanceSampling, 'chanceSampling'],
-			[options.precision, 'precision'],
-			// Measuring a bucketed spot in the real game warm-starts that from this one.
-			[spot.runouts.approximate, 'runoutBuckets'],
 		];
 		const clash = clashes.find(([set]) => set)?.[1];
 		if (clash) throw new Error(`compactStorage does not combine with ${clash}`);
 	}
-	if (options.warmStart?.solver.ctx.compact) {
-		throw new Error('A run with compactStorage cannot seed a warm start');
-	}
+	// With compact storage, `precision` is that of the rounds before `compactStorage.from`.
 	const precision: Precision = compact
-		? 'f32'
+		? options.precision ?? 'f32'
 		: options.analysisOnly
 		? 'f32'
 		: options.precision ??
@@ -1494,11 +1508,14 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	);
 	const weights = runoutWeights(spot.runouts);
 
-	// The WebAssembly engine, where it applies: 32-bit storage and a platform
-	// with WebAssembly SIMD. Decided before the thread count, because the
-	// browser build can only thread the engine.
+	// The WebAssembly engine, where it applies: 32-bit storage, or 16-bit and
+	// compact storage with `wasmStorage`, and a platform with WebAssembly
+	// SIMD. Decided before the thread count, because the browser build can
+	// only thread the engine.
+	const storageEngine = options.wasmStorage !== undefined && precision !== 'f64' && (precision === 'i16' || compact !== null);
 	const wantsEngine =
-		options.engine !== 'js' && precision === 'f32' && !options.analysisOnly && options.simd !== false && !compact;
+		options.engine !== 'js' && !options.analysisOnly && options.simd !== false &&
+		((precision === 'f32' && !compact) || storageEngine);
 	// Sampling's state is one thread's; see `Approximations.chanceSampling`.
 	const samplingOptions = options.approximations?.chanceSampling;
 	const requested = samplingOptions ? 1 : resolveWorkers(options, wantsEngine);
@@ -1515,8 +1532,9 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const hands = buildHandSpace(spot.runouts, spot.players, active);
 	if (samplingOptions && quantised) throw new Error('chanceSampling needs 32- or 64-bit storage');
 	const samplingPlan = samplingOptions ? planSampling(spot.tree, spot.runouts, active, layout, samplingOptions) : undefined;
-	// Measured as the precision choice above measures storage: by the estimate.
-	const storageBytes = Math.max(bytes, layout.bytes);
+	// Measured as the precision choice above measures storage: by the estimate;
+	// with compact storage, which that estimate does not know, by the layout.
+	const storageBytes = compact ? layout.bytes : Math.max(bytes, layout.bytes);
 	if (samplingPlan && storageBytes + samplingBytes(samplingPlan) > maxBytes) {
 		throw new Error(
 			`chanceSampling needs ${Math.ceil(samplingBytes(samplingPlan) / 2 ** 20)} MiB of baselines beside ` +
@@ -1529,10 +1547,12 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 				{
 					tree: spot.tree, runouts: spot.runouts, players: spot.players, layout, active, hands,
 					runoutWeight: weights, chipScale: spot.chipScale, sampling: samplingPlan,
+					...(storageEngine ? { storage: { source: options.wasmStorage!, quantised, compact } } : {}),
 				},
 				plan ? { plan, threads: requested, spawn: spawnEngineWorker } : undefined,
 			)
 		: null;
+	const engineCompact = engine?.compact ?? null;
 	const ctx: Context = {
 		tree: spot.tree,
 		runouts: spot.runouts,
@@ -1545,19 +1565,37 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 				? new Float32Array(0)
 				: makeRegretStore(precision, allocate(layout.totalSlots * width)),
 		strategySum: engine ? engine.strategySum : makeSumStore(precision, allocate(layout.totalSlots * width)),
-		regretScale: quantised ? new Float64Array(allocate(layout.blocks * 8)) : null,
-		sumScale: quantised ? new Float64Array(allocate(layout.blocks * 8)) : null,
+		regretScale: !quantised ? null : engine ? engine.regretScale : new Float64Array(allocate(layout.blocks * 8)),
+		sumScale: !quantised ? null : engine ? engine.sumScale : new Float64Array(allocate(layout.blocks * 8)),
 		compact,
 		compactRegret: !compact
 			? null
-			: layout.chunkSlots.map((slots) =>
-					compact.float ? new Float32Array(allocate(slots * 4)) : new Int8Array(allocate(slots)),
-				),
-		handShift: compact?.perHand ? layout.chunkHands.map((hands) => new Uint8Array(allocate(hands))) : null,
-		compactSum: compact?.sums ? layout.chunkSlots.map((slots) => new Uint8Array(allocate(slots))) : null,
-		sumShift: compact?.sums ? layout.chunkHands.map((hands) => new Uint8Array(allocate(hands))) : null,
+			: engineCompact
+				? engineCompact.regret
+				: layout.chunkSlots.map((slots) =>
+						compact.float ? new Float32Array(allocate(slots * 4)) : new Int8Array(allocate(slots)),
+					),
+		handShift: !compact?.perHand
+			? null
+			: engineCompact
+				? engineCompact.handShift
+				: layout.chunkHands.map((hands) => new Uint8Array(allocate(hands))),
+		compactSum: !compact?.sums
+			? null
+			: engineCompact
+				? engineCompact.sum
+				: layout.chunkSlots.map((slots) => new Uint8Array(allocate(slots))),
+		sumShift: !compact?.sums
+			? null
+			: engineCompact
+				? engineCompact.sumShift
+				: layout.chunkHands.map((hands) => new Uint8Array(allocate(hands))),
 		compactScale:
-			compact && !compact.perHand && !compact.float ? new Float64Array(allocate(layout.blocks * 8)) : null,
+			!compact || compact.perHand || compact.float
+				? null
+				: engineCompact
+					? engineCompact.scale
+					: new Float64Array(allocate(layout.blocks * 8)),
 		scratch: makeTerminalScratch(),
 		chipScale: spot.chipScale,
 		active,
@@ -1657,6 +1695,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			const real = createRun(defineSpot({ ...spot.source, runoutBuckets: false }), {
 				workers: threadCount,
 				precision,
+				wasmStorage: options.wasmStorage,
 			});
 			try {
 				warmStart(real.solver.ctx, ctx, true);
@@ -1739,14 +1778,21 @@ function planCoarseStart(spot: Spot, options: SolveOptions, precision: Precision
 	const coarseSpot = defineSpot({ ...spot.source, runoutBuckets });
 	if (coarseSpot.runouts.counts.at(-1)! >= spot.runouts.counts.at(-1)!) return null;
 
-	const used = precision === 'i16' ? spot.estimate.compressedBytes : spot.estimate.bytes * (precision === 'f64' ? 2 : 1);
+	// A compact spot's coarse spot is compact too: its storage is its layout at
+	// that precision, beside the rest `estimate.compactBytes` counts at 32 bits.
+	const cost = (of: Spot, at: Precision): number => {
+		if (of.estimate.compactBytes === null) {
+			return at === 'i16' ? of.estimate.compressedBytes : of.estimate.bytes * (at === 'f64' ? 2 : 1);
+		}
+		const plan = compactPlan(of.source.compactStorage!, of.runouts.rounds);
+		const bytesAt = (width: number): number =>
+			buildLayout(of.tree, of.runouts, of.players, width, of.historyAlias, reachWeighted(of.source), plan).bytes;
+		return of.estimate.compactBytes + bytesAt(PRECISION_BYTES[at]) - bytesAt(4);
+	};
+	const used = cost(spot, precision);
 	const left = maxBytes - used;
-	const coarsePrecision: Precision =
-		options.precision ?? (coarseSpot.estimate.bytes <= left ? 'f32' : 'i16');
-	const needs =
-		coarsePrecision === 'i16'
-			? coarseSpot.estimate.compressedBytes
-			: coarseSpot.estimate.bytes * (coarsePrecision === 'f64' ? 2 : 1);
+	const coarsePrecision: Precision = options.precision ?? (cost(coarseSpot, 'f32') <= left ? 'f32' : 'i16');
+	const needs = cost(coarseSpot, coarsePrecision);
 	if (needs > left) {
 		throw new Error(
 			`coarseStart needs ~${formatBytes(needs)} beside this spot's ~${formatBytes(used)}, ` +
@@ -1766,6 +1812,7 @@ function solveCoarse(plan: CoarsePlan, options: SolveOptions): SolveRun {
 		algorithm: options.algorithm,
 		simd: options.simd,
 		engine: options.engine,
+		wasmStorage: options.wasmStorage,
 		approximations: rest,
 	});
 	try {

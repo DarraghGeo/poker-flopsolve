@@ -67,6 +67,8 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 	engine.setPhase(0, 1);
 	const shared = setup.shared;
 	if (shared) engine.setShared(shared[0], shared[1], shared[2]);
+	// Shared storage discounts by iteration, and the storage engine's rounding hashes it.
+	const needsIteration = shared !== undefined || setup.storage === true;
 
 	const control = new Int32Array(setup.control);
 	const settings = new Float64Array(setup.settings);
@@ -96,8 +98,7 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 		try {
 			// Off for a current-profile read, which updates nothing.
 			engine.setPhase(0, settings[5]);
-			// Shared storage discounts by iteration, so the thread needs to know which.
-			if (shared) engine.setIteration(settings[6], settings[7]);
+			if (needsIteration) engine.setIteration(settings[6], settings[7]);
 			for (let entry = 0; entry < entries; entry++) {
 				const slot = reach + entry * 2 * rowBytes;
 				const out = engine.runChance(
