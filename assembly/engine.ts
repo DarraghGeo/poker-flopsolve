@@ -1039,7 +1039,7 @@ function scaleExponent(largest: f64, top: f64): i32 {
  * compact storage runs; with chance sampling, the DCFR discounts a skipped
  * block missed first. Values are worked out twice rather than staged, as in
  * `updateI16`. With shared storage the history's `node` salts the rounding
- * streams, as there.
+ * streams, as in the JavaScript `updateCompact` (issue #88).
  */
 function updateCompact(
 	block: usize, node: i32, chunk: i32, slot: i32, handBase: i32, base: usize, sumBase: usize, actions: i32, n: i32,

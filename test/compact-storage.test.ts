@@ -256,10 +256,13 @@ describe('compact storage', () => {
 			const scaleBefore = ctx.compactScale?.slice();
 			const shiftBefore = ctx.handShift?.[chunk].slice();
 			// Values a third of a step apart, so stochastic rounding has room to differ.
-			const encode = (node: number): Int8Array => {
+			const restore = (): void => {
 				q.set(before);
 				if (scaleBefore) ctx.compactScale!.set(scaleBefore);
 				if (shiftBefore) ctx.handShift![chunk].set(shiftBefore);
+			};
+			const encode = (node: number): Int8Array => {
+				restore();
 				const actionValues = Float64Array.from({ length: actions * count }, (_, k) => ((k * 7919) % 101) / 3 + 0.37);
 				updateCompact(
 					ctx, node, chunk, block, slotBase, handBase, actions, count, 3,
@@ -271,7 +274,7 @@ describe('compact storage', () => {
 			const first = encode(a);
 			expect(encode(a)).toEqual(first);
 			expect(encode(b)).not.toEqual(first);
-			q.set(before);
+			restore();
 			run.close();
 		});
 	}
