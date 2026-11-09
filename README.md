@@ -801,8 +801,8 @@ It combines with `shareHistories` (one set of storage for betting lines that rea
 pot), and the pair is what brings T under 2 GiB: 0.99 GiB with sums, peaking at 1.5 GB on four
 threads, and 0.37 GiB with `sums: false, blockScale: true`. Sharing is lossy on its own; on
 T₀ at 160 iterations it was 9.5% of pot exploitable in 1.06 GiB at 32 bits, with root EVs
-0.66% of pot off and 97% of clear bet-size choices kept; with compact storage added, 8.7%,
-0.48% and 88%, in 0.36 GiB.
+0.66% of pot off and 97% of clear bet-size choices kept; with compact storage added, 9.0%,
+0.63% and 100%, in 0.36 GiB.
 
 It runs on the JavaScript engine, like 16-bit storage, on Node worker threads but on one
 thread in the browser, unless the solve passes `wasmStorage` (see the WebAssembly engine),
