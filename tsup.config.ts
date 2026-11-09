@@ -8,6 +8,8 @@ export default defineConfig([
 			threads: 'src/threads.ts',
 			worker: 'src/worker.ts',
 			'engine-worker': 'src/engine-worker.ts',
+			// Platform-free, so the browser build uses it as it is.
+			'wasm-storage': 'src/wasm-storage.ts',
 		},
 		format: ['esm'],
 		dts: true,

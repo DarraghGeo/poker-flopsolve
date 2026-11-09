@@ -305,7 +305,7 @@ export function blockBase(layout: Layout, tree: Tree, node: number, board: numbe
 /** Accumulated regrets: float, or 16-bit integers scaled per block. */
 export type RegretStore = Float64Array | Float32Array | Int16Array;
 /** Regrets as one of the stores, or compact storage's 8-bit ones. */
-type AnyRegrets = RegretStore | Int8Array;
+export type AnyRegrets = RegretStore | Int8Array;
 /** Accumulated strategy sums: float, or 16-bit integers scaled per block. */
 export type SumStore = Float64Array | Float32Array | Uint16Array;
 
@@ -924,7 +924,7 @@ function normalise(
 }
 
 /** Current strategy from positive regrets; uniform where there is none. */
-function regretMatch(regret: AnyRegrets, base: number, actions: number, count: number, strategy: Float64Array): void {
+export function regretMatch(regret: AnyRegrets, base: number, actions: number, count: number, strategy: Float64Array): void {
 	normalise(regret, base, actions, count, strategy);
 }
 
@@ -1457,7 +1457,7 @@ function updateQuantised(
 /** Bias of a compact hand's scale exponent; see `Context.handShift`. */
 const SHIFT_BIAS = 160;
 /** `2^(shift - SHIFT_BIAS)` for every shift, 0 for a shift of 0. */
-const SHIFT_SCALE = Float64Array.from({ length: 256 }, (_, e) => (e === 0 ? 0 : 2 ** (e - SHIFT_BIAS)));
+export const SHIFT_SCALE = Float64Array.from({ length: 256 }, (_, e) => (e === 0 ? 0 : 2 ** (e - SHIFT_BIAS)));
 
 /**
  * The update for a compactly stored node: decode, update in float as the rule
@@ -1498,6 +1498,20 @@ function updateCompact(
 	if (ctx.dcfr) {
 		({ keepPositive, keepNegative, keepSum } = dcfrFactors(iterWeight));
 		weight = 1;
+		const sampling = ctx.sampling;
+		if (sampling !== undefined && sampling !== null) {
+			// A subtree chance sampling skipped missed those iterations'
+			// discounts, as in the 32-bit update.
+			if (sampling.catchUp) {
+				for (let s = sampling.lastUpdate[block] + 1; s < iterWeight; s++) {
+					const f = cachedFactors(s);
+					keepPositive *= f.keepPositive;
+					keepNegative *= f.keepNegative;
+					keepSum *= f.keepSum;
+				}
+			}
+			sampling.lastUpdate[block] = iterWeight;
+		}
 	}
 
 	if (plan.float) {
@@ -1608,14 +1622,14 @@ function updateCompact(
 }
 
 /** Largest strategy sum compact storage keeps per hand: the top of a byte. */
-const COMPACT_SUM_STEPS = 255;
+export const COMPACT_SUM_STEPS = 255;
 
 /**
  * A hand's scale exponent: the smallest power of two that brings `largest`
  * within `steps`, read off the float's exponent bits, biased by
  * `SHIFT_BIAS`; 0, for all zeros, below the smallest scale there is.
  */
-function scaleExponent(largest: number, steps: number): number {
+export function scaleExponent(largest: number, steps: number): number {
 	if (!(largest > 0)) return 0;
 	EXPONENT_FLOAT[0] = largest / steps;
 	const high = EXPONENT_BITS[1];

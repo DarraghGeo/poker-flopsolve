@@ -13,7 +13,7 @@
  */
 
 import { COMBOS, DECK } from './cards.ts';
-import type { ActiveLists, Layout, PlayerIndex, RootTraversal, SamplingPlan } from './cfr.ts';
+import type { ActiveLists, CompactPlan, Layout, PlayerIndex, RegretStore, RootTraversal, SamplingPlan, SumStore } from './cfr.ts';
 import { dcfrFactors, Mode, treeDepth } from './cfr.ts';
 import type { HandSpace } from './hands.ts';
 import type { Runouts } from './runouts.ts';
@@ -50,6 +50,36 @@ export function compiledEngine(kind: 'plain' | 'shared'): object | null {
 	return modules[kind]!;
 }
 
+/**
+ * The engine with 16-bit and compact storage (issue #84), as base64 for plain
+ * and shared memory. Only `poker-flopsolve/wasm-storage` holds the bytes, so
+ * a build that never imports it carries none of them; a solve opts in by
+ * passing it as `SolveOptions.wasmStorage`.
+ */
+export interface WasmStorage {
+	readonly plain: string;
+	readonly shared: string;
+}
+
+const storageModules = new WeakMap<WasmStorage, Record<'plain' | 'shared', object | null | undefined>>();
+
+/** The storage engine compiled, over plain or shared memory; null where unavailable. */
+function compiledStorage(source: WasmStorage, kind: 'plain' | 'shared'): object | null {
+	let cache = storageModules.get(source);
+	if (!cache) storageModules.set(source, (cache = { plain: undefined, shared: undefined }));
+	if (cache[kind] !== undefined) return cache[kind]!;
+	cache[kind] = null;
+	try {
+		if (!wasm) return null;
+		const bytes = Uint8Array.from(atob(source[kind]), (c) => c.charCodeAt(0));
+		if (!wasm.validate(bytes)) return null;
+		cache[kind] = new wasm.Module(bytes);
+	} catch {
+		cache[kind] = null;
+	}
+	return cache[kind]!;
+}
+
 function compiled(): object | null {
 	return compiledEngine('plain');
 }
@@ -73,13 +103,34 @@ export interface EngineInput {
 	readonly sampling?: SamplingPlan;
 	/** Bytes left unused below the layout, rounded up to 16; tests set it to place every pointer past 2 GiB. */
 	readonly lowBytes?: number;
+	/**
+	 * 16-bit or compact storage, run by the storage engine `source` holds;
+	 * unset for 32-bit storage on the default engine. `quantised` keeps
+	 * the nodes before `compact.from` (all of them without `compact`) at 16
+	 * bits, as `precision: 'i16'` does.
+	 */
+	readonly storage?: { readonly source: WasmStorage; readonly quantised: boolean; readonly compact: CompactPlan | null };
+}
+
+/** Compact storage's arrays, per chunk, as `Context` holds them; views onto the engine's memory. */
+export interface EngineCompact {
+	readonly regret: (Int8Array | Float32Array)[];
+	readonly handShift: Uint8Array[] | null;
+	readonly sum: Uint8Array[] | null;
+	readonly sumShift: Uint8Array[] | null;
+	readonly scale: Float64Array | null;
 }
 
 /** A running engine. */
 export interface Engine {
-	/** The accumulators, as views onto the engine's memory. */
-	readonly regret: Float32Array;
-	readonly strategySum: Float32Array;
+	/** The accumulators, as views onto the engine's memory: 32-bit, or 16-bit with `EngineInput.storage`. */
+	readonly regret: RegretStore;
+	readonly strategySum: SumStore;
+	/** With 16-bit storage, the per-block scales `Context.regretScale` and `sumScale` hold; else null. */
+	readonly regretScale: Float64Array | null;
+	readonly sumScale: Float64Array | null;
+	/** With compact storage, its arrays; else null. */
+	readonly compact: EngineCompact | null;
 	/** Chance sampling's state, as views onto the engine's memory; null without sampling. */
 	readonly sampling: { baseline: Float32Array; lastWalk: Int32Array; lastUpdate: Int32Array } | null;
 	/** With shared storage, `Context.discounted` as a view onto the engine's memory; else null. */
@@ -109,6 +160,8 @@ export interface EngineWorkerSetup {
 	readonly settings: SharedArrayBuffer;
 	/** With shared storage: where the discount marks, the block table and the weighted nodes (or 0) sit. */
 	readonly shared?: readonly [number, number, number];
+	/** Set for the storage engine, whose updates need the iteration on every walk. */
+	readonly storage?: boolean;
 }
 
 /** How a pool starts its workers; the platform layer supplies it. */
@@ -141,14 +194,20 @@ export function createEngine(
 	},
 ): Engine | null {
 	const shared = pool !== undefined;
-	const compiledModule = compiledEngine(shared ? 'shared' : 'plain');
+	const storage = input.storage ?? null;
+	const compiledModule = storage
+		? compiledStorage(storage.source, shared ? 'shared' : 'plain')
+		: compiledEngine(shared ? 'shared' : 'plain');
 	if (!compiledModule || !wasm) return null;
 	const { tree, runouts, layout, active, hands } = input;
-	// Its two 32-bit accumulators alone would pass wasm32's 4 GB, so no
-	// engine; checked before anything is built. Such a layout is also the
-	// only kind that holds offsets as Float64, which the engine's 32-bit
-	// offset table could not take.
-	if (layout.totalSlots * 8 > MAX_MEMORY || !(layout.offset instanceof Int32Array)) return null;
+	const compact = storage?.compact ?? null;
+	const quantised = storage?.quantised ?? false;
+	// Its accumulators alone would pass wasm32's 4 GB, so no engine; checked
+	// before anything is built. Such a layout is also the only kind that
+	// holds offsets as Float64, which the engine's 32-bit offset table could
+	// not take.
+	const width = quantised ? 2 : 4;
+	if (layout.totalSlots * width * 2 + layout.compactSlots * 2 > MAX_MEMORY || !(layout.offset instanceof Int32Array)) return null;
 	const threads = pool ? pool.threads : 1;
 
 	const flatten = (parts: readonly Int32Array[]): [Int32Array, Int32Array] => {
@@ -182,8 +241,8 @@ export function createEngine(
 		add(active.memberA), add(active.memberB), add(upRound), add(upStart), add(hands.up),
 		add(hands.sameStart), add(hands.same), add(childRound), add(childStart), add(orbitRound), add(orbitStart),
 		add(input.runoutWeight),
-		add(null, layout.totalSlots * 4), // regret
-		add(null, layout.totalSlots * 4), // strategy sums
+		add(null, layout.totalSlots * width), // regret
+		add(null, layout.totalSlots * width), // strategy sums
 	];
 	const REGRET = common[common.length - 2];
 	const SUMS = common[common.length - 1];
@@ -218,6 +277,25 @@ export function createEngine(
 				weighted: layout.reachWeighted ? add(layout.reachWeighted) : -1,
 			}
 		: null;
+	// 16-bit and compact storage's settings, scales and chunks, only on the storage engine.
+	const chunks = compact ? layout.chunkSlots.length : 0;
+	const stored = storage
+		? {
+				block: add(null, 128),
+				blockOffset: sample ? sample.blockOffset : share ? share.blockOffset : add(layout.blockOffset),
+				regretScale: quantised ? add(null, layout.blocks * 8) : -1,
+				sumScale: quantised ? add(null, layout.blocks * 8) : -1,
+				compactChunk: compact ? add(layout.compactChunk) : -1,
+				handOffset: compact ? add(Int32Array.from(layout.handOffset!)) : -1,
+				tables: compact ? add(null, chunks * 4 * 5) : -1,
+				regrets: layout.chunkSlots.map((slots) => add(null, slots * (compact!.float ? 4 : 1))),
+				shifts: compact?.perHand ? layout.chunkHands.map((count) => add(null, count)) : [],
+				sums: compact?.sums ? layout.chunkSlots.map((slots) => add(null, slots)) : [],
+				sumShifts: compact?.sums ? layout.chunkHands.map((count) => add(null, count)) : [],
+				compactScale: compact && !compact.perHand && !compact.float ? add(null, layout.blocks * 8) : -1,
+			}
+		: null;
+	if (compact && layout.chunkHands.some((count) => count > 0x7fffffff)) return null;
 
 	const offsets: number[] = [];
 	let total = 64 + Math.ceil(Math.max(input.lowBytes ?? 0, 0) / 16) * 16;
@@ -240,7 +318,33 @@ export function createEngine(
 		head[common.length + 2] = rowBytes;
 		head[common.length + 3] = offsets[mine.cardSums];
 		head[common.length + 4] = input.chipScale;
+		if (stored) head[common.length + 5] = offsets[stored.block];
 	}
+	if (stored) {
+		const at = (slot: number): number => (slot >= 0 ? offsets[slot] : 0);
+		const block = new Uint32Array(memory.buffer, offsets[stored.block], 20);
+		block.set([
+			quantised ? 1 : 0, compact ? compact.from : 255, !compact ? 0 : compact.float ? 3 : compact.perHand ? 1 : 2,
+			compact?.sums ? 1 : 0, compact?.stochastic ? 1 : 0, compact?.steps ?? 127,
+			at(stored.regretScale), at(stored.sumScale), offsets[stored.blockOffset], at(stored.compactChunk),
+			at(stored.handOffset),
+		]);
+		if (compact) {
+			// Per chunk: where its regrets, hand scales, sums and sum scales sit, and its first slot.
+			const tables = offsets[stored.tables];
+			const table = new Uint32Array(memory.buffer, tables, chunks * 5);
+			for (let c = 0; c < chunks; c++) {
+				table[c] = offsets[stored.regrets[c]];
+				table[chunks + c] = stored.shifts.length ? offsets[stored.shifts[c]] : 0;
+				table[2 * chunks + c] = stored.sums.length ? offsets[stored.sums[c]] : 0;
+				table[3 * chunks + c] = stored.sumShifts.length ? offsets[stored.sumShifts[c]] : 0;
+				table[4 * chunks + c] = layout.chunkStart[c] >>> 0;
+			}
+			block.set([tables, tables + chunks * 4, tables + chunks * 8, tables + chunks * 12, tables + chunks * 16, at(stored.compactScale)], 11);
+		}
+	}
+	// The update rule's factors, as float64, which the storage engine reads before each walk.
+	const factors = stored ? new Float64Array(memory.buffer, offsets[stored.block] + 80, 4) : null;
 
 	const instance = new wasm.Instance(compiledModule, { env: { memory, abort: () => { throw new Error('engine abort'); } } });
 	const exports = instance.exports as unknown as EngineExports;
@@ -266,8 +370,27 @@ export function createEngine(
 	if (share) exports.setShared(offsets[share.marks], offsets[share.blockOffset], weightedAt);
 	const discounted = share ? new Int32Array(memory.buffer, offsets[share.marks], layout.blocks) : null;
 
-	const regret = new Float32Array(memory.buffer, offsets[REGRET], layout.totalSlots);
-	const strategySum = new Float32Array(memory.buffer, offsets[SUMS], layout.totalSlots);
+	const regret: RegretStore = quantised
+		? new Int16Array(memory.buffer, offsets[REGRET], layout.totalSlots)
+		: new Float32Array(memory.buffer, offsets[REGRET], layout.totalSlots);
+	const strategySum: SumStore = quantised
+		? new Uint16Array(memory.buffer, offsets[SUMS], layout.totalSlots)
+		: new Float32Array(memory.buffer, offsets[SUMS], layout.totalSlots);
+	const scaleView = (slot: number): Float64Array | null =>
+		slot >= 0 ? new Float64Array(memory.buffer, offsets[slot], layout.blocks) : null;
+	const compactViews: EngineCompact | null = stored && compact
+		? {
+				regret: stored.regrets.map((slot, c) =>
+					compact.float
+						? new Float32Array(memory.buffer, offsets[slot], layout.chunkSlots[c])
+						: new Int8Array(memory.buffer, offsets[slot], layout.chunkSlots[c]),
+				),
+				handShift: compact.perHand ? stored.shifts.map((slot, c) => new Uint8Array(memory.buffer, offsets[slot], layout.chunkHands[c])) : null,
+				sum: compact.sums ? stored.sums.map((slot, c) => new Uint8Array(memory.buffer, offsets[slot], layout.chunkSlots[c])) : null,
+				sumShift: compact.sums ? stored.sumShifts.map((slot, c) => new Uint8Array(memory.buffer, offsets[slot], layout.chunkHands[c])) : null,
+				scale: scaleView(stored.compactScale),
+			}
+		: null;
 	const me = new Float32Array(memory.buffer, offsets[own[0].rootMe], stride);
 	const opp = new Float32Array(memory.buffer, offsets[own[0].rootOpp], stride);
 	const result = new Float64Array(COMBOS);
@@ -305,6 +428,7 @@ export function createEngine(
 				partial: offsets[partials] + (w - 1) * entries * rowBytes,
 				stride, control: controlBuffer, settings: settingsBuffer,
 				...(share ? { shared: [offsets[share.marks], offsets[share.blockOffset], weightedAt] as const } : {}),
+				...(stored ? { storage: true } : {}),
 			};
 			workers.push(pool.spawn(setup, (error) => {
 				failure ??= error;
@@ -353,7 +477,8 @@ export function createEngine(
 		const [positive, negative, sum, weight, clamp] = settingsFor(mode, iterWeight, dcfr);
 		iteration = mode === Mode.Train ? iterWeight : 0;
 		dcfrRule = dcfr ? 1 : 0;
-		if (plan || share) exports.setIteration(iteration, dcfrRule);
+		if (plan || share || stored) exports.setIteration(iteration, dcfrRule);
+		factors?.set([positive, negative, sum, weight]);
 		let at: number;
 		if (!pool) {
 			if (apply === 0) exports.setPhase(0, 0);
@@ -430,6 +555,9 @@ export function createEngine(
 	return {
 		regret,
 		strategySum,
+		regretScale: stored ? scaleView(stored.regretScale) : null,
+		sumScale: stored ? scaleView(stored.sumScale) : null,
+		compact: compactViews,
 		sampling: samplingViews,
 		discounted,
 		threads,
