@@ -778,8 +778,9 @@ export interface SolveOptions {
 	readonly simd?: boolean;
 	/**
 	 * Which traversal runs. Unset, the WebAssembly engine wherever it applies
-	 * — one thread, 32-bit storage, WebAssembly SIMD available — and the
-	 * JavaScript one otherwise. 'js' forces JavaScript, to compare the two.
+	 * — 32-bit storage (or 16-bit and compact with `wasmStorage`), WebAssembly
+	 * SIMD available — and the JavaScript one otherwise. 'js' forces
+	 * JavaScript, to compare the two.
 	 */
 	readonly engine?: 'js';
 	/**

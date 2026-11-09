@@ -486,7 +486,9 @@ export function createEngine(
 		iteration = mode === Mode.Train ? iterWeight : 0;
 		dcfrRule = dcfr ? 1 : 0;
 		if (plan || share || stored) exports.setIteration(iteration, dcfrRule);
-		factors?.set([positive, negative, sum, weight]);
+		// CFR+ at 16 bits or compact floors a negative regret, as `updateQuantised`
+		// and `updateCompact` do (one only a warm start could bring); 32-bit storage keeps it.
+		factors?.set([positive, mode === Mode.Train && !dcfr ? 0 : negative, sum, weight]);
 		let at: number;
 		if (!pool) {
 			if (apply === 0) exports.setPhase(0, 0);

@@ -106,6 +106,25 @@ describe.runIf(engineAvailable())('16-bit and compact storage on the WebAssembly
 		}
 	}
 
+	it('floors a negative regret under CFR+ at 16 bits and compact, as JavaScript does', () => {
+		// Only a warm start from a DCFR solve brings negative regrets into a CFR+ one.
+		for (const [config, options] of [[flop, { precision: 'i16' }], [{ ...flop, compactStorage: {} }, {}]] as [SpotConfig, SolveOptions][]) {
+			const dcfr = createRun(defineSpot(config), { workers: 1, ...options });
+			dcfr.step(5);
+			const seed = dcfr.snapshot();
+			dcfr.close();
+			const js = createRun(defineSpot(config), { workers: 1, ...options, algorithm: 'cfr+', warmStart: seed });
+			const engine = createRun(defineSpot(config), { workers: 1, ...options, algorithm: 'cfr+', warmStart: seed, wasmStorage });
+			const regrets = (js.solver.ctx.compactRegret?.[0] ?? js.solver.ctx.regret) as ArrayLike<number>;
+			expect(Array.prototype.some.call(regrets, (v: number) => v < 0)).toBe(true);
+			js.step(1);
+			engine.step(1);
+			for (const [name, share] of compareStorage(js, engine)) expect(share, name).toBeLessThanOrEqual(0.02);
+			js.close();
+			engine.close();
+		}
+	});
+
 	it('converges as JavaScript does, and threads change only float rounding', () => {
 		for (const [config, options] of [
 			[flop, { precision: 'i16' }],
@@ -218,6 +237,18 @@ describe('compactStorage combined with what it used to refuse (issue #84)', () =
 		expect(run.exploitabilityPercent()).toBeLessThan(full.exploitabilityPercent() * 1.3 + 0.1);
 		run.close();
 		full.close();
+	});
+
+	it('runs compact storage over 16-bit rounds on JavaScript worker threads as on one', () => {
+		const config: SpotConfig = { ...flop, compactStorage: { from: 1 } };
+		const one = createRun(defineSpot(config), { workers: 1, precision: 'i16', engine: 'js' });
+		const three = createRun(defineSpot(config), { workers: 3, precision: 'i16', engine: 'js' });
+		one.step(8);
+		three.step(8);
+		expect(three.workers).toBe(3);
+		for (const [name, share] of compareStorage(one, three)) expect(share, name).toBe(0);
+		one.close();
+		three.close();
 	});
 
 	it('seeds a warm start, and starts warm, without losing the solve', () => {
