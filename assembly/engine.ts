@@ -861,21 +861,41 @@ function matchAverageStored(sumBase: usize, sumKind: i32, regretBase: usize, reg
 	normaliseRows(strategy, total, actions, n);
 }
 
-/** A deterministic uniform value in [0, 1) for a slot on an iteration, as `dither` in src/cfr.ts. */
-@inline function dither(slot: i32, t: i32): f64 {
+/** The largest of a vector's four lanes. */
+@inline function largestLane(v: v128): f32 {
+	const a = Mathf.max(f32x4.extract_lane(v, 0), f32x4.extract_lane(v, 1));
+	const b = Mathf.max(f32x4.extract_lane(v, 2), f32x4.extract_lane(v, 3));
+	return Mathf.max(a, b);
+}
+
+/** Four of `dither`'s hashes (src/cfr.ts), for slots `slot` to `slot + 3`, as floats in [0, 1) to 24 bits. */
+@inline function ditherLanes(slot: i32, t: i32): v128 {
+	const slots = i32x4.add(i32x4.splat(slot), i32x4(0, 1, 2, 3));
+	let h = i32x4.mul(v128.xor(slots, i32x4.splat(t * <i32>0x9e3779b1)), i32x4.splat(<i32>0x85ebca6b));
+	h = v128.xor(h, i32x4.shr_u(h, 13));
+	h = i32x4.mul(h, i32x4.splat(<i32>0xc2b2ae35));
+	h = v128.xor(h, i32x4.shr_u(h, 16));
+	return f32x4.mul(f32x4.convert_i32x4_u(i32x4.shr_u(h, 8)), f32x4.splat(<f32>1 / <f32>16777216));
+}
+
+/** `dither` to 24 bits, as `ditherLanes` gives it. */
+@inline function ditherOne(slot: i32, t: i32): f32 {
 	let h: u32 = <u32>(slot ^ (t * <i32>0x9e3779b1)) * 0x85ebca6b;
 	h ^= h >>> 13;
 	h *= 0xc2b2ae35;
 	h ^= h >>> 16;
-	return <f64>h / 4294967296.0;
+	return <f32>(h >>> 8) / <f32>16777216;
 }
 
 /**
  * `updateQuantised` in src/cfr.ts: the 16-bit update of one block, decoded,
- * updated in float64 and re-encoded against the block's new largest value;
- * regrets rounded to nearest, sums at random by `dither`. Each value is
- * worked out twice, once for the largest and once to encode, rather than
- * staged: there is no float64 room for it, and the second is the same.
+ * updated as the rule says and re-encoded against the block's new largest
+ * value; regrets rounded to nearest, sums at random by the same hash of slot
+ * and iteration. In 32-bit floats, four hands at a time, as the 32-bit update
+ * is: a 16-bit value has far less precision than that, so the stored result
+ * differs from JavaScript's float64 only where a value lies within float32
+ * precision of a rounding boundary. The new values are staged in the action
+ * values and the strategy, as JavaScript stages them.
  */
 function updateI16(
 	block: usize, slot: i32, base: usize, sumBase: usize, actions: i32, n: i32,
@@ -883,12 +903,9 @@ function updateI16(
 ): void {
 	const regretAt = regretScale + (block << 3);
 	const sumAt = sumScale + (block << 3);
-	const oldRegret = load<f64>(regretAt);
-	const oldSum = load<f64>(sumAt);
 	let positive = factorPositive();
 	let negative = factorNegative();
 	let keep = factorSum();
-	const w = factorWeight();
 	if (dcfrRule && discounted !== 0) {
 		// Another history already discounted this shared block this iteration.
 		const mark = discounted + (block << 2);
@@ -899,41 +916,90 @@ function updateI16(
 		}
 		store<i32>(mark, iteration);
 	}
+	const oldRegret = <f32>load<f64>(regretAt);
+	const oldSum = <f32>(load<f64>(sumAt) * keep);
+	const w = <f32>factorWeight();
+	const pos = f32x4.splat(<f32>positive);
+	const neg = f32x4.splat(<f32>negative);
+	const scaleR = f32x4.splat(oldRegret);
+	const scaleS = f32x4.splat(oldSum);
+	const weight = f32x4.splat(w);
+	const zero = f32x4.splat(0);
 	const rowStride = <usize>n << 2;
-	let largestRegret: f64 = 0;
-	let largestSum: f64 = 0;
-	for (let pass = 0; pass < 2; pass++) {
-		const regretStep: f64 = largestRegret > 0 ? 32767 / largestRegret : 0;
-		const sumStep: f64 = largestSum > 0 ? 65535 / largestSum : 0;
-		for (let a = 0; a < actions; a++) {
-			const row = <usize>a * rowStride;
-			for (let i = 0; i < n; i++) {
-				const o = <usize>i << 2;
-				const k = a * n + i;
-				const q = base + (<usize>k << 1);
-				const accumulated = <f64>load<i16>(q) * oldRegret;
-				let updated = accumulated * (accumulated > 0 ? positive : negative) + <f64>load<f32>(actionValues + row + o) - <f64>load<f32>(value + o);
-				if (clamp && updated < 0) updated = 0;
-				// DCFR adds the strategy unweighted by own reach (issue #8); CFR+ keeps the weight.
-				const played = <f64>load<f32>(strategy + row + o);
-				const added = clamp ? w * <f64>load<f32>(reachMe + o) * played : w * played;
-				const s = sumBase + (<usize>k << 1);
-				const sum = <f64>load<u16>(s) * oldSum * keep + added;
-				if (pass === 0) {
-					const magnitude = updated < 0 ? -updated : updated;
-					if (magnitude > largestRegret) largestRegret = magnitude;
-					if (sum > largestSum) largestSum = sum;
-				} else {
-					const r = updated * regretStep;
-					store<i16>(q, <i16><i32>(r < 0 ? r - 0.5 : r + 0.5));
-					const d = sum * sumStep + dither(slot + k, iteration);
-					store<u16>(s, <u16><u32>(d < 65535 ? d : 65535));
-				}
-			}
+	const n4 = n & ~3;
+	let topR = zero;
+	let topS = zero;
+	for (let a = 0; a < actions; a++) {
+		const row = <usize>a * rowStride;
+		const q = base + (<usize>(a * n) << 1);
+		const s = sumBase + (<usize>(a * n) << 1);
+		let i = 0;
+		for (; i < n4; i += 4) {
+			const o = <usize>i << 2;
+			const qv = v128.load64_zero(q + (<usize>i << 1));
+			const r = f32x4.mul(f32x4.convert_i32x4_s(i32x4.extend_low_i16x8_s(qv)), scaleR);
+			let u = f32x4.sub(f32x4.add(f32x4.mul(r, v128.bitselect(pos, neg, f32x4.gt(r, zero))), v128.load(actionValues + row + o)), v128.load(value + o));
+			if (clamp) u = f32x4.max(u, zero);
+			v128.store(actionValues + row + o, u);
+			topR = f32x4.max(topR, f32x4.abs(u));
+			// DCFR adds the strategy unweighted by own reach (issue #8); CFR+ keeps the weight.
+			let added = f32x4.mul(weight, v128.load(strategy + row + o));
+			if (clamp) added = f32x4.mul(f32x4.mul(weight, v128.load(reachMe + o)), v128.load(strategy + row + o));
+			const sv = v128.load64_zero(s + (<usize>i << 1));
+			const sum = f32x4.add(f32x4.mul(f32x4.convert_i32x4_u(i32x4.extend_low_i16x8_u(sv)), scaleS), added);
+			v128.store(strategy + row + o, sum);
+			topS = f32x4.max(topS, sum);
+		}
+		for (; i < n; i++) {
+			const o = <usize>i << 2;
+			const r = <f32>load<i16>(q + (<usize>i << 1)) * oldRegret;
+			let u = r * (r > 0 ? <f32>positive : <f32>negative) + load<f32>(actionValues + row + o) - load<f32>(value + o);
+			if (clamp && u < 0) u = 0;
+			store<f32>(actionValues + row + o, u);
+			topR = f32x4.max(topR, f32x4.splat(Mathf.abs(u)));
+			const played = load<f32>(strategy + row + o);
+			const added = clamp ? w * load<f32>(reachMe + o) * played : w * played;
+			const sum = <f32>load<u16>(s + (<usize>i << 1)) * oldSum + added;
+			store<f32>(strategy + row + o, sum);
+			topS = f32x4.max(topS, f32x4.splat(sum));
 		}
 	}
-	store<f64>(regretAt, largestRegret / 32767);
-	store<f64>(sumAt, largestSum / 65535);
+
+	// Storing into a 16-bit array truncates toward zero, so adding a half away
+	// from zero rounds to nearest, and adding the dither rounds at random;
+	// the narrowing saturates, which caps a sum at the top of the range.
+	const largestRegret = largestLane(topR);
+	const largestSum = largestLane(topS);
+	const regretStep = largestRegret > 0 ? <f32>(32767 / <f64>largestRegret) : 0;
+	const sumStep = largestSum > 0 ? <f32>(65535 / <f64>largestSum) : 0;
+	const stepR = f32x4.splat(regretStep);
+	const stepS = f32x4.splat(sumStep);
+	const half = f32x4.splat(0.5);
+	const sign = i32x4.splat(<i32>0x80000000);
+	for (let a = 0; a < actions; a++) {
+		const row = <usize>a * rowStride;
+		const q = base + (<usize>(a * n) << 1);
+		const s = sumBase + (<usize>(a * n) << 1);
+		let i = 0;
+		for (; i < n4; i += 4) {
+			const o = <usize>i << 2;
+			const r = f32x4.mul(v128.load(actionValues + row + o), stepR);
+			const rounded = i32x4.trunc_sat_f32x4_s(f32x4.add(r, v128.or(half, v128.and(r, sign))));
+			v128.store64_lane(q + (<usize>i << 1), i16x8.narrow_i32x4_s(rounded, rounded), 0);
+			const d = f32x4.add(f32x4.mul(v128.load(strategy + row + o), stepS), ditherLanes(slot + a * n + i, iteration));
+			const sum = i32x4.trunc_sat_f32x4_u(d);
+			v128.store64_lane(s + (<usize>i << 1), i16x8.narrow_i32x4_u(sum, sum), 0);
+		}
+		for (; i < n; i++) {
+			const o = <usize>i << 2;
+			const r = load<f32>(actionValues + row + o) * regretStep;
+			store<i16>(q + (<usize>i << 1), <i16><i32>(r < 0 ? r - 0.5 : r + 0.5));
+			const d = load<f32>(strategy + row + o) * sumStep + ditherOne(slot + a * n + i, iteration);
+			store<u16>(s + (<usize>i << 1), <u16><u32>(d < 65535 ? d : <f32>65535));
+		}
+	}
+	store<f64>(regretAt, <f64>largestRegret / 32767);
+	store<f64>(sumAt, <f64>largestSum / 65535);
 }
 
 /** `2^(shift - 160)`, a compact hand's scale; 0 for a shift of 0. See `SHIFT_SCALE` in src/cfr.ts. */
@@ -1052,7 +1118,75 @@ function updateCompact(
 
 	const shifts = <usize>load<u32>(chunkShift + (<usize>chunk << 2)) + <usize>handBase;
 	const sumShifts = compactSums ? <usize>load<u32>(chunkSumShift + (<usize>chunk << 2)) + <usize>handBase : 0;
-	for (let i = 0; i < n; i++) {
+	// Four hands at a time, in 32-bit floats, as `updateI16` works; the rest one by one.
+	const n4 = n & ~3;
+	const zero = f32x4.splat(0);
+	const pos = f32x4.splat(<f32>positive);
+	const neg = f32x4.splat(<f32>negative);
+	const weight = f32x4.splat(<f32>w);
+	const kept = f32x4.splat(<f32>keep);
+	const top = f32x4.splat(<f32>steps);
+	const bottom = f32x4.neg(top);
+	const half = f32x4.splat(0.5);
+	const byteTop = f32x4.splat(255);
+	for (let i = 0; i < n4; i += 4) {
+		const o = <usize>i << 2;
+		const out4 = v128.load(value + o);
+		const scale4 = scalesOf(v128.load32_zero(shifts + <usize>i));
+		let largest = zero;
+		for (let a = 0; a < actions; a++) {
+			const at = actionValues + <usize>a * rowStride + o;
+			const r = f32x4.mul(signedBytes(base + <usize>(a * n + i)), scale4);
+			let u = f32x4.sub(f32x4.add(f32x4.mul(r, v128.bitselect(pos, neg, f32x4.gt(r, zero))), v128.load(at)), out4);
+			if (clamp) u = f32x4.max(u, zero);
+			v128.store(at, u);
+			largest = f32x4.max(largest, f32x4.abs(u));
+		}
+		const exponent = exponentsOf(largest, <f32>steps);
+		v128.store32_lane(shifts + <usize>i, bytesOf(exponent), 0);
+		const inverse = inversesOf(exponent);
+		// One stream per hand, stepped on for each action.
+		let h = stochastic || compactSums ? seedsOf(hashBase + <u32>i, iteration) : zero;
+		for (let a = 0; a < actions; a++) {
+			const v = f32x4.mul(v128.load(actionValues + <usize>a * rowStride + o), inverse);
+			let rounded: v128;
+			if (stochastic) {
+				h = nextStates(h);
+				rounded = f32x4.floor(f32x4.add(v, uniformsOf(h)));
+			} else {
+				rounded = f32x4.floor(f32x4.add(v, half));
+			}
+			const fitted = i32x4.trunc_sat_f32x4_s(f32x4.min(f32x4.max(rounded, bottom), top));
+			const narrow = i16x8.narrow_i32x4_s(fitted, fitted);
+			v128.store32_lane(base + <usize>(a * n + i), i8x16.narrow_i16x8_s(narrow, narrow), 0);
+		}
+
+		if (!compactSums) continue;
+		// The strategy sum, scaled per hand as the regrets are.
+		const sumScale4 = f32x4.mul(scalesOf(v128.load32_zero(sumShifts + <usize>i)), kept);
+		const reach4 = v128.load(reachMe + o);
+		let largestSum = zero;
+		for (let a = 0; a < actions; a++) {
+			const at = strategy + <usize>a * rowStride + o;
+			// DCFR adds the strategy unweighted by own reach (issue #8); CFR+ keeps the weight.
+			let added = f32x4.mul(weight, v128.load(at));
+			if (clamp) added = f32x4.mul(f32x4.mul(weight, reach4), v128.load(at));
+			const sum = f32x4.add(f32x4.mul(unsignedBytes(sumBase + <usize>(a * n + i)), sumScale4), added);
+			v128.store(at, sum);
+			largestSum = f32x4.max(largestSum, sum);
+		}
+		const sumExponent = exponentsOf(largestSum, 255);
+		v128.store32_lane(sumShifts + <usize>i, bytesOf(sumExponent), 0);
+		const sumInverse = inversesOf(sumExponent);
+		for (let a = 0; a < actions; a++) {
+			h = nextStates(h);
+			const v = f32x4.mul(v128.load(strategy + <usize>a * rowStride + o), sumInverse);
+			const rounded = i32x4.trunc_sat_f32x4_u(f32x4.min(f32x4.floor(f32x4.add(v, uniformsOf(h))), byteTop));
+			const narrow = i16x8.narrow_i32x4_u(rounded, rounded);
+			v128.store32_lane(sumBase + <usize>(a * n + i), i8x16.narrow_i16x8_u(narrow, narrow), 0);
+		}
+	}
+	for (let i = n4; i < n; i++) {
 		const o = <usize>i << 2;
 		const out = <f64>load<f32>(value + o);
 		const scale = shiftScale(<i32>load<u8>(shifts + <usize>i));
@@ -1110,6 +1244,70 @@ function updateCompact(
 			store<u8>(s, <u8><i32>(rounded < 255 ? rounded : 255));
 		}
 	}
+}
+
+/** Four signed bytes as floats. */
+@inline function signedBytes(at: usize): v128 {
+	return f32x4.convert_i32x4_s(i32x4.extend_low_i16x8_s(i16x8.extend_low_i8x16_s(v128.load32_zero(at))));
+}
+
+/** Four unsigned bytes as floats. */
+@inline function unsignedBytes(at: usize): v128 {
+	return f32x4.convert_i32x4_u(i32x4.extend_low_i16x8_u(i16x8.extend_low_i8x16_u(v128.load32_zero(at))));
+}
+
+/**
+ * `shiftScale` of four hands' shifts, the bytes in the low lane, as float32:
+ * `2^(shift - 160)` has the float32 exponent field `shift - 33`. Below
+ * 2^-126 a scale is taken as 0; it stands for regrets under 10^-35.
+ */
+@inline function scalesOf(shifts: v128): v128 {
+	const field = i32x4.sub(i32x4.extend_low_i16x8_u(i16x8.extend_low_i8x16_u(shifts)), i32x4.splat(33));
+	return v128.and(i32x4.shl(field, 23), i32x4.gt_s(field, i32x4.splat(0)));
+}
+
+/**
+ * `scaleExponent` of four hands' largest values, from float32's exponent
+ * field (biased by 127, where the shift's bias is 160); 0 where a hand has none.
+ */
+@inline function exponentsOf(largest: v128, top: f32): v128 {
+	const bits = f32x4.div(largest, f32x4.splat(top));
+	let exponent = i32x4.add(v128.and(i32x4.shr_u(bits, 23), i32x4.splat(0xff)), i32x4.splat(33));
+	// Not a power of two: one more. `ne` is -1 where true.
+	exponent = i32x4.sub(exponent, i32x4.ne(v128.and(bits, i32x4.splat(0x7fffff)), i32x4.splat(0)));
+	exponent = i32x4.min_s(i32x4.max_s(exponent, i32x4.splat(0)), i32x4.splat(255));
+	return v128.and(exponent, f32x4.gt(largest, f32x4.splat(0)));
+}
+
+/** `shiftInverse` of four shifts, as float32, capped at 2^127; 0 for a shift of 0. */
+@inline function inversesOf(exponent: v128): v128 {
+	const field = i32x4.min_s(i32x4.max_s(i32x4.sub(i32x4.splat(287), exponent), i32x4.splat(0)), i32x4.splat(254));
+	return v128.and(i32x4.shl(field, 23), i32x4.gt_s(exponent, i32x4.splat(0)));
+}
+
+/** Four 32-bit lanes of values 0 to 255 as bytes, in the low lane. */
+@inline function bytesOf(values: v128): v128 {
+	const narrow = i16x8.narrow_i32x4_u(values, values);
+	return i8x16.narrow_i16x8_u(narrow, narrow);
+}
+
+/** `streamSeed` for four slots from `slot`. */
+@inline function seedsOf(slot: u32, t: i32): v128 {
+	const slots = i32x4.add(i32x4.splat(<i32>slot), i32x4(0, 1, 2, 3));
+	const mixed = v128.xor(v128.xor(slots, i32x4.splat(t * <i32>0x9e3779b1)), i32x4.splat(0x5bd1e995));
+	return v128.or(i32x4.mul(mixed, i32x4.splat(<i32>0x85ebca6b)), i32x4.splat(1));
+}
+
+/** `nextState` of four streams. */
+@inline function nextStates(h: v128): v128 {
+	h = v128.xor(h, i32x4.shr_u(h, 15));
+	h = i32x4.mul(h, i32x4.splat(0x2c1b3c6d));
+	return v128.xor(h, i32x4.shr_u(h, 12));
+}
+
+/** Four streams' states as floats in [0, 1), to 24 bits. */
+@inline function uniformsOf(h: v128): v128 {
+	return f32x4.mul(f32x4.convert_i32x4_u(i32x4.shr_u(h, 8)), f32x4.splat(<f32>1 / <f32>16777216));
 }
 
 /** Fold values: card-removal inclusion–exclusion, as `foldValuesHands`. */

@@ -41,7 +41,7 @@ const CASES: [string, SpotConfig, SolveOptions, number][] = [
 	['i16 with shared histories', { ...flop, shareHistories: true }, { precision: 'i16' }, 0.03],
 	['compact storage under DCFR', { ...flop, compactStorage: {} }, {}, 0.002],
 	['compact storage under CFR+', { ...flop, compactStorage: {} }, { algorithm: 'cfr+' }, 0.002],
-	['compact storage from the turn, i16 before', { ...flop, compactStorage: { from: 1 } }, { precision: 'i16' }, 0.002],
+	['compact storage from the turn, i16 before', { ...flop, compactStorage: { from: 1 } }, { precision: 'i16' }, 0.02],
 	['compact storage without sums', { ...flop, compactStorage: { sums: false } }, {}, 0.002],
 	['compact storage with a block scale', { ...flop, compactStorage: { sums: false, blockScale: true } }, {}, 0.002],
 	['compact storage with 32-bit regrets', { ...flop, compactStorage: { sums: false, float: true } }, {}, 0.01],

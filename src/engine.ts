@@ -7,9 +7,17 @@
  * The engine keeps the accumulators in its own memory as 32-bit floats; the
  * solver's `regret` and `strategySum` are views onto them, so everything that
  * reads storage from JavaScript — strategy queries, warm starts, `valuesAt` —
- * sees the very same numbers. It runs single-threaded, with 32-bit storage,
- * where WebAssembly SIMD is available; otherwise the JavaScript traversal in
- * cfr.ts runs.
+ * sees the very same numbers. It runs where WebAssembly SIMD is available,
+ * on one thread or several; otherwise the JavaScript traversal in cfr.ts
+ * runs. A second build, which only `poker-flopsolve/wasm-storage` carries,
+ * keeps 16-bit and compact storage the same way (`EngineInput.storage`).
+ *
+ * WebAssembly memory is one buffer, but Chromium lets it reach wasm32's full
+ * 4 GiB, plain or shared, made at that size or grown to it, where it refuses
+ * any ArrayBuffer over 2 GiB less 2 MiB (measured in Chromium 153 by
+ * bin/memory-ceiling.ts; issue #84). So compact storage needs no chunks of
+ * its own in the engine: its chunks are regions of the one memory, laid out
+ * as the JavaScript engine's buffers are.
  */
 
 import { COMBOS, DECK } from './cards.ts';

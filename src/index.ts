@@ -295,9 +295,13 @@ export interface SpotConfig {
  * Training is otherwise the exact solve's; exploitability is measured
  * exactly, in the full tree. Storage is split in chunks under `chunkBytes`,
  * because browsers refuse a buffer of 2 GiB. Runs on the JavaScript engine
- * and its Node worker threads, not the WebAssembly one; an iteration costs
- * about 1.5 times a 32-bit one there; not with `warmStart`, `coarseStart`,
- * `chanceSampling`, `analysisOnly` or a `precision`.
+ * and its Node worker threads, where an iteration costs about 1.5 times a
+ * 32-bit one, or on the WebAssembly engine, threads included, with
+ * `SolveOptions.wasmStorage` (issue #84). Not with `analysisOnly`, which
+ * loads float32 sums. `precision` sets the rounds before `from`; a warm
+ * start, a coarse start or `runoutBuckets`' measure of the real game reads
+ * and writes compact storage, rounded to nearest; `chanceSampling` applies
+ * its DCFR catch-up to compact nodes too.
  *
  * With `shareHistories`, a node sharing another's storage shares its compact
  * storage too; together they fit issue #20's target T in 0.99 GiB (0.37
@@ -1282,7 +1286,7 @@ export interface Approximations {
 	 * Costs: one float per hand per stored deal per chance node, 6–31 MB on
 	 * those flops (about 12–20% beside their storage), counted against
 	 * `maxBytes`; always one thread (`workers` is ignored); 32- or 64-bit
-	 * storage only. With `targetPercent`, a sampled solve runs more
+	 * storage, or `compactStorage` over either. With `targetPercent`, a sampled solve runs more
 	 * iterations, so it makes a few more exploitability checks.
 	 * Off, nothing changes; at `p: 1` it is the exact solve, bit for bit.
 	 */
