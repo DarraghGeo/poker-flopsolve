@@ -6,7 +6,9 @@
 import { describe, expect, it } from 'vitest';
 import { createRun, defineSpot } from '../src/index.ts';
 import type { SolveOptions, SpotConfig } from '../src/index.ts';
+import { engineAvailable } from '../src/engine.ts';
 import { aliasHistories } from '../src/history-merge.ts';
+import { wasmStorage } from '../src/wasm-storage.ts';
 import { ActionKind, NodeKind } from '../src/tree.ts';
 import type { Tree } from '../src/tree.ts';
 import { SPOTS } from '../bench/compare/spots.ts';
@@ -128,13 +130,16 @@ describe('history merging', () => {
 		}
 	});
 
-	it('discounts a shared compact block once an iteration', () => {
-		// With 32-bit regrets kept, compact storage trains exactly as the
-		// 32-bit solve; shared, only if it too discounts a block once.
+	/**
+	 * Step a shared 32-bit solve and a shared compact one with 32-bit
+	 * regrets from the turn, and count the compact slots whose regret is
+	 * more than `tolerance` of the largest regret from the 32-bit one's.
+	 */
+	function compactAgainstExact(exactOptions: SolveOptions, compactOptions: SolveOptions, tolerance: number) {
 		const shared = { ...flop, shareHistories: true };
-		const exact = createRun(defineSpot(shared), { workers: 1, engine: 'js', algorithm: 'dcfr' });
+		const exact = createRun(defineSpot(shared), { workers: 1, algorithm: 'dcfr', ...exactOptions });
 		const compact = createRun(defineSpot({ ...shared, compactStorage: { from: 1, float: true, sums: false } }), {
-			workers: 1, algorithm: 'dcfr',
+			workers: 1, algorithm: 'dcfr', ...compactOptions,
 		});
 		try {
 			exact.step(6);
@@ -144,29 +149,49 @@ describe('history merging', () => {
 			expect(layout.shared).toBe(true);
 			// One chunk, so offsets into it are offsets into all compact storage.
 			expect(compact.solver.ctx.compactRegret!.length).toBe(1);
+			const q = compact.solver.ctx.compactRegret![0];
+			const regret = exact.solver.ctx.regret;
 			// Each owner's slots, in storage order; an aliased node shares its owner's.
 			const owners = new Map<number, number>();
 			for (const node of tree.decisionNodes) {
 				if (tree.round[node] >= layout.compactFrom && !owners.has(layout.offset[node])) owners.set(layout.offset[node], node);
 			}
 			const starts = [...owners.keys()].sort((a, b) => a - b);
+			let largest = 0;
+			for (let i = 0; i < regret.length; i++) largest = Math.max(largest, Math.abs(regret[i]));
 			let compared = 0;
+			let differ = 0;
 			starts.forEach((start, k) => {
-				const node = owners.get(start)!;
+				const from = exact.solver.ctx.layout.offset[owners.get(start)!];
 				const end = k + 1 < starts.length ? starts[k + 1] : layout.compactSlots;
-				const q = compact.solver.ctx.compactRegret![layout.compactChunk![node]];
-				const from = exact.solver.ctx.layout.offset[node];
 				for (let i = 0; i < end - start; i++) {
-					expect(q[start + i]).toBe(exact.solver.ctx.regret[from + i]);
+					if (Math.abs(q[start + i] - regret[from + i]) > tolerance * largest) differ++;
 					compared++;
 				}
 			});
 			expect(compared).toBeGreaterThan(0);
-			expect(Array.from(compact.snapshot().strategyAt(0, 0).probs)).toEqual(Array.from(exact.snapshot().strategyAt(0, 0).probs));
+			return { differ, exact: exact.snapshot().strategyAt(0, 0).probs, compact: compact.snapshot().strategyAt(0, 0).probs, engine: compact.engine };
 		} finally {
 			exact.close();
 			compact.close();
 		}
+	}
+
+	it('discounts a shared compact block once an iteration', () => {
+		// With 32-bit regrets kept, compact storage trains exactly as the
+		// 32-bit solve; shared, only if it too discounts a block once.
+		const js = compactAgainstExact({ engine: 'js' }, {}, 0);
+		expect(js.engine).toBe('js');
+		expect(js.differ).toBe(0);
+		expect(Array.from(js.compact)).toEqual(Array.from(js.exact));
+	});
+
+	it.runIf(engineAvailable())('discounts a shared compact block once an iteration on the WebAssembly engine', () => {
+		// The storage engine against the 32-bit WebAssembly one, both float32.
+		const wasm = compactAgainstExact({}, { wasmStorage }, 1e-4);
+		expect(wasm.engine).toBe('wasm');
+		expect(wasm.differ).toBe(0);
+		for (let i = 0; i < wasm.exact.length; i++) expect(wasm.compact[i]).toBeCloseTo(wasm.exact[i], 4);
 	});
 
 	it('gives the same answer on threads', () => {
