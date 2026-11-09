@@ -1,5 +1,7 @@
 # napkinpoker reference solves
 
+> **The fixtures are not in this repository.** Their ranges come from course material and this repository is public, so the files (`spots/`, `cards.json`, `flop.jsonl.gz`, `turn.jsonl.gz`) live in the private napkinpoker repository at `tools/bench/flopsolve/reference/` (#119, napkinpoker#139). `../napkinpoker.ts` finds them in a napkinpoker checkout beside this repository, or at `NAPKIN_REFERENCE`. Without them, the tests that need them skip and the bench scripts stop with a message saying where to point.
+
 Seventy flops solved flop → river by an independent solver, imported as fixtures for scoring approximations on every board texture (issue #87). Load them with `../napkinpoker.ts`.
 
 ## Where they come from

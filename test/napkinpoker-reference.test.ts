@@ -9,7 +9,7 @@ import { COMBO_CARDS, COMBOS, parseCards } from '../src/cards.ts';
 import { defineSpot } from '../src/index.ts';
 import type { Spot } from '../src/index.ts';
 import { parseRange } from '../src/range.ts';
-import { napkinNodes, napkinSpots, nodeAt, pairActions, weightsOf } from '../bench/reference/napkinpoker.ts';
+import { napkinAvailable, napkinNodes, napkinSpots, nodeAt, pairActions, weightsOf } from '../bench/reference/napkinpoker.ts';
 
 const texture = (board: string): string => {
 	const cards = board.match(/../g)!;
@@ -18,9 +18,10 @@ const texture = (board: string): string => {
 	return (suits === 1 ? 'monotone' : suits === 2 ? 'two-tone' : 'rainbow') + (paired ? ' paired' : '');
 };
 
-describe('napkinpoker reference solves', () => {
-	const spots = new Map(napkinSpots().map((s) => [s.id, s]));
-	const allNodes = [...napkinNodes('flop'), ...napkinNodes('turn')];
+describe.skipIf(!napkinAvailable())('napkinpoker reference solves', () => {
+	// The fixtures live in private napkinpoker (#119); load them only when present, since a skipped suite's body still runs.
+	const spots = new Map(napkinAvailable() ? napkinSpots().map((s) => [s.id, s]) : []);
+	const allNodes = napkinAvailable() ? [...napkinNodes('flop'), ...napkinNodes('turn')] : [];
 
 	/** Spots are built on first use, and a config that fails names its spot. */
 	const built = new Map<string, Spot>();
