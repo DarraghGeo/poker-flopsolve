@@ -32,7 +32,9 @@ export interface LiteOptions {
 	/**
 	 * Keep one raise on the turn and river, of the caller's raise size
 	 * nearest `laterSize`. Default false: a bet and no raise, as issue #85
-	 * measured. A raise nearly doubles the tree.
+	 * measured. A raise nearly doubles the tree: on issue #47's rainbow
+	 * betting 707 MiB unshared became 1375 (173 shared became 261), an
+	 * iteration cost 1.74 times as much and Node peaked at 546 MiB.
 	 */
 	readonly laterRaise?: boolean;
 	/**
@@ -176,7 +178,56 @@ function nearest(row: readonly BetSize[], target: number): BetSize[] {
  * and hand back a re-solver for later streets at the full betting.
  *
  * Defaults: `shareHistories` on the river, `runoutBuckets: 3`,
- * `chanceSampling`, and `settle` with its defaults.
+ * `chanceSampling` at p 0.35, and `settle` with its defaults (every 20
+ * iterations, under 1% of the range moved, twice running).
+ *
+ * Measured (issue #100) on issue #47's betting (0.33 / 0.75 / 1.5 pot, a
+ * 0.75 raise, all-in, three aggressions; pot 55, stack 975, the bench
+ * ranges), so the blueprint plays 0.75 and no raise on the turn and river.
+ * Headless Chromium, `poker-flopsolve/threads`; the clock counts solving
+ * and the settle checks. Root play loss is the EV OOP's root mix and IP's
+ * mix after a check lose at the unshared blueprint's per-action values
+ * (solved to 0.05% of pot), % of pot, with that blueprint's own loss as the
+ * floor; it measures what sharing, sampling and stopping early cost, not
+ * distance to the full game. Re-solve gain is the opponent's best response
+ * against a turn re-solved at the full betting (300 iterations, 'unsafe'),
+ * under the unshared blueprint's ranges, % of the subgame's pot, weighted
+ * over 3 lines × 3 turns by how often each is reached:
+ *
+ * | flop | settled | Chromium, 1 / 2 / 4 threads | peak RSS | root play loss (floor) | per-hand EV error | re-solve gain (unshared) | re-solve, 1 / 2 / 4 threads |
+ * |---|---|---|---|---|---|---|---|
+ * | As Kh 7d | 400 it | 107 / 116 / 104 s | 506 MiB | 0.023 / 0.014 (0.009 / 0.008) | 0.75 / 0.85 | 3.1 / 2.7 (0.67 / 0.50) | 42 / 25 / 12 s |
+ * | Ts 9s 4h | 320 it | 65 / 67 / 73 s | 420 MiB | 0.118 / 0.076 (0.116 / 0.052) | 0.54 / 0.60 | 4.0 / 3.3 (0.48 / 0.55) | 40 / 25 / 14 s |
+ * | Ks 9s 4s | 360 it | 34 / 33 / 34 s | 247 MiB | 0.059 / 0.037 (0.047 / 0.025) | 1.5 / 1.9 | 3.6 / 3.6 (0.44 / 0.47) | 28 / 18 / 10 s |
+ *
+ * `chanceSampling` runs on one thread whatever `workers` says, so the
+ * blueprint takes the same time on any count; threads speed the re-solves.
+ * Unsampled on 4 threads the rainbow blueprint took 473 ms an iteration
+ * against 251 sampled on one (Node), and settled later. Peak memory counts
+ * the page, the blueprint and a re-solve. The rainbow root play's loss is
+ * 0.014% of pot over its floor for OOP; `settle: { every: 40, tolerance:
+ * 0.02, patience: 3 }` brings it to 0.009 in 120 s instead of 104 (Node).
+ *
+ * Against exact solves of the full game, which separate what the turn and
+ * river simplification costs:
+ * - issue #51's T₀ on As Kh 7d (0.33 / 0.75 / 1.5 on every street, all-in
+ *   raises, two aggressions, solved to 0.22% of pot): OOP's root play lost
+ *   0.072% of pot at T₀'s per-action values, the simplified blueprint
+ *   unshared and solved to 0.04% lost 0.057; per-hand root EVs were 3.9 /
+ *   2.9% of pot off, unshared 4.1 / 3.1. Simplifying is the cost; sharing,
+ *   sampling and the stop add 0.015. T₀ stores no strategy, so there is no
+ *   floor from its own play.
+ * - napkinpoker's postflop-solver solves (issue #87; two flop sizes, 75% on
+ *   the turn and river with 3× raises and all-in, weighted BU/CO/SB ranges,
+ *   SRP and 3-bet pots, 0.3% of pot), 8 spots across textures, one thread in
+ *   Node: root play lost NAPKIN at the stored per-action values, where the
+ *   stored solve's own play lost NAPKIN_OWN; settled in NAPKIN_TIME. Wide
+ *   single-raised ranges need up to NAPKIN_MIB of storage, over a browser's
+ *   default `maxBytes`: give it room, or `compactStorage` with
+ *   `wasmStorage` (300 MiB peak on rainbow, 27% slower).
+ *
+ * `laterRaise`'s cost is on it; the trims `flopMaxRaises` and `noDonk`, and
+ * what was rejected, are in `Approximations`' notes in `index.ts`.
  */
 export function solveLite(config: SpotConfig, options: SolveLiteOptions = {}): LiteSolution {
 	const blueprint = liteConfig(config, options);
