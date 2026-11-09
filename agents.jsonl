@@ -28,5 +28,5 @@
 {"url":"https://claude.ai/code/session_014RSNFj254FUykZxvNmtuFr","title":"Layout offsets overflow Int32 on trees over 2^31 slots (the target spot T)","issue":58,"state":"active","updated":"2026-11-08T16:35:36.212Z"}
 {"url":"https://claude.ai/code/session_014RSNFkazV116ThjpbfEpLU","title":"WebAssembly engine crashes when storage passes 2 GiB (signed pointer)","issue":62,"state":"active","updated":"2026-11-08T17:11:27.986Z"}
 {"url":"https://claude.ai/code/session_014RSNFjhJxaWj7aiakLkNvQ","title":"Threaded solves still hang if a worker thread is killed outright (e.g. V8 heap OOM)","issue":59,"state":"active","updated":"2026-11-08T21:17:14.003Z"}
-{"url":null,"title":"Rainbow/phone: run i16 and compactStorage on the WebAssembly engine, and lift compactStorage's clashes","issue":84,"state":"active","updated":"2026-11-09T00:13:52.447Z"}
+{"url":"https://claude.ai/code/session_014RSNFh4jV5f8tnSVv4YvXX","title":"Rainbow/phone: run i16 and compactStorage on the WebAssembly engine, and lift compactStorage's clashes","issue":84,"state":"active","updated":"2026-11-09T00:37:32.942Z"}
 {"url":"https://claude.ai/code/session_014RSNFgR5KtzQ8KvjEvL3Ak","title":"Rainbow/phone: shareHistories on the #47 blueprint, to fit a phone on the WebAssembly engine","issue":85,"state":"active","updated":"2026-11-09T00:37:32.942Z"}
