@@ -35,7 +35,7 @@
 {"url":null,"title":"Exact reference solves on a fast local machine (napkinpoker spots + target tree on two-tone/rainbow)","issue":89,"state":"active","updated":"2026-11-09T02:15:17.021Z"}
 {"url":"https://claude.ai/code/session_014RSNFgfoqQXdN3zb91Me5w","title":"Shared compact blocks get the DCFR discount once per history instead of once per iteration","issue":93,"state":"active","updated":"2026-11-09T02:13:10.786Z"}
 {"url":"https://claude.ai/code/session_014RSNFkY5Mv8AdxxkQHPWUC","title":"Shared 16-bit blocks dither their strategy sums with the same random numbers for every history","issue":94,"state":"active","updated":"2026-11-09T02:13:10.786Z"}
-{"url":null,"title":"Multithreaded chanceSampling (it ignores workers today)","issue":99,"state":"active","updated":"2026-11-09T03:29:23.783Z"}
+{"url":"https://claude.ai/code/session_014RSNFikUS8Bq2D5diMsap9","title":"Multithreaded chanceSampling (it ignores workers today)","issue":99,"state":"active","updated":"2026-11-09T04:00:38.900Z"}
 {"url":"https://claude.ai/code/session_014RSNFhxyFB1NMuBZQY6MF9","title":"Recover turn re-solve quality from a shared blueprint (2-3% vs 0.5-0.7% of subgame pot)","issue":101,"state":"active","updated":"2026-11-09T04:00:38.900Z"}
 {"url":"https://claude.ai/code/session_014RSNFksdqupPWm88fCe8qz","title":"Scorer and combination test matrix against the napkinpoker references","issue":103,"state":"active","updated":"2026-11-09T04:00:38.900Z"}
 {"url":"https://claude.ai/code/session_014RSNFkcGPPrhBuRuFmUKjX","title":"Whole three-size tree in 1-2 GiB: diagnose the thinSizes + shareHistories stall, then find the best combination","issue":102,"state":"active","updated":"2026-11-09T04:00:38.900Z"}
