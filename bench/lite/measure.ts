@@ -18,7 +18,8 @@
  * - `RESOLVES=0`: skip the turn re-solves;
  * - `RESOLVE_ITS`: re-solve iterations to try, comma-separated (default 300);
  * - `WARM`: re-solve warm starts to try, comma-separated `off`, `0`, `bp`
- *   (DCFR count from 0, or from the blueprint's) (default `off`).
+ *   (DCFR count from 0, or from the blueprint's) (default `off`);
+ * - `RESOLVE_WORKERS`: threads for the re-solves (default 4).
  *
  * The clock counts solving only (`step`); every 10 iterations, off the clock,
  * it reads the root play (`rootPlay`), and every 50 the exploitability. At the
@@ -53,6 +54,7 @@ const RULE = process.env.RULE ?? '20:0.01:2';
 const RESOLVES = process.env.RESOLVES !== '0';
 const RESOLVE_ITS = (process.env.RESOLVE_ITS ?? '300').split(',').map(Number);
 const WARM = (process.env.WARM ?? 'off').split(',');
+const RESOLVE_WORKERS = Number(process.env.RESOLVE_WORKERS ?? 4);
 const MiB = 2 ** 20;
 const STEP = 10;
 
@@ -296,7 +298,7 @@ for (const key of keys) {
 			const g = ([0, 1] as const).map((player) => {
 				const t = performance.now();
 				const resolved = resolveSubgame(bp, node, board, {
-					player, gadget: 'unsafe', betting: later, iterations, solve: { workers: WORKERS },
+					player, gadget: 'unsafe', betting: later, iterations, solve: { workers: RESOLVE_WORKERS },
 					...(warm === 'off' ? {} : { warmStart: { iteration: warm === 'bp' ? bp.totalIterations : Number(warm) } }),
 				});
 				seconds.push((performance.now() - t) / 1000);
