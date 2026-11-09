@@ -16,9 +16,10 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { createRun, defineSpot, resolveSubgame } from '../../src/index.ts';
+import { createRun, defineSpot, litePreset, resolveSubgame, trackSettle } from '../../src/index.ts';
 import type { Solution, SolveOptions, SpotConfig } from '../../src/index.ts';
-import { wasmStorage } from '../../src/wasm-storage.ts';
+import { largeTree, wasmStorage } from '../../src/wasm-storage.ts';
+import { settlePlan } from '../../src/settle.ts';
 import { napkinSpots } from './napkinpoker.ts';
 import { locate, scoreSolution, scoreSubgame, storedNodes, summarise } from './score.ts';
 import type { NodeScore } from './score.ts';
@@ -30,6 +31,12 @@ interface Variant {
 	readonly resolve?: boolean;
 	/** Iterations as a multiple of the exact solve's, for an option whose iterations are cheaper. */
 	readonly scale?: number;
+	/**
+	 * A preset (issue #115): the spot and solve settings it makes of the
+	 * spot's own. `settle` from it stops the run (checked every 20
+	 * iterations, capped at `scale` times the exact solve's iterations).
+	 */
+	readonly preset?: (config: SpotConfig) => { config: SpotConfig; solve: SolveOptions };
 }
 
 const sampling: SolveOptions = { approximations: { chanceSampling: {} } };
@@ -56,6 +63,22 @@ export const VARIANTS: Record<string, Variant> = {
 	'shareHistories+compactStorage': { config: { shareHistories: true, compactStorage: {} }, solve: { wasmStorage } },
 	'thinSizes+shareHistories': { config: { thinSizes: true, shareHistories: true } },
 	'lineRunouts+runoutBuckets': { config: { lineRunouts: { aggressions: 2 }, runoutBuckets: 3 } },
+	// The presets (issue #115), as a caller gets them. Lite stops on its own
+	// rule; the large-tree preset samples, so it gets sampling's 4×.
+	litePreset: {
+		preset: (config) => {
+			const { config: blueprint, options } = litePreset(config);
+			return { config: blueprint, solve: options };
+		},
+		scale: 10,
+	},
+	largeTree: {
+		preset: (config) => {
+			const { config: thinned, options } = largeTree(config);
+			return { config: thinned, solve: options };
+		},
+		scale: 4,
+	},
 };
 
 /** The blueprint `resolveSubgame` refines: the flop as it is, one 75% bet on the turn and river. */
@@ -85,11 +108,24 @@ function main(): void {
 		const variant = VARIANTS[name];
 		if (!variant) throw new Error(`no variant ${name}`);
 		const base = { ...napkin.config, maxBytes: 1e13 };
-		const config: SpotConfig = { ...(variant.resolve ? blueprintOf(base) : base), ...variant.config };
+		const given: SpotConfig = { ...(variant.resolve ? blueprintOf(base) : base), ...variant.config };
+		const preset = variant.preset?.(given);
+		const config = preset?.config ?? given;
+		const { settle, iterations: _cap, ...presetSolve } = preset?.solve ?? {};
 		const start = performance.now();
 		const spot = defineSpot(config);
-		const run = createRun(spot, { workers: 4, ...variant.solve });
-		run.step(Math.round(iterations * (variant.scale ?? 1)));
+		const run = createRun(spot, { workers: 4, ...variant.solve, ...presetSolve });
+		const cap = Math.round(iterations * (variant.scale ?? 1));
+		if (settle) {
+			const tracker = trackSettle(settle);
+			const { every } = settlePlan(settle);
+			// As solve()'s settle loop: a short last step is not a check.
+			while (run.completed < cap) {
+				const step = Math.min(every, cap - run.completed);
+				run.step(step);
+				if (step === every && tracker.check(run.snapshot(), run.completed)) break;
+			}
+		} else run.step(cap);
 		const solveSeconds = (performance.now() - start) / 1000;
 		const exploitability = run.exploitabilityPercent();
 		const trueExploitability = variant.resolve ? Number.NaN : run.trueExploitabilityPercent();
@@ -100,7 +136,7 @@ function main(): void {
 			iterations: run.completed,
 			workers: run.workers,
 			engine: run.engine,
-			bytes: spot.estimate.compactBytes ?? (variant.solve?.precision === 'i16' ? spot.estimate.compressedBytes : spot.estimate.bytes),
+			bytes: spot.estimate.compactBytes ?? ((presetSolve.precision ?? variant.solve?.precision) === 'i16' ? spot.estimate.compressedBytes : spot.estimate.bytes),
 			solveSeconds,
 			exploitability,
 			trueExploitability,

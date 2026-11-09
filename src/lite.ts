@@ -16,6 +16,8 @@ import { parseCards } from './cards.ts';
 import type { SamplingOptions } from './cfr.ts';
 import type { ShareHistories, Solution, SolveOptions, SpotConfig, SubgameBetting } from './index.ts';
 import { defineSpot, solve } from './index.ts';
+import type { PresetChanges, SettingChange } from './presets.ts';
+import { presetChanges, samplingNote } from './presets.ts';
 import type { ResolvedSubgame, ResolveOptions } from './resolve.ts';
 import { resolveSubgame } from './resolve.ts';
 import type { SettleOptions } from './settle.ts';
@@ -51,7 +53,18 @@ export interface LiteOptions {
 	readonly noDonk?: boolean;
 	/** `SpotConfig.runoutBuckets` for the blueprint. Default 3. */
 	readonly runoutBuckets?: number;
-	/** `SpotConfig.shareHistories` for the blueprint. Default true, the river. */
+	/**
+	 * `SpotConfig.shareHistories` for the blueprint. Default true, the river.
+	 *
+	 * To make turn re-solves trustworthy again, keep the most-reached flop
+	 * lines unshared within a memory budget: `{ keepLines: linesWithin(pick,
+	 * budget, { config: liteConfig(spot), precision }) }`, where `pick` is a
+	 * short solve of a cheap copy (see `linesWithin`). On As Kh 7d at 16 bits
+	 * a 150 MiB budget kept 3 lines, peaked at 392 MiB in Chromium on 4
+	 * threads, and cut a re-solved turn's best-response gain from 3.1 / 2.7%
+	 * of the subgame pot to 1.47 / 0.92 (0.67 / 0.50 unshared; issue #101).
+	 * Choosing the budget for you is issue #113.
+	 */
 	readonly shareHistories?: boolean | ShareHistories;
 }
 
@@ -76,6 +89,16 @@ export interface LiteResolveOptions extends Omit<ResolveOptions, 'betting'> {
 	readonly betting?: SubgameBetting;
 }
 
+/** What {@link litePreset} returns: the blueprint spot and the solve's settings, and what they changed. */
+export interface LitePreset {
+	/** The blueprint spot (`liteConfig`'s). */
+	readonly config: SpotConfig;
+	/** The blueprint solve's settings: `iterations`, `settle`, sampling and the solve options given. */
+	readonly options: SolveOptions;
+	/** Everything the preset changed against the caller's spot. */
+	readonly changes: PresetChanges;
+}
+
 /** What {@link solveLite} returns. */
 export interface LiteSolution {
 	/** The blueprint's solution. */
@@ -84,6 +107,13 @@ export interface LiteSolution {
 	readonly blueprint: SpotConfig;
 	/** The caller's spot, full betting. */
 	readonly source: SpotConfig;
+	/**
+	 * What the blueprint changed against `source`: the sizes cut on each
+	 * street (the flop's own only with `flopMaxRaises`), the streets
+	 * simplified, and the sharing, buckets, sampling and stop rule switched
+	 * on. `resolve` puts the cut sizes back below the node it re-solves.
+	 */
+	readonly changes: PresetChanges;
 	/**
 	 * Re-solve the subgame at a node opening the turn or river, at the
 	 * caller's full betting for the streets from there, the caller's cuts
@@ -238,18 +268,12 @@ function nearest(row: readonly BetSize[], target: number): BetSize[] {
  *   ranges, so it is the caller's to set.
  *
  * `laterRaise`'s cost is on it; the trims `flopMaxRaises` and `noDonk`, and
- * what was rejected, are in `Approximations`' notes in `index.ts`.
+ * what was rejected, are in docs/APPROXIMATIONS.md.
  */
 export function solveLite(config: SpotConfig, options: SolveLiteOptions = {}): LiteSolution {
-	const blueprint = liteConfig(config, options);
-	const sampling = options.sampling === undefined ? {} : options.sampling;
-	const settle = options.settle === undefined ? {} : options.settle;
-	const solution = solve(defineSpot(blueprint), {
-		iterations: options.iterations ?? 2000,
-		...(settle ? { settle } : {}),
-		...(sampling ? { approximations: { chanceSampling: sampling } } : {}),
-		...pick(options, ['workers', 'precision', 'wasmStorage', 'algorithm', 'onProgress', 'targetPercent']),
-	});
+	const preset = litePreset(config, options);
+	const blueprint = preset.config;
+	const solution = solve(defineSpot(blueprint), preset.options);
 	const subgameSolve = pick(options, ['workers', 'precision', 'wasmStorage']);
 	const { tree } = solution.spot;
 	const scale = solution.spot.chipScale;
@@ -257,6 +281,7 @@ export function solveLite(config: SpotConfig, options: SolveLiteOptions = {}): L
 		solution,
 		blueprint,
 		source: config,
+		changes: preset.changes,
 		resolve(node, board, resolveOptions) {
 			const round = tree.round[node];
 			// The caller's cuts below the node, re-rooted there as `subgameAt`
@@ -279,6 +304,67 @@ export function solveLite(config: SpotConfig, options: SolveLiteOptions = {}): L
 			});
 		},
 	};
+}
+
+/**
+ * What {@link solveLite} solves, without solving it: `liteConfig`'s
+ * blueprint, the solve's settings (`iterations` 2000, `settle` at its
+ * defaults, `chanceSampling` at p 0.35, and the solve options given), and a
+ * report of everything changed against `config`. For a page that steps its
+ * own run: `createRun(defineSpot(preset.config), preset.options)`, with
+ * `trackSettle` for the stop, and `resolveSubgame` with `bettingFrom(config,
+ * round)` for the re-solves `LiteSolution.resolve` would make.
+ */
+export function litePreset(config: SpotConfig, options: SolveLiteOptions = {}): LitePreset {
+	const blueprint = liteConfig(config, options);
+	const sampling = options.sampling === undefined ? {} : options.sampling;
+	const settle = options.settle === undefined ? {} : options.settle;
+	const solveOptions: SolveOptions = {
+		iterations: options.iterations ?? 2000,
+		...(settle ? { settle } : {}),
+		...(sampling ? { approximations: { chanceSampling: sampling } } : {}),
+		...pick(options, ['workers', 'precision', 'wasmStorage', 'algorithm', 'onProgress', 'targetPercent']),
+	};
+
+	// Each setting compared by what it does, so equivalent spellings
+	// (unset and false, true and a gap of 1) are no change.
+	const settings: SettingChange[] = [];
+	const notes: string[] = [];
+	const change = (setting: string, from: unknown, to: unknown, note: string): void => {
+		settings.push({ setting, from, to });
+		notes.push(`${setting}: ${note}`);
+	};
+	const rounds = 6 - parseCards(config.board).length;
+	const streets = ['flop', 'turn', 'river'].slice(3 - rounds);
+	const donks = (value: SpotConfig['noDonk']): boolean[] => perRound(value ?? false, Array.isArray(value), rounds, 'noDonk');
+	const [donkFrom, donkTo] = [donks(config.noDonk), donks(blueprint.noDonk)];
+	if (donkFrom.join() !== donkTo.join()) {
+		const on = streets.filter((_, r) => donkTo[r]);
+		change('noDonk', config.noDonk, blueprint.noDonk, on.length
+			? `donk bets forbidden on the ${on.join(' and ')}, a speed trim that changes the game`
+			: 'donk bets allowed on every street');
+	}
+	const gap = (value: SpotConfig['runoutBuckets']): number => (value === true ? 1 : typeof value === 'number' ? value : 0);
+	if (gap(config.runoutBuckets) !== gap(blueprint.runoutBuckets)) {
+		const to = gap(blueprint.runoutBuckets);
+		change('runoutBuckets', config.runoutBuckets, blueprint.runoutBuckets, to > 0
+			? `gap ${to}: turn and river cards that play alike are solved once (approximate; folds nothing on ranges with no rank symmetry)`
+			: 'off: every turn and river card solved');
+	}
+	const sharing = (value: SpotConfig['shareHistories']): string => JSON.stringify(value === true ? {} : value || null);
+	if (sharing(config.shareHistories) !== sharing(blueprint.shareHistories)) {
+		const kept = typeof blueprint.shareHistories === 'object' ? (blueprint.shareHistories.keepLines?.length ?? 0) : 0;
+		change('shareHistories', config.shareHistories, blueprint.shareHistories, blueprint.shareHistories
+			? `lines that meet share river storage${kept ? `, but for ${kept} line${kept > 1 ? 's' : ''} kept apart` : ''} (approximate: exploitability plateaus a few % of pot from equilibrium; read the root play)`
+			: 'off: every line stores its own river');
+	}
+	const dropped = (config.removeActions?.length ?? 0) - (blueprint.removeActions?.length ?? 0);
+	if (dropped > 0) {
+		change('removeActions', config.removeActions, blueprint.removeActions, `${dropped} line${dropped > 1 ? 's' : ''} below a deal or past the flop cap left out of the blueprint; resolve puts those below a deal back`);
+	}
+	if (sampling) change('approximations.chanceSampling', undefined, sampling, samplingNote(sampling));
+	if (settle) change('settle', undefined, settle, 'stops once the root play stops moving, not at an exploitability target');
+	return { config: blueprint, options: solveOptions, changes: presetChanges(config, blueprint, settings, notes) };
 }
 
 /** Only the listed keys of `from` that are set. */

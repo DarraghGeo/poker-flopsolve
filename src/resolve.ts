@@ -77,6 +77,13 @@ export interface ResolveOptions {
 	 * reference's ranges an opponent gained less against it than against any
 	 * safe gadget, because most of a re-solve's error is the refined
 	 * player's own range at the node, which no gadget changes.
+	 *
+	 * @deprecated since 0.5.0 (issue #115): the safe gadgets ('resolve',
+	 * 'maxmargin', 'reach-maxmargin') measured worse than plain re-solving,
+	 * 4.2–6.2% of the subgame pot to an opponent's best response against
+	 * 3.5–4%. Leave it unset ('unsafe'). To make re-solves from a shared
+	 * blueprint trustworthy, keep the busiest lines unshared
+	 * (`ShareHistories.keepLines` with `linesWithin`).
 	 */
 	readonly gadget?: Gadget;
 	/** The subgame's betting; unset, the blueprint's carries over. */
@@ -85,6 +92,9 @@ export interface ResolveOptions {
 	 * What each opponent hand is guaranteed: its best response to the
 	 * blueprint below the node ('best-response', the default and the safe
 	 * choice), or its value under the blueprint ('blueprint').
+	 *
+	 * @deprecated since 0.5.0 (issue #115): only the deprecated safe gadgets
+	 * read it. Leave it unset.
 	 */
 	readonly values?: 'best-response' | 'blueprint';
 	/**
