@@ -1,18 +1,24 @@
 /**
- * Does seeding a lite solve with napkinpoker's flop play make it settle sooner?
+ * Does seeding a lite solve with an outside strategy make it settle sooner?
  *
- *   node --import tsx bench/lite/warm-napkin.ts <spot ids,...> <variants,...> [workers]
+ *   node --import tsx bench/lite/warm-napkin.ts <root-play.json> <variants,...> [workers]
+ *
+ * Keep the file outside this public repository when its ranges are private:
+ * napkinpoker writes it to its own tools/bench/flopsolve/out/.
+ *
+ * The strategy comes in as data, not code: `root-play.json` is what
+ * napkinpoker's `tools/bench/flopsolve/export-root-play.mjs` writes, per spot
+ * id a list of nodes, each `{ path, player, actions: [{ action, amount }],
+ * shares: { combo: [share per action] } }`. Any engine can write one.
  *
  * Variants: `cold` (litePreset as is), `r<c>` (before the first iteration,
- * the regrets of OOP at the root and of IP after a check are set to
- * c × pot × napkinpoker's share of each action, so regret matching plays
- * napkinpoker's mix there). Nothing else is seeded: the rest of the tree, the
- * turn and the river start cold. IP's napkinpoker play is computed against
- * OOP's checking range as napkinpoker itself plays it.
+ * each given node's regrets are set to c × pot × the given share of each
+ * action, so regret matching plays that mix there). Nothing else is seeded.
  *
  * Each run is stepped and stopped exactly as solveLite stops (trackSettle with
  * the preset's settle options), and its root play is scored as napkin.ts
- * scores it: loss at the stored solve's per-action EVs, % of pot.
+ * scores it: loss at the stored solve's per-action EVs, % of pot. The given
+ * play is scored the same way.
  */
 
 import { readFileSync } from 'node:fs';
@@ -22,12 +28,11 @@ import { comboIndex, parseCard } from '../../src/cards.ts';
 import { ActionKind } from '../../src/tree.ts';
 import { REGRET_STEPS, writeBlock } from '../../src/warm.ts';
 import { rootPlayNodes } from '../../src/settle.ts';
-import { matchLabel, napkinDir, napkinNodes, napkinSpots, nodeAt } from '../reference/napkinpoker.ts';
-// @ts-expect-error plain JavaScript from the sibling checkout
-import { approxEV } from '../../../napkinpoker/src/index.js';
+import { matchLabel, napkinNodes, napkinSpots, nodeAt } from '../reference/napkinpoker.ts';
 
-const [idArg, variantArg, workerArg] = process.argv.slice(2);
-const ids = idArg.split(',');
+const [seedArg, variantArg, workerArg] = process.argv.slice(2);
+const given: { id: string; nodes: { path: string[]; player: number; actions: unknown[]; shares: Record<string, number[]> }[] }[] =
+	JSON.parse(readFileSync(seedArg, 'utf8'));
 const variants = variantArg.split(',');
 const workers = Number(workerArg ?? 4);
 const flop = napkinNodes('flop');
@@ -48,31 +53,13 @@ function napkinShares(spotTree: Solution['spot']['tree'], node: number, result: 
 		return edge;
 	});
 	const shares: Shares = new Map();
-	result.names.forEach((name: string, i: number) => {
+	for (const [name, given] of Object.entries(result.shares as Record<string, number[]>)) {
 		const combo = comboIndex(parseCard(name.slice(0, 2)), parseCard(name.slice(2, 4)));
 		const row = new Array(edges.length).fill(0);
-		result.actions.forEach((_: unknown, k: number) => (row[edgeOf[k] - spotTree.firstEdge[node]] += result.strategy[k][i]));
+		given.forEach((share, k) => (row[edgeOf[k] - spotTree.firstEdge[node]] += share));
 		shares.set(combo, row);
-	});
+	}
 	return shares;
-}
-
-function rangeString(weights: Map<string, number>): string {
-	return [...weights].filter(([, w]) => w > 1e-6).map(([c, w]) => `${c}:${+w.toFixed(5)}`).join(',');
-}
-
-/** napkinpoker's OOP root play and IP's play after OOP's check (against OOP's napkin checking range). */
-function napkinPlay(stored: any) {
-	const oop = approxEV({ board: stored.board, hero: stored.oop, villain: stored.ip, pot: stored.pot, stack: stored.stack, facing: 0, ip: false });
-	const check = oop.actions.findIndex((a: any) => a.action === 'check');
-	const oopWeights = new Map<string, number>(stored.oop.split(',').map((s: string) => [s.split(':')[0], Number(s.split(':')[1] ?? 1)]));
-	const checking = new Map<string, number>();
-	oop.names.forEach((name: string, i: number) => checking.set(name, (oopWeights.get(name) ?? 0) * oop.strategy[check][i]));
-	const ip = approxEV({
-		board: stored.board, hero: stored.ip, villain: rangeString(checking), pot: stored.pot, stack: stored.stack, facing: 0, ip: true,
-		line: [[{ player: 0, kind: 'X', amount: 0 }]],
-	});
-	return [oop, ip];
 }
 
 /** Set the regrets at `node` so regret matching plays `shares`, at c × pot. */
@@ -159,16 +146,16 @@ function napkinLoss(sol: Solution, id: string, pot: number, shares: Shares[]): n
 }
 
 const all = napkinSpots();
-for (const id of ids) {
+for (const { id, nodes: givenNodes } of given) {
 	const s = all.find((x) => x.id === id)!;
-	const stored = JSON.parse(readFileSync(`${napkinDir()}/spots/${id}.json`, 'utf8'));
 	const preset = litePreset({ ...s.config, maxBytes: 3 * 2 ** 30 }, { workers });
 	const spot = defineSpot(preset.config);
-	const t0 = performance.now();
-	const play = napkinPlay(stored);
-	const napkinSeconds = (performance.now() - t0) / 1000;
 	const nodes = rootPlayNodes({ spot } as Solution);
-	const shares = nodes.map((node, d) => napkinShares(spot.tree, node, play[d]));
+	const shares = nodes.map((node, d) => {
+		const at = givenNodes.find((n) => n.path.join() === (d === 0 ? '' : 'X'));
+		if (!at || nodeAt(spot, at.path).node !== node) throw new Error(`${id}: no given play at node ${node}`);
+		return napkinShares(spot.tree, node, at);
+	});
 	for (const variant of variants) {
 		const run = createRun(spot, preset.options);
 		if (variant !== 'cold' && !variant.startsWith('cold')) {
@@ -194,7 +181,7 @@ for (const id of ids) {
 		run.close();
 		console.log(JSON.stringify({
 			id, potType: s.potType, board: s.config.board, variant, iterations: done, seconds: +seconds.toFixed(1),
-			loss: loss.map((x) => +x.toFixed(4)), napkinLoss: napkin.map((x) => +x.toFixed(4)), napkinSeconds: +napkinSeconds.toFixed(1), trail: trail.join(' '),
+			loss: loss.map((x) => +x.toFixed(4)), napkinLoss: napkin.map((x) => +x.toFixed(4)), trail: trail.join(' '),
 		}));
 	}
 }
