@@ -6,7 +6,7 @@
  *
  * Every variant runs as many iterations as the exact solve took to 0.3% of
  * pot in `cross-check.ts` (`results/cross-check-<id>.json`; 200 without
- * one), on 4 threads (chance sampling: 1, which is all it runs on). So each
+ * one), on 4 threads. So each
  * number is the cost of the option at equal iterations, not equal time; the
  * seconds are there to show what it buys. Writes `results/options-<id>.json`.
  *
@@ -41,8 +41,9 @@ export const VARIANTS: Record<string, Variant> = {
 	thinSizes: { config: { thinSizes: true } },
 	runoutBuckets: { config: { runoutBuckets: 3 } },
 	chanceSampling: { solve: sampling },
-	// Its iterations take about half the time of 4 exact threads: twice as many is about equal time.
+	// Its iterations take about a fifth of the time of exact ones on 4 threads (#99).
 	'chanceSampling, 2× iterations': { solve: sampling, scale: 2 },
+	'chanceSampling, 4× iterations': { solve: sampling, scale: 4 },
 	coarseStart: { solve: { approximations: { coarseStart: { iterations: 40 } } } },
 	lineRunouts: { config: { lineRunouts: { aggressions: 2 } } },
 	i16: { solve: { precision: 'i16', wasmStorage } },

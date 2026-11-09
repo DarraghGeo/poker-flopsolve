@@ -867,9 +867,10 @@ spots. Root is OOP at the flop root / IP after a check.
 | `thinSizes` (15 of 61 nodes cut) | 0.74× | 0.66× | 0.067 / 0.294 | 0.084 | 0.048 | 0.22% in its own tree |
 | `thinSizes` + `shareHistories` | 0.35× | 0.72× | 0.071 / 0.288 | 0.084 | 0.049 | 2.07% in its own tree |
 | `lineRunouts: { aggressions: 2 }` | 0.73× | 1.65× | 0.097 / 0.072 | 0.251 | 0.234 | 5.94% |
-| `chanceSampling`, one thread | 1.00× | 0.54× | 0.171 / 0.172 | 0.130 | 0.397 | 8.64% |
-| the same, twice the iterations | 1.00× | 1.04× | 0.086 / 0.082 | 0.052 | 0.093 | 2.23% |
-| `shareHistories` + `chanceSampling` | 0.40× | 0.67× | 0.128 / 0.122 | 0.091 | 0.273 | 8.30% |
+| `chanceSampling` | 1.00× | 0.21× | 0.171 / 0.172 | 0.130 | 0.397 | 8.64% |
+| the same, 2× the iterations | 1.00× | 0.38× | 0.086 / 0.086 | 0.052 | 0.093 | 2.26% |
+| the same, 4× the iterations | 1.00× | 0.69× | 0.057 / 0.056 | 0.030 | 0.033 | 0.60% |
+| `shareHistories` + `chanceSampling` | 0.40× | 0.21× | 0.128 / 0.122 | 0.090 | 0.274 | 8.30% |
 | blueprint + `resolveSubgame` | 0.59× | 0.68× with the re-solves | 0.062 / 0.073 | 0.057 | 0.107; re-solved 0.053 | — |
 | `runoutBuckets: 3`, `coarseStart`, and their pairs | as without them | | | | | |
 
@@ -882,9 +883,10 @@ spots. Root is OOP at the flop root / IP after a check.
   it cut are left out, so those means understate its cost.
 - **`lineRunouts` costs on the flop.** Its coarse runouts on two-aggression lines move flop
   play by 0.25% of pot.
-- **`chanceSampling` runs on one thread, and four exact threads beat it here.** At equal
-  wall time against those four threads it still loses about 0.03% of pot more at the
-  root. Single-threaded, as in the table under Chance sampling, it is the faster choice.
+- **`chanceSampling` wins on time.** On four threads its iterations cost a fifth of exact
+  ones. At equal iterations it is far from settled, but at four times the iterations, in
+  0.69× the exact solve's time, its root, flop and turn play match the exact solve's, though
+  it is 0.60% of pot exploitable against 0.27%.
 - **`resolveSubgame`:** the blueprint here keeps the flop's betting and gives the turn and
   river one 75% bet, with no raise or shove there. Re-solving each stored turn with the
   full betting (200 iterations) halves the blueprint's turn loss, to 0.053% of pot

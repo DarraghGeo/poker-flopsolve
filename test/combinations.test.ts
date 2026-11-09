@@ -190,8 +190,8 @@ describe.runIf(engineAvailable())('opt-in options in pairs', () => {
 			// wasmStorage is what moves compact storage onto the engine: no off value there.
 			if (other.name === 'wasmStorage i16' && option.name === 'compactStorage') continue;
 			it(`${option.name} beside ${other.name} off: identical to ${option.name} alone`, () => {
-				// Sampling always runs on one thread, and keeps its baselines even at p = 1.
-				const workers = other.name === 'chanceSampling' ? 1 : 2;
+				// Sampling keeps its baselines even at p = 1: compare the arrays both keep.
+				const workers = 2;
 				const by = solveWith([option], workers);
 				const off = solveWith([option, { name: `${other.name} off`, ...other.off }], workers);
 				const names = off.storage.map(([n]) => n);

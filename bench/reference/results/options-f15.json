@@ -4,7 +4,7 @@
 		"workers": 4,
 		"engine": "wasm",
 		"bytes": 955138680,
-		"solveSeconds": 81.751490621,
+		"solveSeconds": 87.505292881,
 		"exploitability": 0.276057676236436,
 		"trueExploitability": 0.276057676236436,
 		"rootOop": {
@@ -151,31 +151,31 @@
 	},
 	"chanceSampling": {
 		"iterations": 140,
-		"workers": 1,
+		"workers": 4,
 		"engine": "wasm",
 		"bytes": 955138680,
-		"solveSeconds": 44.622952914000024,
-		"exploitability": 9.00189372461439,
-		"trueExploitability": 9.00189372461439,
+		"solveSeconds": 19.291559657,
+		"exploitability": 9.007642266711317,
+		"trueExploitability": 9.007642266711317,
 		"rootOop": {
-			"loss": 0.3010311660737941,
+			"loss": 0.30104929243515577,
 			"ref": 0.06176564340070271
 		},
 		"rootIp": {
-			"loss": 0.2678648427852604,
+			"loss": 0.26770227074176417,
 			"ref": 0.10868029559390778
 		},
 		"flop": {
 			"nodes": 8,
-			"loss": 0.20951058308907392,
+			"loss": 0.20938303712490675,
 			"refLoss": 0.049132046576501776,
-			"handDiff": 0.16466225488671155
+			"handDiff": 0.1645785363885557
 		},
 		"turn": {
 			"nodes": 12,
-			"loss": 0.365207963552392,
+			"loss": 0.365675304953035,
 			"refLoss": 0.02483984130690231,
-			"handDiff": 0.34483694001034615
+			"handDiff": 0.3452414929977632
 		},
 		"missing": 0
 	},
@@ -773,31 +773,31 @@
 	},
 	"shareHistories+chanceSampling": {
 		"iterations": 140,
-		"workers": 1,
+		"workers": 4,
 		"engine": "wasm",
 		"bytes": 377140952,
-		"solveSeconds": 45.24155914500007,
-		"exploitability": 7.8911011935653566,
-		"trueExploitability": 7.8911011935653566,
+		"solveSeconds": 17.569806263000007,
+		"exploitability": 7.903922320035972,
+		"trueExploitability": 7.903922320035972,
 		"rootOop": {
-			"loss": 0.2038669855577977,
+			"loss": 0.20461785466157534,
 			"ref": 0.06176564340070271
 		},
 		"rootIp": {
-			"loss": 0.18415454264655248,
+			"loss": 0.18547606515435103,
 			"ref": 0.10868029559390778
 		},
 		"flop": {
 			"nodes": 8,
-			"loss": 0.13211005138215356,
+			"loss": 0.13188355145436784,
 			"refLoss": 0.049132046576501776,
-			"handDiff": 0.08845901705920216
+			"handDiff": 0.08817069681996326
 		},
 		"turn": {
 			"nodes": 12,
-			"loss": 0.22788347889312088,
+			"loss": 0.229521061690989,
 			"refLoss": 0.02483984130690231,
-			"handDiff": 0.21039973978015483
+			"handDiff": 0.21195443725152188
 		},
 		"missing": 0
 	},
@@ -893,31 +893,61 @@
 	},
 	"chanceSampling, 2× iterations": {
 		"iterations": 280,
-		"workers": 1,
+		"workers": 4,
 		"engine": "wasm",
 		"bytes": 955138680,
-		"solveSeconds": 86.12277628999999,
-		"exploitability": 2.4564883606940517,
-		"trueExploitability": 2.4564883606940517,
+		"solveSeconds": 32.900122223,
+		"exploitability": 2.4620627125326653,
+		"trueExploitability": 2.4620627125326653,
 		"rootOop": {
-			"loss": 0.1062587869923205,
+			"loss": 0.10613736845946625,
 			"ref": 0.06176564340070271
 		},
 		"rootIp": {
-			"loss": 0.14680259403174944,
+			"loss": 0.14655571300533413,
 			"ref": 0.10868029559390778
 		},
 		"flop": {
 			"nodes": 8,
-			"loss": 0.08496740673319692,
+			"loss": 0.08490693321260638,
 			"refLoss": 0.049132046576501776,
-			"handDiff": 0.0382280309706235
+			"handDiff": 0.038219440402952096
 		},
 		"turn": {
 			"nodes": 12,
-			"loss": 0.08154225522723292,
+			"loss": 0.08160744454639116,
 			"refLoss": 0.02483984130690231,
-			"handDiff": 0.06082960262909969
+			"handDiff": 0.0608810560433683
+		},
+		"missing": 0
+	},
+	"chanceSampling, 4× iterations": {
+		"iterations": 560,
+		"workers": 4,
+		"engine": "wasm",
+		"bytes": 955138680,
+		"solveSeconds": 60.485968983999996,
+		"exploitability": 0.6088889272869571,
+		"trueExploitability": 0.6088889272869571,
+		"rootOop": {
+			"loss": 0.05301442371669398,
+			"ref": 0.06176564340070271
+		},
+		"rootIp": {
+			"loss": 0.111096066430328,
+			"ref": 0.10868029559390778
+		},
+		"flop": {
+			"nodes": 8,
+			"loss": 0.05098676553619809,
+			"refLoss": 0.049132046576501776,
+			"handDiff": 0.011695535697427527
+		},
+		"turn": {
+			"nodes": 12,
+			"loss": 0.031063696725406723,
+			"refLoss": 0.02483984130690231,
+			"handDiff": 0.011216697636587974
 		},
 		"missing": 0
 	}

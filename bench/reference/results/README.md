@@ -19,22 +19,23 @@ EV lost at the stored per-action EVs, % of the node pot, at as many iterations a
 | Option | Spots | Iterations | Storage vs exact | Time vs exact | Nodes not in its tree | Root loss OOP / IP | Flop nodes | Turn nodes | Re-solved turns | True exploitability, % of pot |
 |---|---|---|---|---|---|---|---|---|---|---|
 | exact | 3 | 1.0× | 1.00× | 1.00× | 0 of 61 | 0.059 / 0.054 | 0.030 | 0.031 | — | 0.27 |
-| shareHistories | 3 | 1.0× | 0.40× | 1.00× | 0 of 61 | 0.061 / 0.068 | 0.034 | 0.041 | — | 1.89 |
-| compactStorage | 3 | 1.0× | 0.37× | 1.37× | 0 of 61 | 0.063 / 0.080 | 0.045 | 0.039 | — | 0.63 |
-| thinSizes | 3 | 1.0× | 0.74× | 0.66× | 15 of 61 | 0.067 / 0.294 | 0.084 | 0.048 | — | 0.22 |
-| runoutBuckets | 3 | 1.0× | 1.00× | 1.00× | 0 of 61 | 0.059 / 0.054 | 0.030 | 0.031 | — | 0.27 |
-| chanceSampling | 3 | 1.0× | 1.00× | 0.54× | 0 of 61 | 0.171 / 0.172 | 0.130 | 0.397 | — | 8.64 |
-| coarseStart | 3 | 1.0× | 1.00× | 1.00× | 0 of 61 | 0.059 / 0.054 | 0.030 | 0.031 | — | 0.27 |
-| lineRunouts | 3 | 1.0× | 0.73× | 1.65× | 0 of 61 | 0.097 / 0.072 | 0.251 | 0.234 | — | 5.94 |
-| i16 | 3 | 1.0× | 0.52× | 1.16× | 0 of 61 | 0.059 / 0.067 | 0.033 | 0.035 | — | 0.37 |
-| resolveSubgame | 3 | 1.0× | 0.59× | 0.68× | 0 of 61 | 0.062 / 0.073 | 0.057 | 0.107 | 0.053 | — |
-| runoutBuckets+i16 | 3 | 1.0× | 0.52× | 1.14× | 0 of 61 | 0.059 / 0.067 | 0.033 | 0.035 | — | 0.37 |
-| runoutBuckets+resolveSubgame | 3 | 1.0× | 0.59× | 0.70× | 0 of 61 | 0.062 / 0.073 | 0.057 | 0.107 | 0.053 | — |
-| shareHistories+runoutBuckets | 3 | 1.0× | 0.40× | 1.06× | 0 of 61 | 0.061 / 0.068 | 0.034 | 0.041 | — | 1.89 |
-| shareHistories+chanceSampling | 3 | 1.0× | 0.40× | 0.67× | 0 of 61 | 0.128 / 0.122 | 0.091 | 0.273 | — | 8.30 |
-| shareHistories+compactStorage | 3 | 1.0× | 0.15× | 1.40× | 0 of 61 | 0.067 / 0.083 | 0.041 | 0.047 | — | 2.08 |
-| thinSizes+shareHistories | 3 | 1.0× | 0.35× | 0.72× | 15 of 61 | 0.071 / 0.288 | 0.084 | 0.049 | — | 2.07 |
-| lineRunouts+runoutBuckets | 3 | 1.0× | 0.73× | 1.64× | 0 of 61 | 0.097 / 0.072 | 0.251 | 0.234 | — | 5.94 |
-| chanceSampling, 2× iterations | 3 | 2.0× | 1.00× | 1.04× | 0 of 61 | 0.086 / 0.082 | 0.052 | 0.093 | — | 2.23 |
+| shareHistories | 3 | 1.0× | 0.40× | 0.96× | 0 of 61 | 0.061 / 0.068 | 0.034 | 0.041 | — | 1.89 |
+| compactStorage | 3 | 1.0× | 0.37× | 1.31× | 0 of 61 | 0.063 / 0.080 | 0.045 | 0.039 | — | 0.63 |
+| thinSizes | 3 | 1.0× | 0.74× | 0.63× | 15 of 61 | 0.067 / 0.294 | 0.084 | 0.048 | — | 0.22 |
+| runoutBuckets | 3 | 1.0× | 1.00× | 0.95× | 0 of 61 | 0.059 / 0.054 | 0.030 | 0.031 | — | 0.27 |
+| chanceSampling | 3 | 1.0× | 1.00× | 0.21× | 0 of 61 | 0.171 / 0.172 | 0.130 | 0.397 | — | 8.64 |
+| coarseStart | 3 | 1.0× | 1.00× | 0.96× | 0 of 61 | 0.059 / 0.054 | 0.030 | 0.031 | — | 0.27 |
+| lineRunouts | 3 | 1.0× | 0.73× | 1.58× | 0 of 61 | 0.097 / 0.072 | 0.251 | 0.234 | — | 5.94 |
+| i16 | 3 | 1.0× | 0.52× | 1.10× | 0 of 61 | 0.059 / 0.067 | 0.033 | 0.035 | — | 0.37 |
+| resolveSubgame | 3 | 1.0× | 0.59× | 0.65× | 0 of 61 | 0.062 / 0.073 | 0.057 | 0.107 | 0.053 | — |
+| runoutBuckets+i16 | 3 | 1.0× | 0.52× | 1.09× | 0 of 61 | 0.059 / 0.067 | 0.033 | 0.035 | — | 0.37 |
+| runoutBuckets+resolveSubgame | 3 | 1.0× | 0.59× | 0.67× | 0 of 61 | 0.062 / 0.073 | 0.057 | 0.107 | 0.053 | — |
+| shareHistories+runoutBuckets | 3 | 1.0× | 0.40× | 1.01× | 0 of 61 | 0.061 / 0.068 | 0.034 | 0.041 | — | 1.89 |
+| shareHistories+chanceSampling | 3 | 1.0× | 0.40× | 0.21× | 0 of 61 | 0.128 / 0.122 | 0.090 | 0.274 | — | 8.30 |
+| shareHistories+compactStorage | 3 | 1.0× | 0.15× | 1.33× | 0 of 61 | 0.067 / 0.083 | 0.041 | 0.047 | — | 2.08 |
+| thinSizes+shareHistories | 3 | 1.0× | 0.35× | 0.69× | 15 of 61 | 0.071 / 0.288 | 0.084 | 0.049 | — | 2.07 |
+| lineRunouts+runoutBuckets | 3 | 1.0× | 0.73× | 1.56× | 0 of 61 | 0.097 / 0.072 | 0.251 | 0.234 | — | 5.94 |
+| chanceSampling, 2× iterations | 3 | 2.0× | 1.00× | 0.38× | 0 of 61 | 0.086 / 0.086 | 0.052 | 0.093 | — | 2.26 |
+| chanceSampling, 4× iterations | 3 | 4.0× | 1.00× | 0.69× | 0 of 61 | 0.057 / 0.056 | 0.030 | 0.033 | — | 0.60 |
 
 The stored strategy's own loss at the same nodes (noise floor): root 0.056 / 0.065, flop 0.031, turn 0.026. Time for blueprint + resolveSubgame includes the re-solves. Flop and turn means are over the nodes the option's tree holds.
