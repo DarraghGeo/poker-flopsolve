@@ -54,7 +54,7 @@ export type { ResolvedBoard } from './runouts.ts';
 export type { WarmStartReport } from './warm.ts';
 export { resolveSubgame } from './resolve.ts';
 export { linesWithin, turnLineReach } from './hybrid.ts';
-export type { LineReach } from './hybrid.ts';
+export type { LineReach, LinesWithinOptions } from './hybrid.ts';
 export type { Gadget, ResolvedSubgame, ResolveOptions } from './resolve.ts';
 export { simdAvailable } from './kernels.ts';
 export type { BetSize } from './tree.ts';

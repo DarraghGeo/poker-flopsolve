@@ -150,4 +150,22 @@ describe('turnLineReach and linesWithin', () => {
 			run.close();
 		}
 	});
+
+	it('ranks lines from a cheaper spot with the same flop for the real one', () => {
+		const proxy: SpotConfig = { ...config, betSizes: [[0.33, 0.66], [0.33, 0.66], []] };
+		expect(defineSpot(proxy).estimate.bytes).toBeLessThan(defineSpot(config).estimate.bytes);
+		const run = createRun(defineSpot(proxy), { workers: 1 });
+		try {
+			run.step(30);
+			const sol = run.snapshot();
+			const all = linesWithin(sol, defineSpot(flop).estimate.bytes, { config });
+			expect(all).toEqual(turnLineReach(sol).map((l) => l.line));
+			// Every line the proxy names is a line of the real spot.
+			const kept = defineSpot({ ...config, shareHistories: { keepLines: all } });
+			expect(kept.estimate.bytes).toBe(defineSpot(flop).estimate.bytes);
+			expect(linesWithin(sol, defineSpot(config).estimate.bytes, { config })).toEqual([]);
+		} finally {
+			run.close();
+		}
+	});
 });

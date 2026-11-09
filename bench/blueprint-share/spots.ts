@@ -39,3 +39,9 @@ export function blueprintOf(board: Board, shareName: string): SpotConfig {
 		...(share !== undefined ? { shareHistories: share } : {}),
 	};
 }
+
+/** `config` with the river checked down: a cheap spot whose flop line reach ranks lines for `linesWithin` (issue #101). */
+export function checkedDownRiver(config: SpotConfig): SpotConfig {
+	const rows = config.betSizes as readonly (readonly number[])[];
+	return { ...config, betSizes: [...rows.slice(0, -1), []] };
+}

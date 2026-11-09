@@ -10,7 +10,7 @@
  * `linesWithin` picks the most-reached ones a storage budget allows.
  */
 
-import type { Solution } from './index.ts';
+import type { Estimate, Solution, SpotConfig } from './index.ts';
 import { defineSpot } from './index.ts';
 import { matchupMass } from './cfr.ts';
 import { NodeKind } from './tree.ts';
@@ -47,29 +47,47 @@ export function turnLineReach(solution: Solution): LineReach[] {
 }
 
 /**
- * The most-reached lines (`turnLineReach`) that `ShareHistories.keepLines`
- * can keep with the spot's storage, at 32 bits as `estimate.bytes` counts
- * it, at most `maxBytes`: the longest prefix of the ranking that fits.
- * Keeping a line never shrinks storage, so the prefix is found by bisection.
- * Every line, if all fit; none, if not even the first does.
+ * The most-reached lines of `solution` (`turnLineReach`) that
+ * `ShareHistories.keepLines` can keep in `options.config` with its storage
+ * at most `maxBytes`: the longest prefix of the ranking that fits. Storage
+ * is counted at 32 bits (`estimate.bytes`), or at 16 with `precision:
+ * 'i16'` (`estimate.compressedBytes`). Keeping a line never shrinks storage, so the
+ * prefix is found by bisection. Every line, if all fit; none, if not even
+ * the first does.
+ *
+ * The spot the lines are for, `options.config`, defaults to the one
+ * `solution` solved. The ranking can come from a cheaper spot with the same first
+ * round: the reach of a flop line is the flop play alone, so a solve with
+ * the river checked down ranks the lines much as the real one does, in a
+ * fraction of its memory (see `ShareHistories.keepLines`).
  */
-export function linesWithin(solution: Solution, maxBytes: number): string[] {
-	const config = solution.spot.source;
+export function linesWithin(solution: Solution, maxBytes: number, options: LinesWithinOptions = {}): string[] {
+	const config = options.config ?? solution.spot.source;
+	const sixteen = options.precision === 'i16';
 	const asked = config.shareHistories;
 	if (!asked) throw new Error('linesWithin picks lines to keep out of shareHistories; this spot shares nothing');
 	const share = asked === true ? {} : asked;
 	const ranked = turnLineReach(solution).map((l) => l.line);
 	const lines = (count: number): string[] => [...new Set([...(share.keepLines ?? []), ...ranked.slice(0, count)])];
+	const storage = (estimate: Estimate): number => (sixteen ? estimate.compressedBytes : estimate.bytes);
 	const fits = (count: number): boolean =>
-		defineSpot({ ...config, maxBytes: Number.MAX_SAFE_INTEGER, shareHistories: { ...share, keepLines: lines(count) } }).estimate.bytes <= maxBytes;
-	let low = 0;
-	let high = ranked.length;
+		storage(defineSpot({ ...config, maxBytes: Number.MAX_SAFE_INTEGER, shareHistories: { ...share, keepLines: lines(count) } }).estimate) <= maxBytes;
 	if (!fits(0)) return [];
 	// fits(low) holds; find the largest count that fits.
+	let low = 0;
+	let high = ranked.length;
 	while (low < high) {
 		const mid = Math.ceil((low + high) / 2);
 		if (fits(mid)) low = mid;
 		else high = mid - 1;
 	}
 	return ranked.slice(0, low);
+}
+
+/** Settings for {@link linesWithin}. */
+export interface LinesWithinOptions {
+	/** The spot the lines are kept in; unset, the one the ranking solution solved. */
+	readonly config?: SpotConfig;
+	/** The storage the budget is for: 'f32' (default) or 'i16'. */
+	readonly precision?: 'f32' | 'i16';
 }

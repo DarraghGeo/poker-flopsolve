@@ -34,10 +34,11 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { COMBOS, createRun, defineSpot, linesWithin, parseCards, turnLineReach } from '../../src/index.ts';
 import { refineLines } from './refine.ts';
+import { wasmStorage } from '../../src/wasm-storage.ts';
 import type { Approximations, Solution, SolveRun, SpotConfig } from '../../src/index.ts';
 import { Mode } from '../../src/cfr.ts';
 import { configFromJson, fromJson, lineNode, nodeEvs, offCards, openMass, rootActionEvs, rootEvs, turnBoard } from '../nested/lib.ts';
-import { blueprintOf, full as fullTree, type Board } from './spots.ts';
+import { blueprintOf, checkedDownRiver, full as fullTree, type Board } from './spots.ts';
 
 interface Plan {
 	share?: string;
@@ -47,6 +48,10 @@ interface Plan {
 	keepReach?: number;
 	/** Keep the most-reached lines whose storage fits this many MiB (`linesWithin`). */
 	keepMiB?: number;
+	/** Rank the lines on the blueprint with its river checked down (`checkedDownRiver`), not the blueprint itself. */
+	pickProxy?: boolean;
+	/** 'i16': store the blueprint (and the picking solve) at 16 bits on the WebAssembly storage engine. */
+	precision?: 'i16';
 	pick?: number;
 	checkpoints?: number[];
 	sampling?: boolean;
@@ -63,6 +68,7 @@ const RESOLVE_ITERATIONS = 300;
 const MiB = 2 ** 20;
 const workers = plan.sampling ? 1 : (plan.workers ?? 4);
 const approximations: Approximations = plan.sampling ? { chanceSampling: {} } : {};
+const storage = plan.precision === 'i16' ? { precision: 'i16' as const, wasmStorage } : {};
 
 const full = fullTree(boardName);
 const later = {
@@ -84,16 +90,17 @@ let keep = plan.keep ?? [];
 let pickSeconds = 0;
 let pre: SolveRun | null = null;
 if (plan.keepTop !== undefined || plan.keepReach !== undefined || plan.keepMiB !== undefined) {
-	pre = createRun(defineSpot(configWith([])), { workers, approximations });
+	if (plan.pickProxy && plan.warm) throw new Error('a proxy pick cannot warm-start the blueprint');
+	pre = createRun(defineSpot(plan.pickProxy ? checkedDownRiver(configWith([])) : configWith([])), { workers, approximations, ...storage });
 	pre.step(plan.pick ?? 80);
 	const ranked = turnLineReach(pre.snapshot());
+	keep = plan.keepMiB !== undefined
+		? linesWithin(pre.snapshot(), plan.keepMiB * MiB, { config: configWith([]), precision: plan.precision })
+		: ranked.filter((l, i) => (plan.keepTop !== undefined ? i < plan.keepTop : l.share >= plan.keepReach!)).map((l) => l.line);
 	if (!plan.warm) {
 		pre.close();
 		pre = null;
 	}
-	keep = plan.keepMiB !== undefined
-		? linesWithin(pre!.snapshot(), plan.keepMiB * MiB)
-		: ranked.filter((l, i) => (plan.keepTop !== undefined ? i < plan.keepTop : l.share >= plan.keepReach!)).map((l) => l.line);
 	pickSeconds = (performance.now() - started) / 1000;
 	console.log(`picked ${keep.length} lines in ${pickSeconds.toFixed(0)} s: ${ranked.slice(0, Math.max(keep.length, 4)).map((l) => `${l.line} ${(100 * l.share).toFixed(1)}%`).join('; ')}`);
 }
@@ -273,10 +280,10 @@ let done = 0;
 let run: SolveRun;
 if (pre) {
 	done = pre.totalIterations;
-	run = refineLines(pre, keep, { iterations: 0, workers, approximations });
+	run = refineLines(pre, keep, { iterations: 0, workers, approximations, ...storage });
 	pre.close();
 } else {
-	run = createRun(spot, { workers, approximations });
+	run = createRun(spot, { workers, approximations, ...storage });
 }
 const out: Record<string, unknown>[] = [];
 let solveSeconds = 0;
@@ -304,7 +311,7 @@ if (plan.refine) {
 	const timing: { line: string; seconds: number; bytes: number }[] = [];
 	for (const line of lines) {
 		const t = performance.now();
-		const local = refineLines(run, [line], { iterations: plan.refine.iterations, workers, approximations });
+		const local = refineLines(run, [line], { iterations: plan.refine.iterations, workers, approximations, ...storage });
 		const seconds = (performance.now() - t) / 1000;
 		timing.push({ line, seconds, bytes: local.spot.estimate.bytes });
 		const bp = local.snapshot();
