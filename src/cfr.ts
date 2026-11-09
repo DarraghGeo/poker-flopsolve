@@ -602,15 +602,16 @@ function cachedFactors(t: number): { keepPositive: number; keepNegative: number;
  * first, a shared block another history already discounted this iteration
  * keeps everything; then, with chance sampling, the discounts of the
  * iterations a skipped block missed are multiplied in. Marks the block
- * discounted and updated at `iterWeight`. assembly/engine.ts has the same
- * as its `blockFactors`.
+ * discounted and updated at `iterWeight`. DCFR only: callers check
+ * `ctx.dcfr` first, where assembly/engine.ts's `blockFactors` checks it
+ * itself and passes CFR+'s factors through.
  */
 function blockFactors(
 	ctx: Context,
 	block: number,
 	iterWeight: number,
 ): { keepPositive: number; keepNegative: number; keepSum: number } {
-	let { keepPositive, keepNegative, keepSum } = dcfrFactors(iterWeight);
+	let { keepPositive, keepNegative, keepSum } = cachedFactors(iterWeight);
 	const discounted = ctx.discounted;
 	if (discounted !== undefined && discounted !== null) {
 		// Another history already discounted this shared block this iteration.
