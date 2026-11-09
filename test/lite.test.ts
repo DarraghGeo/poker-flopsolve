@@ -187,20 +187,6 @@ describe('solveLite', () => {
 		expect(resolved.solution.exploitabilityPercent()).toBeLessThan(5);
 	});
 
-	it('warm-starts a re-solve from the blueprint below the node', () => {
-		const lite = solveLite(small, { workers: 1, sampling: false, settle: false, iterations: 100 });
-		const { tree } = lite.solution.spot;
-		const chance = tree.edgeChild[tree.firstEdge[tree.edgeChild[tree.firstEdge[0]]]];
-		const turn = tree.edgeChild[tree.firstEdge[chance]];
-		// At the blueprint's own betting every node matches, so one iteration
-		// from its regrets plays close to it, and one from nothing does not.
-		const own = { betSizes: [[1]], maxRaises: 1, noDonk: true };
-		const cold = lite.resolve(turn, 0, { player: 0, iterations: 1, betting: own });
-		const warm = lite.resolve(turn, 0, { player: 0, iterations: 1, betting: own, warmStart: true });
-		expect(warm.solution.exploitabilityPercent()).toBeLessThan(cold.solution.exploitabilityPercent() / 3);
-		expect(() => lite.resolve(turn, 0, { player: 0, gadget: 'resolve', warmStart: true })).toThrow(/warmStart/);
-	});
-
 	it('runs unsampled and to a cap when asked', () => {
 		const lite = solveLite(small, { workers: 1, sampling: false, settle: false, iterations: 30 });
 		expect(lite.solution.stoppedAt).toBe('iterations');

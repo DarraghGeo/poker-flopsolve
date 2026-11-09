@@ -3,9 +3,8 @@
  *
  * Purpose: read a solve's own strategy below a node as a subgame of its own,
  * the spot `Solution.subgameAt` builds, so that re-solves and references can
- * be compared with it node for node, and seed a re-solve with it
- * (`ResolveOptions.warmStart`, issue #100). Only `resolveSubgame` imports
- * it, so a bundle that does not re-solve leaves it out.
+ * be compared with it node for node. Analysis only: nothing in the package
+ * imports this, so it costs a bundle nothing.
  *
  * `warmStart` copies a whole solve into one of the same board; this is the
  * same copy started at a node that opens a later betting round. Two things

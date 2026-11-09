@@ -18,8 +18,6 @@
  * - `CAP`: iteration cap (default 1000);
  * - `RESOLVES=0`: skip the turn re-solves;
  * - `RESOLVE_ITS`: re-solve iterations to try, comma-separated (default 300);
- * - `WARM`: re-solve warm starts to try, comma-separated `off`, `0`, `bp`
- *   (DCFR count from 0, or from the blueprint's) (default `off`);
  * - `RESOLVE_WORKERS`: threads for the re-solves (default 4).
  *
  * The clock counts solving only (`step`); every 10 iterations, off the clock,
@@ -54,7 +52,6 @@ const CAP = Number(process.env.CAP ?? 1000);
 const RULE = process.env.RULE ?? '20:0.01:2';
 const RESOLVES = process.env.RESOLVES !== '0';
 const RESOLVE_ITS = (process.env.RESOLVE_ITS ?? '300').split(',').map(Number);
-const WARM = (process.env.WARM ?? 'off').split(',');
 const RESOLVE_WORKERS = Number(process.env.RESOLVE_WORKERS ?? 4);
 const MiB = 2 ** 20;
 const STEP = 10;
@@ -290,7 +287,6 @@ interface ResolveResult {
 	key: string;
 	lineReach: number;
 	iterations: number;
-	warm: string;
 	gain: [number, number];
 	seconds: [number, number];
 }
@@ -300,40 +296,35 @@ for (const key of keys) {
 	const node = lineNode(bp, meta.line);
 	const board = turnBoard(bp, meta.turn);
 	for (const iterations of RESOLVE_ITS) {
-		for (const warm of WARM) {
-			const seconds: number[] = [];
-			const g = ([0, 1] as const).map((player) => {
-				const t = performance.now();
-				const resolved = resolveSubgame(bp, node, board, {
-					player, gadget: 'unsafe', betting: later, iterations, solve: { workers: RESOLVE_WORKERS },
-					...(warm === 'off' ? {} : { warmStart: { iteration: warm === 'bp' ? bp.totalIterations : Number(warm) } }),
-				});
-				seconds.push((performance.now() - t) / 1000);
-				if (resolved.solution.spot.tree.nodeCount !== ref.spot.tree.nodeCount) throw new Error(`${key}: re-solved tree differs`);
-				return gain(resolved.solution, ref, player);
-			}) as [number, number];
-			resolves.push({ key, lineReach: meta.lineReach, iterations, warm, gain: g, seconds: seconds as [number, number] });
-			console.log(
-				`  re-solve ${key} (reached ${(100 * meta.lineReach).toFixed(1)}%), ${iterations} it, warm ${warm}: ` +
-					`opponent gains ${g.map((x) => x.toFixed(3)).join(' / ')}% of its pot, ${seconds.map((x) => x.toFixed(1)).join(' / ')} s`,
-			);
-		}
+		const seconds: number[] = [];
+		const g = ([0, 1] as const).map((player) => {
+			const t = performance.now();
+			const resolved = resolveSubgame(bp, node, board, {
+				player, gadget: 'unsafe', betting: later, iterations, solve: { workers: RESOLVE_WORKERS },
+			});
+			seconds.push((performance.now() - t) / 1000);
+			if (resolved.solution.spot.tree.nodeCount !== ref.spot.tree.nodeCount) throw new Error(`${key}: re-solved tree differs`);
+			return gain(resolved.solution, ref, player);
+		}) as [number, number];
+		resolves.push({ key, lineReach: meta.lineReach, iterations, gain: g, seconds: seconds as [number, number] });
+		console.log(
+			`  re-solve ${key} (reached ${(100 * meta.lineReach).toFixed(1)}%), ${iterations} it: ` +
+				`opponent gains ${g.map((x) => x.toFixed(3)).join(' / ')}% of its pot, ${seconds.map((x) => x.toFixed(1)).join(' / ')} s`,
+		);
 	}
 	refRun.close();
 }
-const summary: { iterations: number; warm: string; gain: number[]; seconds: number }[] = [];
+const summary: { iterations: number; gain: number[]; seconds: number }[] = [];
 for (const iterations of RESOLVE_ITS) {
-	for (const warm of WARM) {
-		const rows = resolves.filter((r) => r.iterations === iterations && r.warm === warm);
-		if (!rows.length) continue;
-		const mass = rows.reduce((s, r) => s + r.lineReach, 0);
-		const g = [0, 1].map((p) => rows.reduce((s, r) => s + r.lineReach * r.gain[p], 0) / mass);
-		const secs = rows.reduce((s, r) => s + r.seconds[0] + r.seconds[1], 0) / (2 * rows.length);
-		summary.push({ iterations, warm, gain: g, seconds: secs });
-		console.log(
-			`re-solve ${iterations} it, warm ${warm}: gain weighted by line reach OOP ${g[0].toFixed(3)}% / IP ${g[1].toFixed(3)}%, mean ${secs.toFixed(1)} s each`,
-		);
-	}
+	const rows = resolves.filter((r) => r.iterations === iterations);
+	if (!rows.length) continue;
+	const mass = rows.reduce((s, r) => s + r.lineReach, 0);
+	const g = [0, 1].map((p) => rows.reduce((s, r) => s + r.lineReach * r.gain[p], 0) / mass);
+	const secs = rows.reduce((s, r) => s + r.seconds[0] + r.seconds[1], 0) / (2 * rows.length);
+	summary.push({ iterations, gain: g, seconds: secs });
+	console.log(
+		`re-solve ${iterations} it: gain weighted by line reach OOP ${g[0].toFixed(3)}% / IP ${g[1].toFixed(3)}%, mean ${secs.toFixed(1)} s each`,
+	);
 }
 
 const OUT = new URL('./out/', import.meta.url);

@@ -1583,16 +1583,6 @@ export interface SolveRun {
 }
 
 /**
- * @internal Seeds a run's storage before its threads start, as a warm start
- * does: `resolveSubgame`'s warm start from the blueprint's subtree.
- */
-export interface RunSeed {
-	seed(ctx: Context): WarmStartReport;
-	/** The iteration DCFR carries on counting from. */
-	readonly iteration: number;
-}
-
-/**
  * Prepare a solve without running it.
  *
  * Stepping costs nothing over one long call — the work per iteration is
@@ -1602,7 +1592,7 @@ export interface RunSeed {
  * @param spot from {@link defineSpot}
  * @param options solver setup
  */
-export function createRun(spot: Spot, options: SolveOptions = {}, seed?: RunSeed): SolveRun {
+export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	if (options.analysisOnly && options.approximations?.currentProfileEv) {
 		throw new Error('approximations.currentProfileEv needs regrets, and an analysisOnly run has none');
 	}
@@ -1772,11 +1762,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}, seed?: RunSeed
 		if (options.warmCards && !options.warmStart) {
 			throw new Error('`warmCards` relabels a warm start, so it needs `warmStart` too');
 		}
-		if (seed) {
-			if (options.warmStart || coarsePlan) throw new Error('A seeded run takes no warmStart or coarseStart');
-			warm = seed.seed(ctx);
-			offset = seed.iteration;
-		} else if (options.warmStart) {
+		if (options.warmStart) {
 			const source = options.warmStart;
 			warm = options.warmCards
 				? warmStart(ctx, source.solver.ctx, false, options.warmCards)
