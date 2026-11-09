@@ -513,6 +513,9 @@ it needed and ended worse than the fixed rule.
 It combines with `shareHistories`, which shares the river storage of lines that meet:
 the target tree of issue #51, As Kh 7d with a 0.75 raise and 3 aggressions (T), is 17.2 GiB
 at 32 bits, 2.9 GiB thinned, and 0.85 GiB thinned and shared (Ks 9s 4s: 3.75, 0.64, 0.19).
+Those are memory estimates. The one combined solve tried (As Kh 7d T₀, thinned and
+shared) stopped improving at about 4.4% of pot from 250 iterations on, against 0.2% for
+the thinned tree alone, so the two together are not yet measured for accuracy.
 
 ### Chance sampling (opt-in)
 
