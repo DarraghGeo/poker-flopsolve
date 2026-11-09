@@ -100,7 +100,7 @@ export interface ResolveOptions {
 	 */
 	readonly measure?: boolean;
 	/** Solver settings for the subgame; `iterations` and warm starts are this function's. */
-	readonly solve?: Pick<SolveOptions, 'workers' | 'precision' | 'algorithm' | 'engine' | 'simd'>;
+	readonly solve?: Pick<SolveOptions, 'workers' | 'precision' | 'algorithm' | 'engine' | 'simd' | 'wasmStorage'>;
 }
 
 /** A re-solved subgame. */

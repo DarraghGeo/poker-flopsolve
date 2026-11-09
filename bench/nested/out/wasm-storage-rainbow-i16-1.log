@@ -1,0 +1,4 @@
+rainbow i16 in Chromium (1 threads), storage 363 MiB, tab peak RSS 526 MiB
+  1 thread(s), wasm: 287.8 s to 0.295% in 200 it (1.439 s/it with checks; checks 7.8 s)
+  turn re-solve, 1 thread(s): 34.6 s, 32 MiB
+{"board":"rainbow","storage":"i16","peak":551182336,"threads":1,"solves":[{"workers":1,"ms":287816.9750000001,"iterations":200,"exploitability":0.29484571863729003,"engine":"wasm","checkMs":7809.489999999758}],"resolves":[{"workers":1,"ms":34550.310000000056,"bytes":33640616}],"storageBytes":380442484}

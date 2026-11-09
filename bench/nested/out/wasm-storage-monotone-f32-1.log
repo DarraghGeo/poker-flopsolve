@@ -1,0 +1,4 @@
+monotone f32 in Chromium (1 threads), storage 187 MiB, tab peak RSS 346 MiB
+  1 thread(s), wasm: 103.6 s to 0.254% in 240 it (0.432 s/it with checks; checks 2.9 s)
+  turn re-solve, 1 thread(s): 22.0 s, 40 MiB
+{"board":"monotone","storage":"f32","peak":362979328,"threads":1,"solves":[{"workers":1,"ms":103587.87999999989,"iterations":240,"exploitability":0.25440430216433213,"engine":"wasm","checkMs":2917.9749999996275}],"resolves":[{"workers":1,"ms":22021.435000000056,"bytes":42101402}],"storageBytes":196553108}

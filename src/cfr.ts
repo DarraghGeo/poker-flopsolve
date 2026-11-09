@@ -29,6 +29,7 @@ import { pairValues } from './pairs.ts';
 import type { Kernels } from './kernels.ts';
 import { loadKernels } from './kernels.ts';
 import { NodeKind } from './tree.ts';
+import type { LineScale } from './lines.ts';
 
 /** Which combinations a player holds, and where each sits in storage. */
 export interface PlayerIndex {
@@ -176,6 +177,7 @@ export function buildLayout(
 	alias?: Int32Array,
 	reachWeighted = false,
 	compact?: CompactPlan,
+	boards?: { readonly from: Int32Array; readonly to: Int32Array },
 ): Layout {
 	// How many of each player's hands each board leaves live: a block's rows.
 	const roundBase = new Int32Array(runouts.rounds + 1);
@@ -225,6 +227,21 @@ export function buildLayout(
 		const actions = tree.numEdges[node];
 		if (actions > maxActions) maxActions = actions;
 		const hands = totals[tree.round[node] * 2 + tree.player[node]];
+		if (boards) {
+			// Line runouts (never with `alias` or `compact`): only the boards of
+			// the node's own line, blocks still addressed by board index,
+			// shifted so that its first board starts here.
+			const round = tree.round[node];
+			const slot = (board: number): number => (roundBase[round] + board) * 2 + tree.player[node];
+			const end = boards.to[node] < runouts.counts[round] ? rowStart[slot(boards.to[node])] : hands;
+			const begin = rowStart[slot(boards.from[node])];
+			walked += actions * (end - begin);
+			offset[node] = total - actions * begin;
+			blockOffset[node] = blocks - boards.from[node];
+			total += actions * (end - begin);
+			blocks += boards.to[node] - boards.from[node];
+			continue;
+		}
 		// An owner always comes before the nodes it owns, so its blocks are placed.
 		walked += actions * hands;
 		if (alias !== undefined && alias[node] !== node) {
@@ -305,7 +322,7 @@ export function blockBase(layout: Layout, tree: Tree, node: number, board: numbe
 /** Accumulated regrets: float, or 16-bit integers scaled per block. */
 export type RegretStore = Float64Array | Float32Array | Int16Array;
 /** Regrets as one of the stores, or compact storage's 8-bit ones. */
-type AnyRegrets = RegretStore | Int8Array;
+export type AnyRegrets = RegretStore | Int8Array;
 /** Accumulated strategy sums: float, or 16-bit integers scaled per block. */
 export type SumStore = Float64Array | Float32Array | Uint16Array;
 
@@ -354,6 +371,13 @@ export interface Context {
 	readonly compactScale?: Float64Array | null;
 	readonly scratch: TerminalScratch;
 	readonly chipScale: number;
+	/**
+	 * With `SpotConfig.lineRunouts`: per chance node, the children table its
+	 * deal uses and the per-hand rescaling of its values (see `lines.ts`).
+	 * Unset, every deal uses `runouts.childStart`.
+	 */
+	readonly lineStarts?: readonly (Int32Array | null)[];
+	readonly lineScales?: readonly (LineScale | null)[];
 	/** Which combinations each player can hold on each board. */
 	readonly active: ActiveLists;
 	/** How hand-space vectors move between boards and meet at terminals. */
@@ -924,7 +948,7 @@ function normalise(
 }
 
 /** Current strategy from positive regrets; uniform where there is none. */
-function regretMatch(regret: AnyRegrets, base: number, actions: number, count: number, strategy: Float64Array): void {
+export function regretMatch(regret: AnyRegrets, base: number, actions: number, count: number, strategy: Float64Array): void {
 	normalise(regret, base, actions, count, strategy);
 }
 
@@ -1080,8 +1104,9 @@ export function traverse(
 
 		// Workers own contiguous slices of the boards at the shard round.
 		const sharded = nextRound === ctx.shardRound;
-		const first = runouts.childStart[nextRound][board];
-		const last = runouts.childStart[nextRound][board + 1];
+		const starts = ctx.lineStarts === undefined ? runouts.childStart[nextRound] : ctx.lineStarts[node]!;
+		const first = starts[board];
+		const last = starts[board + 1];
 		const from = sharded && ctx.shardStart > first ? ctx.shardStart : first;
 		const to = sharded && ctx.shardEnd < last ? ctx.shardEnd : last;
 
@@ -1129,6 +1154,13 @@ export function traverse(
 		}
 		if (lists.packed[mySlot]) {
 			for (let i = 0; i < myCount; i++) out[i] /= lists.multiplicity[myFrom + i];
+		}
+		if (ctx.lineScales !== undefined) {
+			const scale = ctx.lineScales[node];
+			if (scale !== null) {
+				const at = myFrom - scale.base;
+				for (let i = 0; i < myCount; i++) out[i] *= scale.values[at + i];
+			}
 		}
 		return out;
 	}
@@ -1457,7 +1489,7 @@ function updateQuantised(
 /** Bias of a compact hand's scale exponent; see `Context.handShift`. */
 const SHIFT_BIAS = 160;
 /** `2^(shift - SHIFT_BIAS)` for every shift, 0 for a shift of 0. */
-const SHIFT_SCALE = Float64Array.from({ length: 256 }, (_, e) => (e === 0 ? 0 : 2 ** (e - SHIFT_BIAS)));
+export const SHIFT_SCALE = Float64Array.from({ length: 256 }, (_, e) => (e === 0 ? 0 : 2 ** (e - SHIFT_BIAS)));
 
 /**
  * The update for a compactly stored node: decode, update in float as the rule
@@ -1503,6 +1535,20 @@ function updateCompact(
 			// Another history already discounted this shared block this iteration.
 			if (discounted[block] === iterWeight) keepPositive = keepNegative = keepSum = 1;
 			discounted[block] = iterWeight;
+		}
+		const sampling = ctx.sampling;
+		if (sampling !== undefined && sampling !== null) {
+			// A subtree chance sampling skipped missed those iterations'
+			// discounts, as in the 32-bit update.
+			if (sampling.catchUp) {
+				for (let s = sampling.lastUpdate[block] + 1; s < iterWeight; s++) {
+					const f = cachedFactors(s);
+					keepPositive *= f.keepPositive;
+					keepNegative *= f.keepNegative;
+					keepSum *= f.keepSum;
+				}
+			}
+			sampling.lastUpdate[block] = iterWeight;
 		}
 	}
 
@@ -1614,14 +1660,14 @@ function updateCompact(
 }
 
 /** Largest strategy sum compact storage keeps per hand: the top of a byte. */
-const COMPACT_SUM_STEPS = 255;
+export const COMPACT_SUM_STEPS = 255;
 
 /**
  * A hand's scale exponent: the smallest power of two that brings `largest`
  * within `steps`, read off the float's exponent bits, biased by
  * `SHIFT_BIAS`; 0, for all zeros, below the smallest scale there is.
  */
-function scaleExponent(largest: number, steps: number): number {
+export function scaleExponent(largest: number, steps: number): number {
 	if (!(largest > 0)) return 0;
 	EXPONENT_FLOAT[0] = largest / steps;
 	const high = EXPONENT_BITS[1];
