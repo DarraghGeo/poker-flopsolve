@@ -28,6 +28,8 @@ import { createEngine } from './engine.ts';
 import type { WasmStorage } from './engine.ts';
 import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
+import type { SettleOptions } from './settle.ts';
+import { settlePlan, trackSettle } from './settle.ts';
 import { aliasHistories } from './history-merge.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
@@ -53,6 +55,8 @@ export { activeCombos, parseRange, rangeWeight } from './range.ts';
 export type { ResolvedBoard } from './runouts.ts';
 export type { WarmStartReport } from './warm.ts';
 export { resolveSubgame } from './resolve.ts';
+export { rootPlay, rootPlayMovement, rootPlayNodes, trackSettle } from './settle.ts';
+export type { RootPlay, SettleOptions, SettleTracker } from './settle.ts';
 export type { Gadget, ResolvedSubgame, ResolveOptions } from './resolve.ts';
 export { simdAvailable } from './kernels.ts';
 export type { BetSize } from './tree.ts';
@@ -766,6 +770,24 @@ export interface SolveOptions {
 	 * `nextCheck`. Setting this forces a fixed cadence instead.
 	 */
 	readonly exploitEvery?: number;
+	/**
+	 * Stop once the root play stops moving (issue #100): every `every`
+	 * iterations (default 20) read the average strategy at the root and at in
+	 * position's decision after a check, and stop once it has moved less than
+	 * `tolerance` (default 0.01: 1% of the range's mass, total variation
+	 * weighted by range) at `patience` checks in a row (default 2).
+	 * `stoppedAt` is then 'settled'. `rootPlayMovement` defines the measure.
+	 *
+	 * For solves that never reach an exploitability target, such as a
+	 * blueprint with `shareHistories`, which plateaus several percent of the
+	 * pot out while its first decisions go on settling (issue #85). A check
+	 * reads two nodes' strategies and no best-response pass, so it costs
+	 * almost nothing; with it, `Progress.exploitability` is NaN unless
+	 * `targetPercent` is set too, which then measures at every check and
+	 * stops on whichever comes first. `exploitEvery` is ignored. Measured
+	 * costs are in `solveLite`'s notes. Unset, off.
+	 */
+	readonly settle?: SettleOptions;
 	readonly onProgress?: (info: Progress) => void;
 	/**
 	 * Accumulator storage. Unset, 'f32' — what the WebAssembly engine runs —
@@ -1411,9 +1433,15 @@ export const PRECISION_BYTES = { f64: 8, f32: 4, i16: 2 } as const;
 
 export interface Progress {
 	readonly iteration: number;
+	/** In chips; NaN at a `settle` check made without `targetPercent`. */
 	readonly exploitability: number;
 	readonly elapsedMs: number;
+	/** With `settle`: how far the root play moved since the last check (`rootPlayMovement`), NaN at the first. */
+	readonly movement?: number;
 }
+
+/** Which stopping rule ended a solve: see `Solution.stoppedAt`. */
+export type StopReason = 'target' | 'iterations' | 'settled';
 
 /** A solved spot. */
 export interface Solution {
@@ -1425,9 +1453,10 @@ export interface Solution {
 	/**
 	 * Which stopping rule ended the solve. 'iterations' with a `targetPercent`
 	 * set means the target was NOT reached and the answer is looser than asked
-	 * for — worth surfacing rather than swallowing.
+	 * for — worth surfacing rather than swallowing. 'settled' is
+	 * `SolveOptions.settle`'s: the root play stopped moving.
 	 */
-	readonly stoppedAt: 'target' | 'iterations';
+	readonly stoppedAt: StopReason;
 	/** Worker threads the solve actually used, which 'auto' does not tell you. */
 	readonly workers: number;
 	/** The solver behind this solution, for analysis and warm starts. */
@@ -1544,13 +1573,23 @@ export interface SolveRun {
 	 */
 	trueExploitabilityPercent(): number;
 	/** A view of the strategy as it stands; cheap, take a fresh one each time. */
-	snapshot(history?: readonly Progress[], stoppedAt?: 'target' | 'iterations'): Solution;
+	snapshot(history?: readonly Progress[], stoppedAt?: StopReason): Solution;
 	/** Release worker threads. Snapshots taken before this stay usable. */
 	close(): void;
 	/** Worker threads actually in use; 1 when single-threaded. */
 	readonly workers: number;
 	/** The underlying solver, for per-node analysis once solving is done. */
 	readonly solver: Solver;
+}
+
+/**
+ * @internal Seeds a run's storage before its threads start, as a warm start
+ * does: `resolveSubgame`'s warm start from the blueprint's subtree.
+ */
+export interface RunSeed {
+	seed(ctx: Context): WarmStartReport;
+	/** The iteration DCFR carries on counting from. */
+	readonly iteration: number;
 }
 
 /**
@@ -1563,7 +1602,7 @@ export interface SolveRun {
  * @param spot from {@link defineSpot}
  * @param options solver setup
  */
-export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
+export function createRun(spot: Spot, options: SolveOptions = {}, seed?: RunSeed): SolveRun {
 	if (options.analysisOnly && options.approximations?.currentProfileEv) {
 		throw new Error('approximations.currentProfileEv needs regrets, and an analysisOnly run has none');
 	}
@@ -1733,7 +1772,11 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		if (options.warmCards && !options.warmStart) {
 			throw new Error('`warmCards` relabels a warm start, so it needs `warmStart` too');
 		}
-		if (options.warmStart) {
+		if (seed) {
+			if (options.warmStart || coarsePlan) throw new Error('A seeded run takes no warmStart or coarseStart');
+			warm = seed.seed(ctx);
+			offset = seed.iteration;
+		} else if (options.warmStart) {
 			const source = options.warmStart;
 			warm = options.warmCards
 				? warmStart(ctx, source.solver.ctx, false, options.warmCards)
@@ -2008,6 +2051,8 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 	const iterations = options.iterations ?? 500;
 	const target = options.targetPercent ?? 0;
 	const fixed = options.exploitEvery ?? 0;
+	// Validated before any storage is taken.
+	const settle = options.settle ? settlePlan(options.settle) : null;
 	const run = createRun(spot, options);
 	const history: Progress[] = [];
 	// A coarse start solves inside createRun, and that is solving time too.
@@ -2024,13 +2069,14 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 	}
 
 	function runAll(): Solution {
+		if (settle) return runSettled(settle);
 		// Nothing to measure for: run straight through in one call.
 		if (fixed <= 0 && target <= 0) {
 			run.step(iterations);
 			return run.snapshot(history, 'iterations');
 		}
 
-		let stoppedAt: 'target' | 'iterations' = 'iterations';
+		let stoppedAt: StopReason = 'iterations';
 		let done = 0;
 		let next = fixed > 0 ? fixed : Math.min(iterations, FIRST_CHECK);
 		let prevIteration = 0;
@@ -2074,6 +2120,37 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 				next = Math.max(done + 1, Math.ceil(bounded));
 				prevIteration = done;
 				prevExploitability = info.exploitability;
+			}
+		}
+		return run.snapshot(history, stoppedAt);
+	}
+
+	/** `settle`'s loop: a cheap root-play check every `every` iterations. */
+	function runSettled(plan: Required<SettleOptions>): Solution {
+		const tracker = trackSettle(plan);
+		let stoppedAt: StopReason = 'iterations';
+		let done = 0;
+		while (done < iterations) {
+			const until = Math.min(done + plan.every, iterations);
+			run.step(until - done);
+			done = until;
+			const measured = run.snapshot();
+			const settled = tracker.check(measured, done);
+			const info: Progress = {
+				iteration: done,
+				exploitability: target > 0 ? measured.exploitability() : Number.NaN,
+				elapsedMs: Date.now() - started,
+				movement: tracker.movement,
+			};
+			history.push(info);
+			options.onProgress?.(info);
+			if (target > 0 && measured.exploitabilityPercent() <= target) {
+				stoppedAt = 'target';
+				break;
+			}
+			if (settled) {
+				stoppedAt = 'settled';
+				break;
 			}
 		}
 		return run.snapshot(history, stoppedAt);
@@ -2123,7 +2200,7 @@ function makeSolution(
 	iterations: number,
 	totalIterations: number,
 	history: Progress[],
-	stoppedAt: 'target' | 'iterations',
+	stoppedAt: StopReason,
 	workers: number,
 	currentProfileEv: boolean,
 ): Solution {
@@ -2297,3 +2374,5 @@ function makeSolution(
 }
 
 export { formatCards, parseCards };
+export { bettingFrom, liteConfig, solveLite } from './lite.ts';
+export type { LiteOptions, LiteResolveOptions, LiteSolution, SolveLiteOptions } from './lite.ts';

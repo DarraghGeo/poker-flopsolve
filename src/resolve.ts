@@ -64,6 +64,7 @@ import { boardAtRound } from './runouts.ts';
 import type { Context } from './cfr.ts';
 import { makeBuffers, Mode, traverse } from './cfr.ts';
 import { NodeKind } from './tree.ts';
+import { copySubtree } from './subtree.ts';
 
 /** How a re-solve guards the refined player; see the module comment. */
 export type Gadget = 'unsafe' | 'resolve' | 'maxmargin' | 'reach-maxmargin';
@@ -99,6 +100,16 @@ export interface ResolveOptions {
 	 * subgame. The gadgets need them and always report them.
 	 */
 	readonly measure?: boolean;
+	/**
+	 * Start the subgame from the blueprint's own regrets below the node
+	 * (`copySubtree`), rather than from nothing: nodes and actions match by
+	 * the actions leading to them, bet sizes by the nearest pot fraction
+	 * within the warm start's tolerance; anything else starts cold. `iteration`
+	 * is where DCFR's count resumes, which sets how hard the copied regrets
+	 * are discounted; default 0. Default off. Not with a gadget, whose
+	 * opponent reach the copied regrets were not trained against.
+	 */
+	readonly warmStart?: boolean | { readonly iteration?: number };
 	/** Solver settings for the subgame; `iterations` and warm starts are this function's. */
 	readonly solve?: Pick<SolveOptions, 'workers' | 'precision' | 'algorithm' | 'engine' | 'simd' | 'wasmStorage'>;
 }
@@ -159,7 +170,14 @@ export function resolveSubgame(blueprint: Solution, node: number, board: number,
 	const blueprintValues = open ? valuesBelow(blueprint, node, board, opponent, base, mine, live, mode) : null;
 	const gifts = open && gadget === 'reach-maxmargin' ? pathGifts(blueprint, node, board, opponent, mode) : null;
 
-	const run = createRun(spot, { ...options.solve });
+	if (options.warmStart && gadget !== 'unsafe') throw new Error(`warmStart is for 'unsafe' re-solves; got gadget '${gadget}'`);
+	const seed = options.warmStart
+		? {
+				seed: (ctx: Context) => copySubtree(ctx, blueprint.solver.ctx, false, node),
+				iteration: typeof options.warmStart === 'object' ? options.warmStart.iteration ?? 0 : 0,
+			}
+		: undefined;
+	const run = createRun(spot, { ...options.solve }, seed);
 	try {
 		const { ctx } = run.solver;
 		// The opponent's root hands in the subgame, as the traversal lists them.
