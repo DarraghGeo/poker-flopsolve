@@ -33,6 +33,15 @@ const SPOTS: Record<string, { config: SpotConfig; iterations: number }> = {
 		},
 		iterations: 30,
 	},
+	// Issue #85: shared river storage with runout buckets, as the phone blueprint runs.
+	'two-tone flop, shared histories, buckets': {
+		config: {
+			board: 'Ts 9s 4h', pot: 60, stack: 100,
+			oop: 'AA,KK,QQ,AKs,AQs,KQs,76s,65s', ip: 'JJ,TT,99,AJs,KJs,QJs,JTs,T9s',
+			betSizes: [[0.66]], maxRaises: 1, shareHistories: true, runoutBuckets: 3,
+		},
+		iterations: 30,
+	},
 };
 
 const THREADS = 3;

@@ -1,0 +1,19 @@
+rainbow-river-120it: 306 nodes, 1396 runouts, 173 MiB f32
+  20 it, 17.722%, 18 s
+  40 it, 8.151%, 35 s
+  80 it, 4.054%, 70 s
+  120 it, 3.171%, 102 s
+blueprint: 120 it, 3.171% (best 3.171%), 102 s, engine wasm, peak RSS 354 MiB
+root EV error, % pot: OOP mean 1.270 max 3.488; IP mean 1.597 max 5.184
+  OOP at root: root play loses 0.0544% pot at reference values (max 0.462); the reference's own 0.0089%
+  IP after check: root play loses 0.0298% pot at reference values (max 0.802); the reference's own 0.0083%
+  re-solve bet_82.5_call_-2c (line reached 12.5%): opponent gains 3.107 / 0.712% of its pot
+  re-solve bet_82.5_call_-7c (line reached 12.5%): opponent gains 5.992 / 0.638% of its pot
+  re-solve bet_82.5_call_-Qs (line reached 12.5%): opponent gains 5.865 / 0.900% of its pot
+  re-solve check_bet_41.25_call_-2c (line reached 5.4%): opponent gains 4.771 / 7.367% of its pot
+  re-solve check_bet_41.25_call_-7c (line reached 5.4%): opponent gains 4.110 / 5.720% of its pot
+  re-solve check_bet_41.25_call_-Qs (line reached 5.4%): opponent gains 5.365 / 6.280% of its pot
+  re-solve check_check_-2c (line reached 47.7%): opponent gains 12.292 / 5.251% of its pot
+  re-solve check_check_-7c (line reached 47.7%): opponent gains 4.890 / 2.290% of its pot
+  re-solve check_check_-Qs (line reached 47.7%): opponent gains 6.805 / 5.091% of its pot
+re-solve gain, weighted by line reach: OOP refined 7.154%, IP refined 3.737%
