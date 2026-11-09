@@ -52,7 +52,6 @@ export const VARIANTS: Record<string, Variant> = {
 	'chanceSampling, 2× iterations': { solve: sampling, scale: 2 },
 	'chanceSampling, 4× iterations': { solve: sampling, scale: 4 },
 	coarseStart: { solve: { approximations: { coarseStart: { iterations: 40 } } } },
-	lineRunouts: { config: { lineRunouts: { aggressions: 2 } } },
 	i16: { solve: { precision: 'i16', wasmStorage } },
 	resolveSubgame: { resolve: true },
 	// Pairs the README's recipes use.
@@ -62,7 +61,6 @@ export const VARIANTS: Record<string, Variant> = {
 	'shareHistories+chanceSampling': { config: { shareHistories: true }, solve: sampling },
 	'shareHistories+compactStorage': { config: { shareHistories: true, compactStorage: {} }, solve: { wasmStorage } },
 	'thinSizes+shareHistories': { config: { thinSizes: true, shareHistories: true } },
-	'lineRunouts+runoutBuckets': { config: { lineRunouts: { aggressions: 2 }, runoutBuckets: 3 } },
 	// The presets (issue #115), as a caller gets them. Lite stops on its own
 	// rule; the large-tree preset samples, so it gets sampling's 4×.
 	litePreset: {

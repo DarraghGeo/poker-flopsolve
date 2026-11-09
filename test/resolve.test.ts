@@ -3,12 +3,11 @@ import { COMBO_CARDS, COMBOS, createRun, defineSpot, NodeKind, parseCards, solve
 import type { Solution, SolveRun } from '../src/index.ts';
 import type { Tree } from '../src/tree.ts';
 import { bestResponseAt, openMass, resolveSubgame } from '../src/resolve.ts';
-import type { Gadget } from '../src/resolve.ts';
 import { copySubtree, matchSubtree } from '../src/subtree.ts';
 
 /**
- * Safe and nested subgame re-solving (issue #47): a blueprint with one bet
- * size on a turn, its river subgames re-solved with each gadget.
+ * Nested subgame re-solving (issue #47): a blueprint with one bet size on a
+ * turn, its river subgames re-solved.
  */
 describe('resolveSubgame', () => {
 	const config = {
@@ -43,9 +42,8 @@ describe('resolveSubgame', () => {
 	});
 	afterAll(() => run.close());
 	const rich = { betSizes: [[0.33, 0.75, 1.5]], maxRaises: 2, allowAllIn: true };
-	const gadgets: Gadget[] = ['resolve', 'maxmargin', 'reach-maxmargin'];
 
-	/** Largest margin, in chips, by which an opponent hand beats its guaranteed value. */
+	/** Largest margin, in chips, by which an opponent hand beats its value against the blueprint. */
 	const worstExcess = (alternative: Float64Array | null, entered: Float64Array | null): number => {
 		if (!alternative || !entered) throw new Error('not measured');
 		let worst = -Infinity;
@@ -123,60 +121,30 @@ describe('resolveSubgame', () => {
 		expect((sumBr - sumAvg) / sumAvg).toBeLessThan(1e-3);
 	});
 
-	it("is a plain subgame solve when 'unsafe', bit for bit", () => {
-		const resolved = resolveSubgame(blueprint, checked, 7, { player: 0, gadget: 'unsafe', betting: rich, iterations: 120 });
+	it('is a plain subgame solve, bit for bit', () => {
+		const resolved = resolveSubgame(blueprint, checked, 7, { player: 0, betting: rich, iterations: 120 });
 		const plain = solve(defineSpot(blueprint.subgameAt(checked, 7, rich)), { iterations: 120, workers: 1 });
 		expect(resolved.solution.ev(0)).toBe(plain.ev(0));
 		// Nothing is measured that nothing uses, unless asked.
 		expect(resolved.alternative).toBeNull();
 		expect(resolved.entered).toBeNull();
-		const measured = resolveSubgame(blueprint, checked, 7, { player: 0, gadget: 'unsafe', betting: rich, iterations: 120, measure: true });
+		const measured = resolveSubgame(blueprint, checked, 7, { player: 0, betting: rich, iterations: 120, measure: true });
 		expect(measured.solution.ev(0)).toBe(plain.ev(0));
 		expect(measured.entered).not.toBeNull();
 		expect(Array.from(resolved.solution.strategyAt(0, 0).probs)).toEqual(Array.from(plain.strategyAt(0, 0).probs));
 	});
 
-	it.each(gadgets)("with the blueprint's own betting, %s gives no opponent hand more than the blueprint did", (gadget) => {
+	it("with the blueprint's own betting, gives no opponent hand much more than the blueprint did", () => {
 		for (const player of [0, 1] as const) {
-			const resolved = resolveSubgame(blueprint, checked, 7, { player, gadget, iterations: 600 });
-			// Chips, at a pot of 40: the blueprint is near equilibrium, so its
-			// own strategy meets every guarantee and the re-solve finds one that does.
-			expect(worstExcess(resolved.alternative, resolved.entered)).toBeLessThan(0.05);
+			const resolved = resolveSubgame(blueprint, checked, 7, { player, iterations: 600, measure: true });
+			// Chips, at a pot of 40: the blueprint is near equilibrium, and so
+			// is a re-solve of the same subgame, to a few hundredths of a chip.
+			expect(worstExcess(resolved.alternative, resolved.entered)).toBeLessThan(0.1);
 			// The opponent's range comes back as the blueprint brings it.
 			const reach = blueprint.reachAt(checked, 7, (1 - player) as 0 | 1);
 			const weights = resolved.solution.spot.players[1 - player].weights;
 			for (let combo = 0; combo < COMBOS; combo++) if (weights[combo] > 0) expect(weights[combo]).toBe(reach[combo]);
 		}
-	});
-
-	it('maxmargin keeps the worst opponent hand closer to its blueprint value than an unsafe re-solve', () => {
-		// A blueprint far from equilibrium, so its ranges at the node are off
-		// and an unsafe re-solve over-fits them.
-		const early = createRun(defineSpot(config), { workers: 1 });
-		early.step(15);
-		const rough = early.snapshot();
-		const node = riverAfter(rough, 'check check /');
-		for (const player of [0, 1] as const) {
-			const unsafe = resolveSubgame(rough, node, 3, { player, gadget: 'unsafe', iterations: 400, measure: true });
-			const margin = resolveSubgame(rough, node, 3, { player, gadget: 'maxmargin', iterations: 400 });
-			expect(worstExcess(margin.alternative, margin.entered)).toBeLessThanOrEqual(worstExcess(unsafe.alternative, unsafe.entered) + 1e-9);
-		}
-	});
-
-	it('reach-maxmargin raises each guarantee by a non-negative gift', () => {
-		const plain = resolveSubgame(blueprint, checked, 7, { player: 0, gadget: 'maxmargin', iterations: 10 });
-		const reach = resolveSubgame(blueprint, checked, 7, { player: 0, gadget: 'reach-maxmargin', iterations: 10 });
-		expect(plain.gifts).toBeNull();
-		let positive = 0;
-		for (let combo = 0; combo < COMBOS; combo++) {
-			if (Number.isNaN(reach.alternative![combo])) continue;
-			const gift = reach.gifts![combo];
-			expect(gift).toBeGreaterThanOrEqual(0);
-			expect(reach.alternative![combo]).toBeCloseTo(plain.alternative![combo] + gift, 9);
-			if (gift > 1e-6) positive++;
-		}
-		// IP checked behind on the turn with hands that would rather have bet.
-		expect(positive).toBeGreaterThan(0);
 	});
 
 	it('nests: a river re-solved from a re-solved turn', () => {
@@ -189,10 +157,10 @@ describe('resolveSubgame', () => {
 		for (let node = 0; node < t.nodeCount && turnNode < 0; node++) {
 			if (t.kind[node] === NodeKind.Chance && t.round[node] === 0) turnNode = t.edgeChild[t.firstEdge[node]];
 		}
-		const turn = resolveSubgame(sol, turnNode, 4, { player: 0, gadget: 'resolve', betting: rich, iterations: 60 });
+		const turn = resolveSubgame(sol, turnNode, 4, { player: 0, betting: rich, iterations: 60 });
 		expect(turn.solution.spot.board).toHaveLength(4);
 		const river = riverAfter(turn.solution, 'check check /');
-		const nested = resolveSubgame(turn.solution, river, 2, { player: 0, gadget: 'maxmargin', iterations: 60 });
+		const nested = resolveSubgame(turn.solution, river, 2, { player: 0, iterations: 60 });
 		expect(nested.solution.spot.board).toHaveLength(5);
 		expect(Number.isFinite(nested.solution.ev(0))).toBe(true);
 	});

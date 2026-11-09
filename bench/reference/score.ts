@@ -187,7 +187,7 @@ export function locate(sol: Solution, stored: NapkinNode, prefix = 0, strict = f
 	}
 	const dealt = match.dealt.flatMap((c) => parseCards(c));
 	const cards = [...sol.spot.board, ...dealt];
-	const resolved = sol.spot.resolveBoard(cards, match.node);
+	const resolved = sol.spot.resolveBoard(cards);
 	return { node: match.node, board: resolved.board, relabel: resolved.combos, pairing };
 }
 

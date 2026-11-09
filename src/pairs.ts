@@ -211,13 +211,7 @@ function walk(
 		const childLive = buffers.live[depth];
 		const childCols = buffers.cols[depth + 1];
 		const mappedHands = buffers.hands[depth];
-		// With line runouts, the node's own line. A deal a coarse class folds
-		// plays on its stored board with hands relabelled as the traversal
-		// relabels them (see `lines.ts`), so a hand is out exactly when its
-		// image holds the stored card; without, that is when it holds the dealt
-		// card, which is the same test.
-		const lined = ctx.lineStarts !== undefined;
-		const starts = lined ? ctx.lineStarts![node]! : runouts.childStart[nextRound];
+		const starts = runouts.childStart[nextRound];
 
 		for (let childBoard = starts[board]; childBoard < starts[board + 1]; childBoard++) {
 			const stored = dealtCards[childBoard * width + width - 1];
@@ -228,10 +222,7 @@ function walk(
 			for (let m = orbitStart[childBoard]; m < orbitStart[childBoard + 1]; m++) {
 				const dealt = m === orbitStart[childBoard] ? stored : runouts.orbitCard[nextRound][m];
 				const map = runouts.maps.combo[runouts.orbitMap[nextRound][m]];
-				const blocked = (combo: number): boolean =>
-					lined
-						? cards[map[combo] * 2] === stored || cards[map[combo] * 2 + 1] === stored
-						: cards[combo * 2] === dealt || cards[combo * 2 + 1] === dealt;
+				const blocked = (combo: number): boolean => cards[combo * 2] === dealt || cards[combo * 2 + 1] === dealt;
 
 				let childCount = 0;
 				for (let i = 0; i < liveCount; i++) {
@@ -261,23 +252,6 @@ function walk(
 				}
 			}
 		}
-		// Each hand counted to the deals it really has, as the traversal does.
-		const scale = lined ? ctx.lineScales![node] : null;
-		if (scale !== null) {
-			const lists = ctx.active;
-			const slot = (lists.roundBase[tree.round[node]] + board) * 2 + traverser;
-			const from = lists.start[slot];
-			const position = buffers.position;
-			markMembers(lists, from, lists.count[slot], position, false);
-			for (let i = 0; i < liveCount; i++) {
-				const combo = live[i];
-				const at = position[combo];
-				if (at < 0) continue;
-				const factor = scale.values[from + at - scale.base];
-				for (let c = 0; c < colCount; c++) out[cols[c] * COMBOS + combo] *= factor;
-			}
-			markMembers(lists, from, lists.count[slot], position, true);
-		}
 		return out;
 	}
 
@@ -298,7 +272,6 @@ function walk(
 	// The traverser's values are counterfactual: its own reach never enters.
 	if (owner === traverser) {
 		for (let a = 0; a < actions; a++) {
-			const offset = a * COMBOS;
 			const value = walk(
 				ctx, buffers, traverser, hands, tree.edgeChild[edgeBase + a], board, colReach,
 				cols, colCount, live, liveCount, depth + 1,
@@ -328,7 +301,6 @@ function walk(
 	for (let c = 0; c < colCount; c++) at[cols[c]] = position[hands[cols[c]]];
 	markMembers(lists, activeFrom, activeCount, position, true);
 	for (let a = 0; a < actions; a++) {
-		const offset = a * COMBOS;
 		let childCount = 0;
 		for (let c = 0; c < colCount; c++) {
 			const k = cols[c];

@@ -29,7 +29,6 @@ import { pairValues } from './pairs.ts';
 import type { Kernels } from './kernels.ts';
 import { loadKernels } from './kernels.ts';
 import { NodeKind } from './tree.ts';
-import type { LineScale } from './lines.ts';
 
 /** Which combinations a player holds, and where each sits in storage. */
 export interface PlayerIndex {
@@ -109,7 +108,7 @@ export interface Layout {
 	/**
 	 * Per node, 1 where regret updates are weighted by the actor's own reach:
 	 * nodes whose storage more than one history shares, under
-	 * `shareHistories` with that weighting. Null otherwise.
+	 * `shareHistories`. Null otherwise.
 	 */
 	readonly reachWeighted: Uint8Array | null;
 	/**
@@ -175,9 +174,7 @@ export function buildLayout(
 	players: readonly [PlayerIndex, PlayerIndex],
 	bytesPerElement: number,
 	alias?: Int32Array,
-	reachWeighted = false,
 	compact?: CompactPlan,
-	boards?: { readonly from: Int32Array; readonly to: Int32Array },
 ): Layout {
 	// How many of each player's hands each board leaves live: a block's rows.
 	const roundBase = new Int32Array(runouts.rounds + 1);
@@ -227,21 +224,6 @@ export function buildLayout(
 		const actions = tree.numEdges[node];
 		if (actions > maxActions) maxActions = actions;
 		const hands = totals[tree.round[node] * 2 + tree.player[node]];
-		if (boards) {
-			// Line runouts (never with `alias` or `compact`): only the boards of
-			// the node's own line, blocks still addressed by board index,
-			// shifted so that its first board starts here.
-			const round = tree.round[node];
-			const slot = (board: number): number => (roundBase[round] + board) * 2 + tree.player[node];
-			const end = boards.to[node] < runouts.counts[round] ? rowStart[slot(boards.to[node])] : hands;
-			const begin = rowStart[slot(boards.from[node])];
-			walked += actions * (end - begin);
-			offset[node] = total - actions * begin;
-			blockOffset[node] = blocks - boards.from[node];
-			total += actions * (end - begin);
-			blocks += boards.to[node] - boards.from[node];
-			continue;
-		}
 		// An owner always comes before the nodes it owns, so its blocks are placed.
 		walked += actions * hands;
 		if (alias !== undefined && alias[node] !== node) {
@@ -295,7 +277,7 @@ export function buildLayout(
 		blockOffset, blocks, totalSlots: total, walkedSlots: walked, maxActions, rowStart, roundBase,
 		bytes: total * bytesPerElement * 2 + scales + compactBytes,
 		shared,
-		reachWeighted: shared && reachWeighted ? sharedNodes(tree, alias!) : null,
+		reachWeighted: shared ? sharedNodes(tree, alias!) : null,
 		compactFrom, compactSlots, handOffset, compactHands, compactChunk, chunkSlots, chunkHands, chunkStart,
 	};
 }
@@ -371,13 +353,6 @@ export interface Context {
 	readonly compactScale?: Float64Array | null;
 	readonly scratch: TerminalScratch;
 	readonly chipScale: number;
-	/**
-	 * With `SpotConfig.lineRunouts`: per chance node, the children table its
-	 * deal uses and the per-hand rescaling of its values (see `lines.ts`).
-	 * Unset, every deal uses `runouts.childStart`.
-	 */
-	readonly lineStarts?: readonly (Int32Array | null)[];
-	readonly lineScales?: readonly (LineScale | null)[];
 	/** Which combinations each player can hold on each board. */
 	readonly active: ActiveLists;
 	/** How hand-space vectors move between boards and meet at terminals. */
@@ -1193,7 +1168,7 @@ export function traverse(
 
 		// Workers own contiguous slices of the boards at the shard round.
 		const sharded = nextRound === ctx.shardRound;
-		const starts = ctx.lineStarts === undefined ? runouts.childStart[nextRound] : ctx.lineStarts[node]!;
+		const starts = runouts.childStart[nextRound];
 		const first = starts[board];
 		const last = starts[board + 1];
 		const from = sharded && ctx.shardStart > first ? ctx.shardStart : first;
@@ -1243,13 +1218,6 @@ export function traverse(
 		}
 		if (lists.packed[mySlot]) {
 			for (let i = 0; i < myCount; i++) out[i] /= lists.multiplicity[myFrom + i];
-		}
-		if (ctx.lineScales !== undefined) {
-			const scale = ctx.lineScales[node];
-			if (scale !== null) {
-				const at = myFrom - scale.base;
-				for (let i = 0; i < myCount; i++) out[i] *= scale.values[at + i];
-			}
 		}
 		return out;
 	}

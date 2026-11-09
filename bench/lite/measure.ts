@@ -9,7 +9,7 @@
  * `nosample` (no chanceSampling), `nodonk`, `flop2` (flop capped at two
  * aggressions), `unshared`,
  * `raise` (one turn/river raise), `p=<x>` (sampling
- * probability), `turn+river` (share the turn too), `compact` (8-bit
+ * probability), `compact` (8-bit
  * `compactStorage` on the WebAssembly engine), `keep=<MiB>` (issue #113:
  * `solveLite`'s `keepBudget` through `keepWithin`, `PICK` (default 80)
  * picking iterations, on the clock), `i16` (16-bit storage
@@ -65,7 +65,6 @@ const lite: LiteOptions = {
 	...(variants.includes('flop2') ? { flopMaxRaises: 2 } : {}),
 	...(variants.includes('unshared') ? { shareHistories: false } : {}),
 	...(variants.includes('raise') ? { laterRaise: true } : {}),
-	...(variants.includes('turn+river') ? { shareHistories: { fromRound: 1 } } : {}),
 };
 const pArg = variants.find((v) => v.startsWith('p='));
 // 8-bit storage with sums, on the WebAssembly engine.
@@ -318,7 +317,7 @@ for (const key of keys) {
 		const g = ([0, 1] as const).map((player) => {
 			const t = performance.now();
 			const resolved = resolveSubgame(bp, node, board, {
-				player, gadget: 'unsafe', betting: later, iterations, solve: { workers: RESOLVE_WORKERS, ...storage },
+				player, betting: later, iterations, solve: { workers: RESOLVE_WORKERS, ...storage },
 			});
 			seconds.push((performance.now() - t) / 1000);
 			if (resolved.solution.spot.tree.nodeCount !== ref.spot.tree.nodeCount) throw new Error(`${key}: re-solved tree differs`);

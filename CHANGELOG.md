@@ -25,14 +25,12 @@ A minor release. Every approximation below is opt-in and off by default. The REA
 ### New opt-ins since 0.4.1
 
 Spot settings (`SpotConfig`):
-- `shareHistories`, with `spr`, `fromRound` and `weighting`: one river storage for betting lines
-  that meet (#49).
+- `shareHistories`: one river storage for betting lines that meet (#49).
 - `shareHistories.keepLines`, with `linesWithin` and `turnLineReach`: keep the most-reached lines
   unshared within a memory budget (#101).
 - `thinSizes`: one size at most decisions, the shape that adaptive growth found (#51).
 - `removeActions`: cut named bets, raises and shoves from the tree (#51).
 - `compactStorage`: 8-bit regrets and strategy sums (#50).
-- `lineRunouts`: coarser runouts in chosen betting lines (#53). Deprecated in this release.
 
 Solve settings (`SolveOptions`):
 - `approximations.chanceSampling`: deals sampled with baselines (#25). It runs on worker threads
@@ -46,17 +44,23 @@ Solve settings (`SolveOptions`):
   engine, threads included (#84).
 
 Re-solving and threads:
-- `resolveSubgame`: re-solve a node's subgame at new betting, unsafe or with a safety gadget (#47).
+- `resolveSubgame`: re-solve a node's subgame at new betting (#47).
 - `poker-flopsolve/threads`, with `enableThreads`: worker threads in the browser (#29).
 
-### Deprecated (still working in 0.5)
+### Removed before release (#125)
 
-- `SpotConfig.lineRunouts`: more costly than the presets, and it refuses sharing, compact storage,
-  sampling and coarse starts. Use `largeTree` or `thinSizes`.
-- `ShareHistories.spr`, `.fromRound` and `.weighting`: measured lossier than they save. Leave them
-  unset.
-- `ResolveOptions.gadget` and `.values`: the safe gadgets measured worse than plain re-solving. Leave
-  them unset (`'unsafe'`).
+These were added during 0.5.0's development, measured as dead ends in #115, and removed before the
+release, so no published version has them. Their numbers are in
+[docs/APPROXIMATIONS.md](docs/APPROXIMATIONS.md#removed-before-050-125).
+
+- `SpotConfig.lineRunouts` (#53): more costly than the presets, JavaScript only, and it refused
+  sharing, compact storage, sampling and coarse starts. Use `largeTree` or `thinSizes`.
+  `Spot.resolveBoard` lost its `node` argument with it.
+- `ShareHistories.spr`, `.fromRound` and `.weighting` (#49): measured lossier than they save.
+  Sharing covers the river alone, exact meetings, weighted by reach.
+- `ResolveOptions.gadget` and `.values`, the `Gadget` type and `ResolvedSubgame.gadget` / `.gifts`
+  (#47): the safe gadgets measured worse than plain re-solving. `measure: true` still reports
+  `alternative` and `entered`.
 
 ### Documentation
 

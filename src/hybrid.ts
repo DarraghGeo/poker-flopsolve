@@ -39,11 +39,8 @@ export function turnLineReach(solution: Solution): LineReach[] {
 		if (tree.kind[node] !== NodeKind.Chance || tree.round[node] !== 0) continue;
 		const child = tree.edgeChild[tree.firstEdge[node]];
 		if (tree.kind[child] !== NodeKind.Decision) continue;
-		// Only the first round's decisions lie on the path, so any board of the
-		// node's own serves: the first, or with line runouts its line's first.
-		const families = solution.spot.runouts.lines;
-		const board = families ? families.families[families.family[child]].from : 0;
-		const share = matchupMass(solution.reachAt(child, board, 0), solution.reachAt(child, board, 1)) / rootMass;
+		// Only the first round's decisions lie on the path, so any board serves.
+		const share = matchupMass(solution.reachAt(child, 0, 0), solution.reachAt(child, 0, 1)) / rootMass;
 		lines.push({ line: solution.path(child), node: child, share });
 	}
 	return lines.sort((a, b) => b.share - a.share);

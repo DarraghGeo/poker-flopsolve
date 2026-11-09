@@ -2,7 +2,7 @@
  * Issue #85: accuracy of issue #47's blueprint with `shareHistories`, in Node
  * on four threads at 32 bits (the WebAssembly engine).
  *
- *   node --import tsx bench/blueprint-share/measure.ts <rainbow|two-tone|monotone> <none|river|turn+river> [iterations] [sampling|sampling<p>,compact|compact-nearest,coarse]
+ *   node --import tsx bench/blueprint-share/measure.ts <rainbow|two-tone|monotone> <none|river> [iterations] [sampling|sampling<p>,compact|compact-nearest,coarse]
  *
  * The blueprint is `bench/nested`'s `1size-b3`: T's flop betting, one 0.75
  * bet on the turn and river with no raise, `runoutBuckets: 3`. It is solved
@@ -268,7 +268,7 @@ for (const key of keys) {
 	const board = turnBoard(bp, meta.turn);
 	const g = ([0, 1] as const).map((player) => {
 		const resolved = resolveSubgame(bp, node, board, {
-			player, gadget: 'unsafe', betting: later, iterations: RESOLVE_ITERATIONS, solve: { workers: 4 },
+			player, betting: later, iterations: RESOLVE_ITERATIONS, solve: { workers: 4 },
 		});
 		if (resolved.solution.spot.tree.nodeCount !== ref.spot.tree.nodeCount) throw new Error(`${key}: re-solved tree differs`);
 		return gain(resolved.solution, ref, player);

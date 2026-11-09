@@ -36,8 +36,11 @@ jobs:
       - name: Install
         run: npm install --no-audit --no-fund
 
+      - name: Lint
+        run: npm run lint
+
       - name: Type-check
-        run: npm run typecheck
+        run: npm run check
 
       # The browser checks skip themselves where no Playwright Chromium is
       # installed, as on a plain runner.

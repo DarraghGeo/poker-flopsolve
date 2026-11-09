@@ -22,13 +22,7 @@ for (const [name, v] of Object.entries(variants)) {
 	const walk = (node: number, agg: number, pathAgg: number) => {
 		const k = tree.kind[node];
 		if (k === NodeKind.Decision) {
-			const next = node + 0;
 			const r = tree.round[node];
-			const slots = (layout.offset[next] >= 0) ? tree.numEdges[node] : 0;
-			// slots of this node
-			let size = 0;
-			// compute size from layout: next decision offset difference is unreliable; recompute
-			size = slots;
 			nodesByRound[r]++;
 			const key = `r${r} agg${agg} prior${pathAgg}`;
 			const bytes = sizes.get(node)!;

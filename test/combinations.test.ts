@@ -3,7 +3,7 @@
  * (#86, #88, #94) appeared only when two options met, so every pair of
  *
  *   shareHistories, compactStorage, thinSizes, runoutBuckets, chanceSampling,
- *   coarseStart, lineRunouts, wasmStorage at 16 bits, resolveSubgame,
+ *   coarseStart, wasmStorage at 16 bits, resolveSubgame,
  *
  * and the two presets built from them (issue #115), `litePreset` (what
  * `solveLite` solves) and `largeTree`, each applied to the spot and settings
@@ -25,7 +25,7 @@ import { describe, expect, it } from 'vitest';
 import { parseCards } from '../src/cards.ts';
 import { engineAvailable } from '../src/engine.ts';
 import { createRun, defineSpot, litePreset, NodeKind, resolveSubgame } from '../src/index.ts';
-import type { Solution, SolveOptions, SolveRun, SpotConfig } from '../src/index.ts';
+import type { Solution, SolveOptions, SpotConfig } from '../src/index.ts';
 import { largeTree, wasmStorage } from '../src/wasm-storage.ts';
 import { compareStorage, copyStorage, storageArrays } from './wasm-storage-helpers.ts';
 
@@ -74,7 +74,6 @@ const OPTIONS: readonly Option[] = [
 		solve: { approximations: { coarseStart: { iterations: 6, runoutBuckets: 6 } } },
 		off: { solve: { approximations: { coarseStart: { iterations: 0 } } } },
 	},
-	{ name: 'lineRunouts', config: { lineRunouts: { aggressions: 1 } } },
 	// At 32 bits the engine runs as it always has, wasmStorage or not.
 	{ name: 'wasmStorage i16', solve: { precision: 'i16', wasmStorage }, off: { solve: { wasmStorage } } },
 	{ name: 'resolveSubgame', resolve: true },
@@ -103,15 +102,8 @@ const OPTIONS: readonly Option[] = [
 	},
 ];
 
-/** Pairs refused, with a pattern each refusal's message matches. */
-const REFUSED: Record<string, RegExp> = {
-	'shareHistories + lineRunouts': /lineRunouts does not combine with shareHistories or compactStorage/,
-	'compactStorage + lineRunouts': /lineRunouts does not combine with shareHistories or compactStorage/,
-	'chanceSampling + lineRunouts': /lineRunouts does not combine with chanceSampling, coarseStart/,
-	'coarseStart + lineRunouts': /lineRunouts does not combine with chanceSampling, coarseStart/,
-	'lineRunouts + litePreset': /lineRunouts does not combine with the lite blueprint/,
-	'lineRunouts + largeTree': /lineRunouts does not combine with chanceSampling, coarseStart/,
-};
+/** Pairs refused, with a pattern each refusal's message matches. Every pair runs today. */
+const REFUSED: Record<string, RegExp> = {};
 
 const ITERATIONS = 12;
 
@@ -160,7 +152,7 @@ function solveWith(parts: readonly Option[], workers: number, override: SolveOpt
 		if (resolve) {
 			run.close();
 			const node = riverNode(sol);
-			const board = sol.spot.resolveBoard([...sol.spot.board, ...parseCards('2h')], node).board;
+			const board = sol.spot.resolveBoard([...sol.spot.board, ...parseCards('2h')]).board;
 			const sub = resolveSubgame(sol, node, board, {
 				player: 0,
 				iterations: ITERATIONS,
@@ -187,9 +179,9 @@ const maxDiff = (a: ArrayLike<number>, b: ArrayLike<number>): number => {
 };
 
 describe.runIf(engineAvailable())('opt-in options in pairs', () => {
-	it('lists every pair once: 55 of them, 6 refused', () => {
-		expect(pairs).toHaveLength(55);
-		expect(Object.keys(REFUSED)).toHaveLength(6);
+	it('lists every pair once: 45 of them, none refused', () => {
+		expect(pairs).toHaveLength(45);
+		expect(Object.keys(REFUSED)).toHaveLength(0);
 		for (const name of Object.keys(REFUSED)) expect(pairs.map(([a, b]) => key(a, b))).toContain(name);
 	});
 
@@ -254,11 +246,7 @@ describe.runIf(engineAvailable())('opt-in options in pairs', () => {
 			const engine = createRun(defineSpot(config), { workers: 2, ...solve, ...(config.compactStorage ? { wasmStorage } : {}) });
 			const js = createRun(defineSpot(config), { workers: 1, ...solve, engine: 'js' });
 			try {
-				if (engine.engine !== 'wasm') {
-					// Only line runouts keep a pair on JavaScript.
-					expect([a.name, b.name]).toContain('lineRunouts');
-					return;
-				}
+				expect(engine.engine).toBe('wasm');
 				expect(js.engine).toBe('js');
 				for (let t = 1; t <= 4; t++) {
 					copyStorage(engine, js);
