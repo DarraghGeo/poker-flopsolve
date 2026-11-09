@@ -1498,6 +1498,12 @@ function updateCompact(
 	if (ctx.dcfr) {
 		({ keepPositive, keepNegative, keepSum } = dcfrFactors(iterWeight));
 		weight = 1;
+		const discounted = ctx.discounted;
+		if (discounted !== undefined && discounted !== null) {
+			// Another history already discounted this shared block this iteration.
+			if (discounted[block] === iterWeight) keepPositive = keepNegative = keepSum = 1;
+			discounted[block] = iterWeight;
+		}
 	}
 
 	if (plan.float) {

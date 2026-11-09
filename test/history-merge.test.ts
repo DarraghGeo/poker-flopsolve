@@ -128,6 +128,47 @@ describe('history merging', () => {
 		}
 	});
 
+	it('discounts a shared compact block once an iteration', () => {
+		// With 32-bit regrets kept, compact storage trains exactly as the
+		// 32-bit solve; shared, only if it too discounts a block once.
+		const shared = { ...flop, shareHistories: true };
+		const exact = createRun(defineSpot(shared), { workers: 1, engine: 'js', algorithm: 'dcfr' });
+		const compact = createRun(defineSpot({ ...shared, compactStorage: { from: 1, float: true, sums: false } }), {
+			workers: 1, algorithm: 'dcfr',
+		});
+		try {
+			exact.step(6);
+			compact.step(6);
+			const { tree } = compact.spot;
+			const layout = compact.solver.ctx.layout;
+			expect(layout.shared).toBe(true);
+			// One chunk, so offsets into it are offsets into all compact storage.
+			expect(compact.solver.ctx.compactRegret!.length).toBe(1);
+			// Each owner's slots, in storage order; an aliased node shares its owner's.
+			const owners = new Map<number, number>();
+			for (const node of tree.decisionNodes) {
+				if (tree.round[node] >= layout.compactFrom && !owners.has(layout.offset[node])) owners.set(layout.offset[node], node);
+			}
+			const starts = [...owners.keys()].sort((a, b) => a - b);
+			let compared = 0;
+			starts.forEach((start, k) => {
+				const node = owners.get(start)!;
+				const end = k + 1 < starts.length ? starts[k + 1] : layout.compactSlots;
+				const q = compact.solver.ctx.compactRegret![layout.compactChunk![node]];
+				const from = exact.solver.ctx.layout.offset[node];
+				for (let i = 0; i < end - start; i++) {
+					expect(q[start + i]).toBe(exact.solver.ctx.regret[from + i]);
+					compared++;
+				}
+			});
+			expect(compared).toBeGreaterThan(0);
+			expect(Array.from(compact.snapshot().strategyAt(0, 0).probs)).toEqual(Array.from(exact.snapshot().strategyAt(0, 0).probs));
+		} finally {
+			exact.close();
+			compact.close();
+		}
+	});
+
 	it('gives the same answer on threads', () => {
 		// Through the first discounts. Later the threads' different order of
 		// addition grows, as unshared, only faster: 1e-15 of a chip at two
