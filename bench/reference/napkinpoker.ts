@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import { comboIndex, COMBOS, parseCard } from '../../src/cards.ts';
 import type { Spot, SpotConfig } from '../../src/index.ts';
-import { ActionKind, NodeKind } from '../../src/tree.ts';
+import { NodeKind } from '../../src/tree.ts';
 
 const HERE = join(dirname(fileURLToPath(import.meta.url)), 'napkinpoker');
 
@@ -81,7 +81,7 @@ let spotCache: NapkinSpot[] | undefined;
 
 /** Every stored spot, by id. */
 export function napkinSpots(): NapkinSpot[] {
-	if (spotCache) return spotCache;
+	if (spotCache) return [...spotCache];
 	const cards = JSON.parse(readFileSync(join(HERE, 'cards.json'), 'utf8')) as Record<
 		string,
 		{ turns: string[]; rivers: string[] }
@@ -101,7 +101,7 @@ export function napkinSpots(): NapkinSpot[] {
 				rivers: cards[id]?.rivers ?? [],
 			};
 		});
-	return spotCache;
+	return [...spotCache];
 }
 
 /** A stored decision node. EVs are in chips, relative to the node: see README. */
@@ -125,7 +125,10 @@ export interface NapkinNode {
 	readonly actions: readonly string[];
 	/** The actor's combinations, as `COMBO_CARDS` indices. */
 	readonly combos: Uint16Array;
-	/** The actor's reach per combination (relative; the stored ×10000 kept as is). */
+	/**
+	 * The actor's reach per combination, in range-weight units: at its first
+	 * decision this is exactly its configured range weight.
+	 */
 	readonly weight: Float64Array;
 	/** `[action][i]`: probability, for combination `combos[i]`. */
 	readonly strategy: Float64Array[];
@@ -138,9 +141,22 @@ export function comboOf(name: string): number {
 	return comboIndex(parseCard(name.slice(0, 2)), parseCard(name.slice(2, 4)));
 }
 
-/** napkinpoker exports some arrays as JSON text inside the JSON. */
-const list = <T>(value: unknown): T[] =>
-	(typeof value === 'string' ? JSON.parse(value.replace(/'/g, '"')) : value) as T[];
+/** One line of `flop.jsonl.gz` / `turn.jsonl.gz`, as stored. */
+interface StoredNode {
+	readonly id: string;
+	readonly board: string;
+	readonly path: string[];
+	readonly actor: 0 | 1;
+	readonly pot: number;
+	readonly facing: number;
+	readonly stack: number;
+	readonly reach: [number, number];
+	readonly actions: string[];
+	readonly names: string[];
+	readonly w: number[];
+	readonly s: number[][];
+	readonly ev: (number | null)[][];
+}
 
 const nodeCache = new Map<string, NapkinNode[]>();
 
@@ -150,37 +166,32 @@ const nodeCache = new Map<string, NapkinNode[]>();
  */
 export function napkinNodes(street: 'flop' | 'turn'): NapkinNode[] {
 	const cached = nodeCache.get(street);
-	if (cached) return cached;
+	if (cached) return [...cached];
 	const text = gunzipSync(readFileSync(join(HERE, `${street}.jsonl.gz`))).toString('utf8');
 	const nodes = text
 		.split('\n')
 		.filter((line) => line.length > 0)
 		.map((line): NapkinNode => {
-			const row = JSON.parse(line) as Record<string, unknown>;
-			const names = list<string>(row.names);
-			const actions = list<string>(row.actions);
-			const s = list<number[]>(row.s);
-			const ev = list<(number | null)[]>(row.ev);
-			const id = row.id as string;
+			const row = JSON.parse(line) as StoredNode;
 			return {
-				id,
-				spot: id.split('-')[0],
-				board: row.board as string,
-				path: list<string>(row.path),
-				actor: row.actor as 0 | 1,
-				pot: row.pot as number,
-				facing: row.facing as number,
-				stack: row.stack as number,
-				reach: row.reach as [number, number],
-				actions,
-				combos: Uint16Array.from(names, comboOf),
-				weight: Float64Array.from(list<number>(row.w)),
-				strategy: s.map((a) => Float64Array.from(a, (p) => p / 1000)),
-				ev: ev.map((a) => Float64Array.from(a, (v) => (v === null ? Number.NaN : v / 100))),
+				id: row.id,
+				spot: row.id.split('-')[0],
+				board: row.board,
+				path: row.path,
+				actor: row.actor,
+				pot: row.pot,
+				facing: row.facing,
+				stack: row.stack,
+				reach: row.reach,
+				actions: row.actions,
+				combos: Uint16Array.from(row.names, comboOf),
+				weight: Float64Array.from(row.w, (w) => w / 10000),
+				strategy: row.s.map((a) => Float64Array.from(a, (p) => p / 1000)),
+				ev: row.ev.map((a) => Float64Array.from(a, (v) => (v === null ? Number.NaN : v / 100))),
 			};
 		});
 	nodeCache.set(street, nodes);
-	return nodes;
+	return [...nodes];
 }
 
 /** Where a stored path leads in this solver's tree. */
@@ -192,40 +203,35 @@ export interface NodeMatch {
 	readonly labels: string[];
 	/** Each label's edge index, in the same order. */
 	readonly edges: number[];
+	/** Cards dealt along the path, in order. */
+	readonly dealt: string[];
 }
+
+/** Stored action letter per `ActionKind`: fold, check, call, bet, raise, all-in. */
+const LETTERS = ['F', 'X', 'C', 'B', 'R', 'A'];
 
 /**
  * Follow a stored path through a spot's tree. Bets and raises match by their
- * within-street amount to the nearest unit (a hundredth of a chip, at the
- * default chip scale), which absorbs the stored solver's rounding.
+ * within-street amount to the nearest unit of the stored labels (a hundredth
+ * of a chip), which absorbs the stored solver's rounding. Dealt cards are
+ * returned, not followed: the tree is the same after every card.
  *
  * @throws if a step has no matching action
  */
 export function nodeAt(spot: Spot, path: readonly string[]): NodeMatch {
 	const { tree } = spot;
-	const scale = spot.source.chipScale ?? 100;
-	const toLabel = scale / 100;
+	const perLabel = spot.chipScale / 100;
 	let node = 0;
 	let base = 0;
+	const dealt: string[] = [];
 	const describe = (at: number): { labels: string[]; edges: number[] } => {
 		const labels: string[] = [];
 		const edges: number[] = [];
 		for (let e = tree.firstEdge[at]; e < tree.firstEdge[at] + tree.numEdges[at]; e++) {
-			const amount = Math.round((tree.edgeTarget[e] - base) / toLabel);
-			const kind = tree.edgeAction[e];
-			const label =
-				kind === ActionKind.Fold
-					? 'F'
-					: kind === ActionKind.Check
-						? 'X'
-						: kind === ActionKind.Call
-							? 'C'
-							: kind === ActionKind.Bet
-								? `B${amount}`
-								: kind === ActionKind.Raise
-									? `R${amount}`
-									: `A${amount}`;
-			labels.push(label);
+			const letter = LETTERS[tree.edgeAction[e]];
+			if (letter === undefined) throw new Error(`unknown action kind ${tree.edgeAction[e]}`);
+			const sized = letter === 'B' || letter === 'R' || letter === 'A';
+			labels.push(sized ? `${letter}${Math.round((tree.edgeTarget[e] - base) / perLabel)}` : letter);
 			edges.push(e);
 		}
 		return { labels, edges };
@@ -233,8 +239,9 @@ export function nodeAt(spot: Spot, path: readonly string[]): NodeMatch {
 	for (const step of path) {
 		if (step.startsWith('d')) {
 			if (tree.kind[node] !== NodeKind.Chance) throw new Error(`"${step}" at a node that deals no card`);
+			dealt.push(step.slice(1));
 			node = tree.edgeChild[tree.firstEdge[node]];
-			base = (tree.pot[node] - Math.round(spot.source.pot * scale)) / 2;
+			base = (tree.pot[node] - spot.potUnits) / 2;
 			continue;
 		}
 		if (tree.kind[node] !== NodeKind.Decision) throw new Error(`"${step}" at a node that is not a decision`);
@@ -244,7 +251,7 @@ export function nodeAt(spot: Spot, path: readonly string[]): NodeMatch {
 		node = tree.edgeChild[edges[i]];
 	}
 	if (tree.kind[node] !== NodeKind.Decision) throw new Error('the path does not end at a decision');
-	return { node, actor: tree.player[node], ...describe(node) };
+	return { node, actor: tree.player[node], ...describe(node), dealt };
 }
 
 /** Index of the label matching a stored one, amounts within one unit; -1 if none. */
@@ -256,7 +263,25 @@ export function matchLabel(labels: readonly string[], stored: string): number {
 	);
 }
 
-/** A stored node's combination list as a 1326-long weight vector (handy for range checks). */
+/**
+ * Pair each stored action with one of ours, one to one: entry `i` is the
+ * index in `labels` of stored action `i`, or null if the two menus differ
+ * (an action unmatched, matched twice, or a different count).
+ */
+export function pairActions(labels: readonly string[], stored: readonly string[]): number[] | null {
+	if (labels.length !== stored.length) return null;
+	const used = new Set<number>();
+	const out: number[] = [];
+	for (const action of stored) {
+		const i = matchLabel(labels, action);
+		if (i < 0 || used.has(i)) return null;
+		used.add(i);
+		out.push(i);
+	}
+	return out;
+}
+
+/** A stored node's reach as a 1326-long weight vector, in range-weight units. */
 export function weightsOf(node: NapkinNode): Float64Array {
 	const out = new Float64Array(COMBOS);
 	node.combos.forEach((combo, i) => (out[combo] = node.weight[i]));

@@ -13,12 +13,12 @@ They were solved with postflop-solver 9d1509f through poker-huerosolver's bench 
 
 ## The spots
 
-70 flops: 31 two-tone, 23 rainbow, 7 paired rainbow, 6 paired two-tone and 3 monotone. Ranges are realistic and weighted (e.g. BU vs BB in a single-raised pot, 5.5 bb pot and 97.5 bb behind), and the pot types vary (`potType`).
+70 flops: 31 two-tone, 23 rainbow, 7 paired rainbow, 6 paired two-tone and 3 monotone. Ranges are realistic and weighted (e.g. BU vs BB). There are 51 single-raised pots (5.5 bb pot, 97.5 bb behind) and 19 3-bet pots (`potType`).
 
-Betting per street, from each config's `streets`:
-- bet sizes in percent of the pot (33/75 on the flop, 75 on the turn and river in most spots);
-- raises to 3× the bet faced, one raise per street;
-- the all-in.
+Every spot has the same betting:
+- the flop offers 33% and 75% of the pot; the turn and river offer 75%;
+- raises go to 3× the bet faced, one raise per street;
+- the all-in is offered on every street.
 
 `toConfig` maps these to a `SpotConfig`, as napkinpoker's `tools/bench/flopsolve/flop-vs-pfrs.mjs` does. `test/napkinpoker-reference.test.ts` checks that every stored node is a node of the tree this solver builds from its config, with the same actor and the same actions at the same amounts. So both solvers solve the same game.
 
@@ -43,7 +43,11 @@ One JSON object per line:
 | `s` | Strategy `[action][combo]`, probability ×1000 |
 | `ev` | EV `[action][combo]`, chips ×100; `null` where the solver gave none |
 
-`napkinNodes()` parses all of this into combination indices (as `COMBO_CARDS`), probabilities and chips.
+`napkinNodes()` parses all of this:
+- combinations become indices, as `COMBO_CARDS`;
+- `w` becomes range-weight units (÷10000);
+- `s` becomes probabilities;
+- `ev` becomes chips.
 
 ## Caveats
 
