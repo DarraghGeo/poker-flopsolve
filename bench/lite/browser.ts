@@ -139,6 +139,9 @@ for (const workers of workerList) {
 				if (settled) { stopped = 'settled'; break; }
 			}
 			const bp = run.snapshot();
+			// The run holds the engine threads until closed; its snapshot stays usable.
+			const blueprint = { workers: run.workers, engine: run.engine };
+			run.close();
 			// The most-reached turn: check, check, then the first sampled turn card.
 			const tree = spot.tree;
 			const chance = tree.edgeChild[tree.firstEdge[tree.edgeChild[tree.firstEdge[0]]]];
@@ -151,10 +154,9 @@ for (const workers of workerList) {
 			});
 			const resolveMs = performance.now() - t;
 			const out = {
-				workers: run.workers, engine: run.engine, estimateBytes: spot.estimate.bytes, stopped, iterations: done, ms, checks,
+				...blueprint, estimateBytes: spot.estimate.bytes, stopped, iterations: done, ms, checks,
 				resolveMs, resolveWorkers: resolved.solution.workers,
 			};
-			run.close();
 			return out;
 		}
 		`,
