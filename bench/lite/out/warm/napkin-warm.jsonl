@@ -1,0 +1,2 @@
+{"id":"f00","potType":"SRP","board":"Kc Ks 7h","variant":"cold","iterations":460,"seconds":55.6,"loss":[0.0003,0.0141],"napkinLoss":[0,0.297],"napkinSeconds":0.9,"trail":"20:NaN 40:0.206 60:0.123 80:0.087 100:0.062 200:0.025 300:0.016 400:0.009"}
+{"id":"f00","potType":"SRP","board":"Kc Ks 7h","variant":"r1","iterations":400,"seconds":52.2,"loss":[0.0004,0.0201],"napkinLoss":[0,0.297],"napkinSeconds":0.9,"trail":"20:NaN 40:0.235 60:0.105 80:0.084 100:0.060 200:0.028 300:0.016 400:0.007"}
