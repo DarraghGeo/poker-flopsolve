@@ -7,7 +7,8 @@
  * `json` picks the blueprint and what is done with it:
  * - `share`: 'river' (default), 'none' or 'turn+river'; `weighting`: 'counterfactual';
  * - `keep`: lines whose rivers stay unshared (`ShareHistories.keepLines`),
- *   or `keepTop`/`keepReach`: the lines `turnLineReach` ranks highest after a
+ *   or `keepTop`/`keepReach`/`keepMiB` (`linesWithin`, storage in MiB): the
+ *   lines `turnLineReach` ranks highest after a
  *   `pick`-iteration shared solve (default 80), the blueprint then starting
  *   cold;
  * - `checkpoints`: iteration counts to measure at (default [400]);
@@ -31,7 +32,7 @@
  */
 
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { COMBOS, createRun, defineSpot, parseCards, turnLineReach } from '../../src/index.ts';
+import { COMBOS, createRun, defineSpot, linesWithin, parseCards, turnLineReach } from '../../src/index.ts';
 import { refineLines } from './refine.ts';
 import type { Approximations, Solution, SolveRun, SpotConfig } from '../../src/index.ts';
 import { Mode } from '../../src/cfr.ts';
@@ -44,6 +45,8 @@ interface Plan {
 	keep?: string[];
 	keepTop?: number;
 	keepReach?: number;
+	/** Keep the most-reached lines whose storage fits this many MiB (`linesWithin`). */
+	keepMiB?: number;
 	pick?: number;
 	checkpoints?: number[];
 	sampling?: boolean;
@@ -80,7 +83,7 @@ const started = performance.now();
 let keep = plan.keep ?? [];
 let pickSeconds = 0;
 let pre: SolveRun | null = null;
-if (plan.keepTop !== undefined || plan.keepReach !== undefined) {
+if (plan.keepTop !== undefined || plan.keepReach !== undefined || plan.keepMiB !== undefined) {
 	pre = createRun(defineSpot(configWith([])), { workers, approximations });
 	pre.step(plan.pick ?? 80);
 	const ranked = turnLineReach(pre.snapshot());
@@ -88,9 +91,9 @@ if (plan.keepTop !== undefined || plan.keepReach !== undefined) {
 		pre.close();
 		pre = null;
 	}
-	keep = ranked
-		.filter((l, i) => (plan.keepTop !== undefined ? i < plan.keepTop : l.share >= plan.keepReach!))
-		.map((l) => l.line);
+	keep = plan.keepMiB !== undefined
+		? linesWithin(pre!.snapshot(), plan.keepMiB * MiB)
+		: ranked.filter((l, i) => (plan.keepTop !== undefined ? i < plan.keepTop : l.share >= plan.keepReach!)).map((l) => l.line);
 	pickSeconds = (performance.now() - started) / 1000;
 	console.log(`picked ${keep.length} lines in ${pickSeconds.toFixed(0)} s: ${ranked.slice(0, Math.max(keep.length, 4)).map((l) => `${l.line} ${(100 * l.share).toFixed(1)}%`).join('; ')}`);
 }

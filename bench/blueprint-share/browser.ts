@@ -4,7 +4,7 @@
  * when exploitability and the root play stop improving, seconds per
  * iteration, and the tab's peak memory.
  *
- *   [KEEP_TOP=k [PICK=80] [WARM=1]] node --import tsx bench/blueprint-share/browser.ts <board> <none|river|turn+river> [workers,...] [cap] [sampling]
+ *   [KEEP_TOP=k | KEEP_MIB=m] [PICK=80] [WARM=1] node --import tsx bench/blueprint-share/browser.ts <board> <none|river|turn+river> [workers,...] [cap] [sampling]
  *
  * The clock counts solving only (`step`). Every 20 iterations, off the
  * clock, it measures exploitability and the root play: OOP at the root and
@@ -45,6 +45,8 @@ const config: SpotConfig = { ...blueprintOf(boardName, shareName), maxBytes: 3.5
 // from that solve (a warm start, average included), both alive at once; else
 // it starts cold once the picking solve is closed.
 const KEEP_TOP = process.env.KEEP_TOP === undefined ? 0 : Number(process.env.KEEP_TOP);
+// KEEP_MIB=m instead keeps the most-reached lines that fit m MiB (`linesWithin`).
+const KEEP_MIB = process.env.KEEP_MIB === undefined ? 0 : Number(process.env.KEEP_MIB);
 const PICK = Number(process.env.PICK ?? 80);
 const WARM = process.env.WARM === '1';
 const reference = JSON.parse(
@@ -95,7 +97,7 @@ for (const workers of workerList) {
 	}, 100);
 	const out = await runInBrowser<Out>(
 		`
-		import { createRun, defineSpot, turnLineReach } from './src/index.ts';
+		import { createRun, defineSpot, linesWithin, turnLineReach } from './src/index.ts';
 		import { enableThreads } from './src/threads.ts';
 		const CONFIG = ${JSON.stringify(config)};
 		const REF = ${JSON.stringify(refActions)};
@@ -109,11 +111,13 @@ for (const workers of workerList) {
 			let solveMs = 0;
 			let done = 0;
 			let kept = [];
-			if (${KEEP_TOP} > 0) {
+			if (${KEEP_TOP} > 0 || ${KEEP_MIB} > 0) {
 				const t = performance.now();
 				const pre = createRun(spot, options);
 				pre.step(${PICK});
-				kept = turnLineReach(pre.snapshot()).slice(0, ${KEEP_TOP}).map((l) => l.line);
+				kept = ${KEEP_MIB} > 0
+					? linesWithin(pre.snapshot(), ${KEEP_MIB} * 2 ** 20)
+					: turnLineReach(pre.snapshot()).slice(0, ${KEEP_TOP}).map((l) => l.line);
 				const hybrid = defineSpot({ ...CONFIG, shareHistories: { keepLines: kept } });
 				if (${WARM}) {
 					run = createRun(hybrid, { ...options, warmStart: pre });
@@ -194,7 +198,7 @@ for (const workers of workerList) {
 	// Every test holds trivially at the last check, which proves nothing: count that as never.
 	const proven = (i: number): number => (i === checks.length - 1 ? -1 : i);
 	console.log(
-		`${boardName} ${shareName}${approxNames.length ? ` +${approxNames.join('+')}` : ''}${KEEP_TOP ? ` keep top ${KEEP_TOP}${WARM ? ' warm' : ''} (${out.kept.join('; ')})` : ''}, ${out.workers} thread(s), ${out.engine}: ` +
+		`${boardName} ${shareName}${approxNames.length ? ` +${approxNames.join('+')}` : ''}${KEEP_TOP || KEEP_MIB ? ` keep ${KEEP_MIB ? `${KEEP_MIB} MiB` : `top ${KEEP_TOP}`}${WARM ? ' warm' : ''} (${out.kept.join('; ')})` : ''}, ${out.workers} thread(s), ${out.engine}: ` +
 			`storage ${(out.estimateBytes / MiB).toFixed(0)} MiB, renderer peak RSS ${(rss / MiB).toFixed(0)} MiB, ` +
 			`${(last.solveMs / last.iterations).toFixed(0)} ms/iteration`,
 	);
@@ -208,5 +212,5 @@ for (const workers of workerList) {
 			.map((c) => `${c.iterations}:${c.exploitability.toFixed(2)}%,${c.loss.map((x) => x.toFixed(3)).join('/')},${c.change.map((x) => (100 * x).toFixed(1)).join('/')}@${(c.solveMs / 1000).toFixed(0)}s`)
 			.join(' ')}`,
 	);
-	console.log(JSON.stringify({ board: boardName, share: shareName, approx: approxNames, keepTop: KEEP_TOP, warm: WARM, pick: PICK, rss, ...out }));
+	console.log(JSON.stringify({ board: boardName, share: shareName, approx: approxNames, keepTop: KEEP_TOP, keepMiB: KEEP_MIB, warm: WARM, pick: PICK, rss, ...out }));
 }

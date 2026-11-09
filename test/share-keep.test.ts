@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { createRun, defineSpot, NodeKind, turnLineReach } from '../src/index.ts';
+import { createRun, defineSpot, linesWithin, NodeKind, turnLineReach } from '../src/index.ts';
 import type { Spot, SpotConfig } from '../src/index.ts';
 
 const flop: SpotConfig = {
@@ -93,7 +93,7 @@ describe('shareHistories.keepLines', () => {
 	});
 });
 
-describe('turnLineReach and refineLines', () => {
+describe('turnLineReach and linesWithin', () => {
 	const config: SpotConfig = { ...flop, shareHistories: true };
 
 	it('ranks the flop lines by reach, summing to the pairs that see a turn', () => {
@@ -127,6 +127,25 @@ describe('turnLineReach and refineLines', () => {
 			} finally {
 				kept.close();
 			}
+		} finally {
+			run.close();
+		}
+	});
+
+	it('keeps the most-reached lines that fit a byte budget', () => {
+		const run = createRun(defineSpot(config), { workers: 1 });
+		try {
+			run.step(30);
+			const sol = run.snapshot();
+			const ranked = turnLineReach(sol).map((l) => l.line);
+			const bytes = (lines: readonly string[]): number =>
+				defineSpot({ ...flop, shareHistories: lines.length ? { keepLines: lines } : true }).estimate.bytes;
+			const budget = (bytes(ranked.slice(0, 2)) + bytes(ranked.slice(0, 3))) / 2;
+			expect(bytes(ranked.slice(0, 3))).toBeGreaterThan(bytes(ranked.slice(0, 2)));
+			expect(linesWithin(sol, budget)).toEqual(ranked.slice(0, 2));
+			expect(linesWithin(sol, bytes(ranked.slice(0, 2)))).toEqual(ranked.slice(0, 2));
+			expect(linesWithin(sol, defineSpot(flop).estimate.bytes)).toEqual(ranked);
+			expect(linesWithin(sol, 1)).toEqual([]);
 		} finally {
 			run.close();
 		}

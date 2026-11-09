@@ -53,7 +53,7 @@ export { activeCombos, parseRange, rangeWeight } from './range.ts';
 export type { ResolvedBoard } from './runouts.ts';
 export type { WarmStartReport } from './warm.ts';
 export { resolveSubgame } from './resolve.ts';
-export { turnLineReach } from './hybrid.ts';
+export { linesWithin, turnLineReach } from './hybrid.ts';
 export type { LineReach } from './hybrid.ts';
 export type { Gadget, ResolvedSubgame, ResolveOptions } from './resolve.ts';
 export { simdAvailable } from './kernels.ts';
@@ -467,8 +467,37 @@ export interface ShareHistories {
 	 * `Solution.path` names a node (a flop line opening the turn reads like
 	 * `"check check /"`). Every node at or below a listed one is left out of
 	 * sharing, and so is any round root above one. The rest share as
-	 * before. Unset or empty, nothing is kept. See `keptLines` for picking
-	 * them by reach (issue #101).
+	 * before. Unset or empty, nothing is kept. A warm start between two
+	 * spots that differ only here carries the average strategy too, as for
+	 * the same spot.
+	 *
+	 * What it is for (issue #101): a turn re-solved from a shared blueprint
+	 * (`resolveSubgame`) inherits only the ranges the blueprint brings to
+	 * it, and sharing distorts those. Its flop play is stored unshared, but
+	 * it learns from river values that several histories share. Keeping the
+	 * few most-reached flop lines unshared gives the flop exact values
+	 * where most of the play is, and that straightens the ranges on the
+	 * lines left shared too. Pick them with `turnLineReach` from a short
+	 * shared solve (80 iterations), close that, and solve the hybrid spot
+	 * from cold. Continuing from the picking solve instead is worse: its
+	 * average lingers.
+	 *
+	 * Measured on issue #47's blueprint (`1size-b3`), 400 iterations, against
+	 * the unshared blueprint solved to 0.045% of pot. "Re-solve gain" is the
+	 * opponent's best response to an unsafe turn re-solve at the full
+	 * three-size betting, under the unshared blueprint's ranges, in % of the
+	 * subgame pot, weighted by line reach, refining OOP / IP; the unshared
+	 * blueprint's own re-solves give 0.67 / 0.50. On AsKh7d:
+	 *
+	 * | kept | storage, f32 | re-solve gain | root EV error, mean |
+	 * |---|---|---|---|
+	 * | none (plain sharing) | 173 MiB | 3.05 / 2.15 | 0.57 / 0.46 |
+	 * | top 1 | 201 MiB | 2.48 / 1.58 | 0.46 / 0.53 |
+	 * | top 3 | 285 MiB | 1.10 / 0.83 | 0.24 / 0.21 |
+	 * | top 6 | 383 MiB | 1.16 / 0.65 | 0.23 / 0.27 |
+	 * | all (unshared) | 707 MiB | 0.67 / 0.50 | 0 |
+	 *
+	 * HYBRID_TEXTURES
 	 */
 	readonly keepLines?: readonly string[];
 }
@@ -1411,6 +1440,25 @@ export interface Approximations {
 	 *   is choice-free, and those call frequencies are mixed bluff-catching
 	 *   choices that a best response recomputed each iteration does not
 	 *   converge to.
+	 *
+	 * Recovering turn re-solves from a `shareHistories` blueprint (#101):
+	 * `ShareHistories.keepLines` is what is offered. Measured and left out,
+	 * on AsKh7d (`bench/blueprint-share/recover.ts`, numbers in % of the
+	 * subgame pot as `keepLines` gives them, plain sharing 3.05 / 2.15):
+	 *
+	 * - A re-solve with a cold river: that is what `resolveSubgame` already
+	 *   does at new betting. `subgameAt` hands over only the ranges, and the
+	 *   whole gap is the refined player's own range. Swapping in the
+	 *   unshared blueprint's range for that player alone gives 0.67 / 0.54.
+	 * - More blueprint iterations: 800 gave 2.48 / 2.36. The ranges' distance
+	 *   from the unshared ones went only from 0.086 to 0.081 (total
+	 *   variation, OOP), so the ranges do not settle later than the root.
+	 * - `weighting: 'counterfactual'`: 7.2 / 6.5, 15% of pot exploitable.
+	 * - Refining the opened line: the shared solve continued 60 iterations
+	 *   with that line unshared, average included, then re-solved: 2.51 /
+	 *   1.89. The 400 shared iterations' average barely moves in 60.
+	 * - Keeping the top 3 lines but continuing from the picking solve
+	 *   rather than from cold: 1.66 / 0.89, against 1.10 / 0.83.
 	 */
 	/**
 	 * Chance sampling with baselines (VR-MCCFR; Schmid et al., 2019). Each
