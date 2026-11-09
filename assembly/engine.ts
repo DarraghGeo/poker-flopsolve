@@ -693,7 +693,7 @@ function sampledValue(
 	return value;
 }
 
-/** `TIE_TOLERANCE` in src/cfr.ts: 2^-20, eight float32 ulps. */
+/** `TIE_TOLERANCE` in src/cfr.ts: 2^-20, 8 to 16 float32 ulps of the larger value. test/ties.test.ts holds the two equal. */
 const TIE_TOLERANCE: f32 = 9.5367431640625e-7;
 
 /**

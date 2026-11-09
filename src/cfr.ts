@@ -998,8 +998,11 @@ function normalise(
 
 /**
  * How near, relative to the larger of the two, an action's value must be to
- * the hand's value at the node to count as tied with it: 2^-20, eight
- * float32 ulps. See `snapTies`.
+ * the hand's value at the node to count as tied with it: 2^-20, 8 to 16
+ * float32 ulps of the larger. One tolerance for both engines, so they snap
+ * alike; under `precision: 'f64'` it also drops real gaps that small, which
+ * moves an answer by at most a millionth of the hand's value. Mirrored in
+ * assembly/engine.ts. See `snapTies`.
  */
 export const TIE_TOLERANCE = 2 ** -20;
 
@@ -1026,9 +1029,9 @@ export function snapTies(actionValues: Float64Array, out: Float64Array, actions:
 			const v = actionValues[offset + i];
 			const value = out[i];
 			const gap = v < value ? value - v : v - value;
-			const a = v < 0 ? -v : v;
-			const b = value < 0 ? -value : value;
-			if (gap <= TIE_TOLERANCE * (a > b ? a : b)) actionValues[offset + i] = value;
+			const size = v < 0 ? -v : v;
+			const valueSize = value < 0 ? -value : value;
+			if (gap <= TIE_TOLERANCE * (size > valueSize ? size : valueSize)) actionValues[offset + i] = value;
 		}
 	}
 }

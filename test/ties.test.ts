@@ -10,6 +10,7 @@
  * without ties.
  */
 
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { snapTies, TIE_TOLERANCE } from '../src/cfr.ts';
 import { engineAvailable } from '../src/engine.ts';
@@ -56,6 +57,13 @@ describe('snapTies', () => {
 		const out = Float64Array.from([100, 1.5e-3]);
 		snapTies(actionValues, out, 2, 2);
 		expect(Array.from(actionValues)).toEqual([100, 1e-3, 100, 2e-3]);
+	});
+
+	it('uses the same tolerance as the WebAssembly engine', () => {
+		const source = readFileSync(new URL('../assembly/engine.ts', import.meta.url), 'utf8');
+		const match = /const TIE_TOLERANCE: f32 = ([0-9.e+-]+);/.exec(source);
+		expect(match).not.toBeNull();
+		expect(Number(match![1])).toBe(TIE_TOLERANCE);
 	});
 
 	it('leaves values near zero alone unless they are ties of each other', () => {
