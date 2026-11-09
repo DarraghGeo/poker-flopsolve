@@ -61,4 +61,5 @@ Re-solving and threads:
 - The record of approximations measured and left out moved from the `Approximations` type to
   [docs/APPROXIMATIONS.md](docs/APPROXIMATIONS.md) (#115).
 - Both presets are in the options pair matrix and scored against napkinpoker's reference solves in
-  `npm test` (#103, #115).
+  `npm test` (#103, #115). Those fixtures moved to the private napkinpoker repository (#119); the
+  scoring test skips where they are absent.
