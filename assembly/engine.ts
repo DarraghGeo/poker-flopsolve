@@ -591,7 +591,7 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 			base, sumBase, actions, n, reachMe, strategy, actionValues, out,
 		);
 	} else if (STORAGE && isTraverser && mode === TRAIN && applyUpdates && regretKind === I16) {
-		updateI16(<usize>(i32At(blockOffset, node) + board), slot, base, sumBase, actions, n, reachMe, strategy, actionValues, out);
+		updateI16(<usize>(i32At(blockOffset, node) + board), node, slot, base, sumBase, actions, n, reachMe, strategy, actionValues, out);
 	} else if (isTraverser && mode === TRAIN && applyUpdates && (sampleRounds !== 0 || discounted !== 0) && dcfrRule) {
 		const index = <usize>(i32At(blockOffset, node) + board) << 2;
 		const savedPositive = keepPositive;
@@ -868,10 +868,15 @@ function matchAverageStored(sumBase: usize, sumKind: i32, regretBase: usize, reg
 	return Mathf.max(a, b);
 }
 
-/** Four of `dither`'s hashes (src/cfr.ts), for slots `slot` to `slot + 3`, as floats in [0, 1) to 24 bits. */
-@inline function ditherLanes(slot: i32, t: i32): v128 {
+/** `dither`'s iteration and salt (src/cfr.ts), mixed once for a block. */
+@inline function ditherMix(t: i32, salt: i32): i32 {
+	return (t * <i32>0x9e3779b1) ^ (salt * <i32>0x27d4eb2f);
+}
+
+/** Four of `dither`'s hashes, for slots `slot` to `slot + 3` under `ditherMix`, as floats in [0, 1) to 24 bits. */
+@inline function ditherLanes(slot: i32, mix: i32): v128 {
 	const slots = i32x4.add(i32x4.splat(slot), i32x4(0, 1, 2, 3));
-	let h = i32x4.mul(v128.xor(slots, i32x4.splat(t * <i32>0x9e3779b1)), i32x4.splat(<i32>0x85ebca6b));
+	let h = i32x4.mul(v128.xor(slots, i32x4.splat(mix)), i32x4.splat(<i32>0x85ebca6b));
 	h = v128.xor(h, i32x4.shr_u(h, 13));
 	h = i32x4.mul(h, i32x4.splat(<i32>0xc2b2ae35));
 	h = v128.xor(h, i32x4.shr_u(h, 16));
@@ -879,8 +884,8 @@ function matchAverageStored(sumBase: usize, sumKind: i32, regretBase: usize, reg
 }
 
 /** `dither` to 24 bits, as `ditherLanes` gives it. */
-@inline function ditherOne(slot: i32, t: i32): f32 {
-	let h: u32 = <u32>(slot ^ (t * <i32>0x9e3779b1)) * 0x85ebca6b;
+@inline function ditherOne(slot: i32, mix: i32): f32 {
+	let h: u32 = <u32>(slot ^ mix) * 0x85ebca6b;
 	h ^= h >>> 13;
 	h *= 0xc2b2ae35;
 	h ^= h >>> 16;
@@ -891,14 +896,15 @@ function matchAverageStored(sumBase: usize, sumKind: i32, regretBase: usize, reg
  * `updateQuantised` in src/cfr.ts: the 16-bit update of one block, decoded,
  * updated as the rule says and re-encoded against the block's new largest
  * value; regrets rounded to nearest, sums at random by the same hash of slot
- * and iteration. In 32-bit floats, four hands at a time, as the 32-bit update
- * is: a 16-bit value has far less precision than that, so the stored result
- * differs from JavaScript's float64 only where a value lies within float32
- * precision of a rounding boundary. The new values are staged in the action
- * values and the strategy, as JavaScript stages them.
+ * and iteration, salted with the history's `node` when storage is shared.
+ * In 32-bit floats, four hands at a time, as the 32-bit update is: a 16-bit
+ * value has far less precision than that, so the stored result differs
+ * from JavaScript's float64 only where a value lies within float32 precision
+ * of a rounding boundary. The new values are staged in the action values and
+ * the strategy, as JavaScript stages them.
  */
 function updateI16(
-	block: usize, slot: i32, base: usize, sumBase: usize, actions: i32, n: i32,
+	block: usize, node: i32, slot: i32, base: usize, sumBase: usize, actions: i32, n: i32,
 	reachMe: usize, strategy: usize, actionValues: usize, value: usize,
 ): void {
 	const regretAt = regretScale + (block << 3);
@@ -976,6 +982,8 @@ function updateI16(
 	const stepS = f32x4.splat(sumStep);
 	const half = f32x4.splat(0.5);
 	const sign = i32x4.splat(<i32>0x80000000);
+	// Which history is re-encoding a shared block; 0 keeps unshared streams as they were.
+	const mix = ditherMix(iteration, discounted !== 0 ? node : 0);
 	for (let a = 0; a < actions; a++) {
 		const row = <usize>a * rowStride;
 		const q = base + (<usize>(a * n) << 1);
@@ -986,7 +994,7 @@ function updateI16(
 			const r = f32x4.mul(v128.load(actionValues + row + o), stepR);
 			const rounded = i32x4.trunc_sat_f32x4_s(f32x4.add(r, v128.or(half, v128.and(r, sign))));
 			v128.store64_lane(q + (<usize>i << 1), i16x8.narrow_i32x4_s(rounded, rounded), 0);
-			const d = f32x4.add(f32x4.mul(v128.load(strategy + row + o), stepS), ditherLanes(slot + a * n + i, iteration));
+			const d = f32x4.add(f32x4.mul(v128.load(strategy + row + o), stepS), ditherLanes(slot + a * n + i, mix));
 			const sum = i32x4.trunc_sat_f32x4_u(d);
 			v128.store64_lane(s + (<usize>i << 1), i16x8.narrow_i32x4_u(sum, sum), 0);
 		}
@@ -994,7 +1002,7 @@ function updateI16(
 			const o = <usize>i << 2;
 			const r = load<f32>(actionValues + row + o) * regretStep;
 			store<i16>(q + (<usize>i << 1), <i16><i32>(r < 0 ? r - 0.5 : r + 0.5));
-			const d = load<f32>(strategy + row + o) * sumStep + ditherOne(slot + a * n + i, iteration);
+			const d = load<f32>(strategy + row + o) * sumStep + ditherOne(slot + a * n + i, mix);
 			store<u16>(s + (<usize>i << 1), <u16><u32>(d < 65535 ? d : <f32>65535));
 		}
 	}

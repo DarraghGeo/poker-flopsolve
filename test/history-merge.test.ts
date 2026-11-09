@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { createRun, defineSpot } from '../src/index.ts';
 import type { SolveOptions, SpotConfig } from '../src/index.ts';
+import { dither } from '../src/cfr.ts';
 import { aliasHistories } from '../src/history-merge.ts';
 import { ActionKind, NodeKind } from '../src/tree.ts';
 import type { Tree } from '../src/tree.ts';
@@ -138,6 +139,42 @@ describe('history merging', () => {
 			const four = run(shared, 2, { ...options, workers: 4 });
 			expect(four.ev).toBeCloseTo(one.ev, options.precision === 'f64' ? 9 : 4);
 			expect(four.exploitability).toBeCloseTo(one.exploitability, options.precision === 'f64' ? 9 : 3);
+		}
+	});
+
+	it('dithers 16-bit sums with a stream per shared history, and unshared ones as before', () => {
+		// Every history that reaches a shared block re-encodes it in an
+		// iteration; on one stream their random roundings pushed the same way
+		// (issue #94). `updateQuantised` salts the stream with the history's
+		// node when storage is shared and with 0 otherwise.
+		const unsalted = (slot: number, iteration: number) => {
+			let h = Math.imul(slot ^ Math.imul(iteration, 0x9e3779b1), 0x85ebca6b);
+			h ^= h >>> 13;
+			h = Math.imul(h, 0xc2b2ae35);
+			h ^= h >>> 16;
+			return (h >>> 0) / 4294967296;
+		};
+		for (const [slot, iteration] of [[0, 1], [7, 2], [12345, 99], [2 ** 30, 7]]) {
+			expect(dither(slot, iteration, 0)).toBe(unsalted(slot, iteration));
+			expect(dither(slot, iteration)).toBe(unsalted(slot, iteration));
+		}
+		// Two histories' nodes, neighbouring or not: their uniforms for one
+		// slot never coincide and are uncorrelated.
+		for (const [a, b] of [[0, 1], [41, 42], [3, 1000]]) {
+			let same = 0;
+			let product = 0;
+			const n = 20000;
+			for (let k = 0; k < n; k++) {
+				const slot = k * 7;
+				const iteration = 1 + (k % 50);
+				const u = dither(slot, iteration, a);
+				const v = dither(slot, iteration, b);
+				expect(u).not.toBe(v);
+				if (u < 0.5 === v < 0.5) same++;
+				product += u * v;
+			}
+			expect(Math.abs(same / n - 0.5)).toBeLessThan(0.02);
+			expect(Math.abs(product / n - 0.25)).toBeLessThan(0.01);
 		}
 	});
 
