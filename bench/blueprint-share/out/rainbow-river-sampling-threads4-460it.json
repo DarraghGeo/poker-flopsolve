@@ -1,0 +1,116 @@
+{
+ "tag": "rainbow-river-sampling-threads4-460it",
+ "storageBytes": 181089712,
+ "peakRss": 530530304,
+ "engine": "wasm",
+ "seconds": 36.336308396,
+ "iterations": 460,
+ "exploitability": 2.9987779161099843,
+ "best": 2.9987779161099843,
+ "history": [
+  {
+   "iterations": 20,
+   "seconds": 3.0797567519999998,
+   "exploitability": 57.29133498443274
+  },
+  {
+   "iterations": 40,
+   "seconds": 4.673868632,
+   "exploitability": 27.399466724610175
+  },
+  {
+   "iterations": 80,
+   "seconds": 7.653736207,
+   "exploitability": 12.885993087216509
+  },
+  {
+   "iterations": 120,
+   "seconds": 10.84315116,
+   "exploitability": 8.304436891810784
+  },
+  {
+   "iterations": 160,
+   "seconds": 13.834842205,
+   "exploitability": 6.226629376133575
+  },
+  {
+   "iterations": 200,
+   "seconds": 16.877343073,
+   "exploitability": 5.052455105874241
+  },
+  {
+   "iterations": 240,
+   "seconds": 19.8509453,
+   "exploitability": 4.325325955074542
+  },
+  {
+   "iterations": 280,
+   "seconds": 22.929738475999997,
+   "exploitability": 3.890716083630185
+  },
+  {
+   "iterations": 320,
+   "seconds": 25.915634125,
+   "exploitability": 3.568104701406408
+  },
+  {
+   "iterations": 360,
+   "seconds": 28.777233786,
+   "exploitability": 3.3135761842115765
+  },
+  {
+   "iterations": 400,
+   "seconds": 31.649203567,
+   "exploitability": 3.1460050796537202
+  },
+  {
+   "iterations": 440,
+   "seconds": 34.706998785,
+   "exploitability": 3.0396248991663026
+  },
+  {
+   "iterations": 460,
+   "seconds": 36.336182253000004,
+   "exploitability": 2.9987779161099843
+  }
+ ],
+ "rootError": [
+  {
+   "mae": 0.6290725253264097,
+   "max": 2.9634539590875875
+  },
+  {
+   "mae": 0.7338845106360202,
+   "max": 3.673433021779431
+  }
+ ],
+ "loss": [
+  {
+   "decision": "OOP at root",
+   "blueprint": {
+    "mean": 0.019061908564504158,
+    "max": 0.237121138600493
+   },
+   "reference": {
+    "mean": 0.008871218779525755,
+    "max": 0.04991630740054376
+   }
+  },
+  {
+   "decision": "IP after check",
+   "blueprint": {
+    "mean": 0.012764185790097115,
+    "max": 0.08568605903533211
+   },
+   "reference": {
+    "mean": 0.00831599431394231,
+    "max": 0.039456157042288
+   }
+  }
+ ],
+ "resolves": [],
+ "resolveGain": [
+  null,
+  null
+ ]
+}

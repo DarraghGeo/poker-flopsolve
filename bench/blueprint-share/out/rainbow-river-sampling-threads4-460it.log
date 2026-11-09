@@ -1,0 +1,19 @@
+rainbow-river-sampling-threads4-460it: 306 nodes, 1396 runouts, 173 MiB f32
+  20 it, 57.291%, 3 s
+  40 it, 27.399%, 5 s
+  80 it, 12.886%, 8 s
+  120 it, 8.304%, 11 s
+  160 it, 6.227%, 14 s
+  200 it, 5.052%, 17 s
+  240 it, 4.325%, 20 s
+  280 it, 3.891%, 23 s
+  320 it, 3.568%, 26 s
+  360 it, 3.314%, 29 s
+  400 it, 3.146%, 32 s
+  440 it, 3.040%, 35 s
+  460 it, 2.999%, 36 s
+blueprint: 460 it, 2.999% (best 2.999%), 36 s, engine wasm, peak RSS 506 MiB
+root EV error, % pot: OOP mean 0.629 max 2.963; IP mean 0.734 max 3.673
+  OOP at root: root play loses 0.0191% pot at reference values (max 0.237); the reference's own 0.0089%
+  IP after check: root play loses 0.0128% pot at reference values (max 0.086); the reference's own 0.0083%
+re-solve gain, weighted by line reach: OOP refined NaN%, IP refined NaN%

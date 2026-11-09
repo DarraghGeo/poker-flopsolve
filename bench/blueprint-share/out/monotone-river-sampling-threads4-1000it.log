@@ -1,0 +1,32 @@
+monotone-river-sampling-threads4-1000it: 306 nodes, 478 runouts, 47 MiB f32
+  20 it, 57.864%, 2 s
+  40 it, 26.702%, 3 s
+  80 it, 12.557%, 4 s
+  120 it, 7.626%, 6 s
+  160 it, 5.829%, 8 s
+  200 it, 4.634%, 10 s
+  240 it, 4.011%, 11 s
+  280 it, 3.699%, 13 s
+  320 it, 3.663%, 15 s
+  360 it, 3.714%, 17 s
+  400 it, 3.728%, 19 s
+  440 it, 3.693%, 20 s
+  480 it, 3.632%, 22 s
+  520 it, 3.573%, 24 s
+  560 it, 3.528%, 26 s
+  600 it, 3.506%, 27 s
+  640 it, 3.491%, 29 s
+  680 it, 3.484%, 31 s
+  720 it, 3.486%, 33 s
+  760 it, 3.492%, 34 s
+  800 it, 3.510%, 36 s
+  840 it, 3.521%, 38 s
+  880 it, 3.539%, 40 s
+  920 it, 3.563%, 41 s
+  960 it, 3.576%, 43 s
+  1000 it, 3.583%, 45 s
+blueprint: 1000 it, 3.583% (best 3.484%), 45 s, engine wasm, peak RSS 282 MiB
+root EV error, % pot: OOP mean 0.449 max 1.598; IP mean 1.131 max 6.965
+  OOP at root: root play loses 0.0498% pot at reference values (max 0.462); the reference's own 0.0468%
+  IP after check: root play loses 0.0264% pot at reference values (max 0.354); the reference's own 0.0248%
+re-solve gain, weighted by line reach: OOP refined NaN%, IP refined NaN%
