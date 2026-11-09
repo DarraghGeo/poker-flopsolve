@@ -63,6 +63,10 @@ const CASES: [string, SpotConfig, SolveOptions, number][] = [
 		'compact storage with chance sampling',
 		{ ...flop, compactStorage: { from: 1 } }, { approximations: { chanceSampling: { p: 0.5 } } }, 0.01,
 	],
+	[
+		'compact storage with shared histories and chance sampling',
+		{ ...flop, shareHistories: true, compactStorage: {} }, { approximations: { chanceSampling: { p: 0.5 } } }, 0.01,
+	],
 ];
 
 describe.runIf(engineAvailable())('16-bit and compact storage on the WebAssembly engine', () => {
@@ -93,7 +97,7 @@ describe.runIf(engineAvailable())('16-bit and compact storage on the WebAssembly
 	});
 
 	for (const [label, config, options, allowed] of CASES) {
-		for (const workers of options.approximations?.chanceSampling ? [1] : [1, 3]) {
+		for (const workers of [1, 3]) {
 			it(`follows the JavaScript update step for step: ${label}, ${workers} thread${workers > 1 ? 's' : ''}`, () => {
 				const js = createRun(defineSpot(config), { workers: 1, ...options });
 				const engine = createRun(defineSpot(config), { workers, ...options, wasmStorage });

@@ -20,13 +20,15 @@ import type { CompactPlan, Context, Mode } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
+	makeSampling,
 	makeSolver,
 	makeTerminalScratch,
 	matchupMass,
+	planSampling,
 	runoutWeights,
 } from './cfr.ts';
 import { defineSpot, makeRegretStore, makeSumStore, PRECISION_BYTES, reachWeighted } from './index.ts';
-import type { Precision, SpotConfig } from './index.ts';
+import type { Approximations, Precision, SpotConfig } from './index.ts';
 import { buildShowdownTable } from './showdown.ts';
 import { buildHandSpace } from './hands.ts';
 import type { WorkerSetup } from './parallel.ts';
@@ -34,12 +36,13 @@ import { lineBoards, lineScales } from './lines.ts';
 import { COMMAND, CONTROL } from './parallel.ts';
 
 const setup = workerData as WorkerSetup;
-const { config, dcfr, precision, simd, compact } = setup.payload as {
+const { config, dcfr, precision, simd, compact, approximations } = setup.payload as {
 	config: SpotConfig;
 	dcfr: boolean;
 	precision: Precision;
 	simd: boolean;
 	compact: CompactPlan | null;
+	approximations?: Approximations;
 };
 
 const spot = defineSpot(config);
@@ -94,6 +97,18 @@ const ctx: Context = {
 	discounted: layout.shared ? new Int32Array(layout.blocks) : null,
 	...(lines ? { lineStarts: lines.chanceStart, lineScales: lineScales(spot.runouts, spot.tree, active, hands) } : {}),
 };
+
+// Chance sampling's state lives in shared memory; this worker's runouts own
+// their baselines and marks there, as they own their storage.
+const samplingOptions = approximations?.chanceSampling;
+if (samplingOptions && setup.sampling) {
+	const [baseline, lastWalk, lastUpdate] = setup.sampling;
+	ctx.sampling = makeSampling(planSampling(spot.tree, spot.runouts, active, layout, samplingOptions), {
+		baseline: new Float32Array(baseline),
+		lastWalk: new Int32Array(lastWalk),
+		lastUpdate: new Int32Array(lastUpdate),
+	});
+}
 
 const solver = makeSolver(ctx);
 const control = new Int32Array(setup.control);

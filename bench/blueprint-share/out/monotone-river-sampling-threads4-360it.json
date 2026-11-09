@@ -1,0 +1,101 @@
+{
+ "tag": "monotone-river-sampling-threads4-360it",
+ "storageBytes": 48896660,
+ "peakRss": 289771520,
+ "engine": "wasm",
+ "seconds": 11.31351395,
+ "iterations": 360,
+ "exploitability": 3.7137788743034696,
+ "best": 3.6634458414788007,
+ "history": [
+  {
+   "iterations": 20,
+   "seconds": 1.297786712,
+   "exploitability": 57.863874020322434
+  },
+  {
+   "iterations": 40,
+   "seconds": 1.8994962439999996,
+   "exploitability": 26.701878292606658
+  },
+  {
+   "iterations": 80,
+   "seconds": 3.135202274,
+   "exploitability": 12.55714463224775
+  },
+  {
+   "iterations": 120,
+   "seconds": 4.2309600540000005,
+   "exploitability": 7.625745959534622
+  },
+  {
+   "iterations": 160,
+   "seconds": 5.395740835000001,
+   "exploitability": 5.828600806870468
+  },
+  {
+   "iterations": 200,
+   "seconds": 6.60456421,
+   "exploitability": 4.633730275018498
+  },
+  {
+   "iterations": 240,
+   "seconds": 7.720411028,
+   "exploitability": 4.010853514951011
+  },
+  {
+   "iterations": 280,
+   "seconds": 8.929839436,
+   "exploitability": 3.699019332543106
+  },
+  {
+   "iterations": 320,
+   "seconds": 10.140509398,
+   "exploitability": 3.6634458414788007
+  },
+  {
+   "iterations": 360,
+   "seconds": 11.3134218,
+   "exploitability": 3.7137788743034696
+  }
+ ],
+ "rootError": [
+  {
+   "mae": 1.5346631146349023,
+   "max": 5.094664823006028
+  },
+  {
+   "mae": 1.916630349868829,
+   "max": 10.802752266316276
+  }
+ ],
+ "loss": [
+  {
+   "decision": "OOP at root",
+   "blueprint": {
+    "mean": 0.05849085455231239,
+    "max": 0.533610721678798
+   },
+   "reference": {
+    "mean": 0.04684679070135949,
+    "max": 0.3922044580100419
+   }
+  },
+  {
+   "decision": "IP after check",
+   "blueprint": {
+    "mean": 0.03521233887531688,
+    "max": 0.3639744794281228
+   },
+   "reference": {
+    "mean": 0.02479598233976706,
+    "max": 0.20305978299799676
+   }
+  }
+ ],
+ "resolves": [],
+ "resolveGain": [
+  null,
+  null
+ ]
+}

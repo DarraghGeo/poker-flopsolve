@@ -10,13 +10,13 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createRun, defineSpot } from '../src/index.ts';
-import type { SpotConfig } from '../src/index.ts';
+import type { SolveOptions, SpotConfig } from '../src/index.ts';
 import { ENGINE_CONTROL } from '../src/engine.ts';
 import { serveEngine } from '../src/engine-thread.ts';
 import { enableThreads, threadsUnavailable } from '../src/threads.ts';
 import { bundleForBrowser, NoBrowserError, runInBrowser } from '../scripts/browser-harness.ts';
 
-const SPOTS: Record<string, { config: SpotConfig; iterations: number }> = {
+const SPOTS: Record<string, { config: SpotConfig; iterations: number; options?: SolveOptions }> = {
 	'turn narrow': {
 		config: {
 			board: 'As Kh 7d 2c', pot: 60, stack: 100,
@@ -42,6 +42,26 @@ const SPOTS: Record<string, { config: SpotConfig; iterations: number }> = {
 		},
 		iterations: 30,
 	},
+	// Issue #99: the sampled solve's state is in the threads' shared memory.
+	'two-tone flop, chance-sampled': {
+		config: {
+			board: 'Ts 9s 4h', pot: 60, stack: 100,
+			oop: 'AA,KK,QQ,AKs,AQs,KQs,76s,65s', ip: 'JJ,TT,99,AJs,KJs,QJs,JTs,T9s',
+			betSizes: [[0.66]], maxRaises: 1,
+		},
+		iterations: 30,
+		options: { approximations: { chanceSampling: { p: 0.4 } } },
+	},
+	// Both: the phone blueprint's recipe, sampled on threads.
+	'two-tone flop, shared histories, buckets, chance-sampled': {
+		config: {
+			board: 'Ts 9s 4h', pot: 60, stack: 100,
+			oop: 'AA,KK,QQ,AKs,AQs,KQs,76s,65s', ip: 'JJ,TT,99,AJs,KJs,QJs,JTs,T9s',
+			betSizes: [[0.66]], maxRaises: 1, shareHistories: true, runoutBuckets: 3,
+		},
+		iterations: 30,
+		options: { approximations: { chanceSampling: {} } },
+	},
 };
 
 const THREADS = 3;
@@ -55,8 +75,8 @@ interface Outcome {
 
 /** The same solve in Node and in the browser. */
 const SOLVE = `
-function solveSpot(createRun, defineSpot, config, iterations, workers) {
-	const run = createRun(defineSpot(config), { workers });
+function solveSpot(createRun, defineSpot, config, iterations, workers, options) {
+	const run = createRun(defineSpot(config), { ...options, workers });
 	try {
 		run.step(iterations);
 		const solution = run.snapshot();
@@ -78,6 +98,7 @@ const solveSpot = new Function(`${SOLVE}; return solveSpot;`)() as (
 	config: SpotConfig,
 	iterations: number,
 	workers: number,
+	options?: SolveOptions,
 ) => Outcome;
 
 interface Isolated {
@@ -122,12 +143,12 @@ beforeAll(async () => {
 				const reason = threadsUnavailable();
 				const threads = await enableThreads(${THREADS});
 				const solves = {};
-				for (const [name, { config, iterations }] of Object.entries(SPOTS)) {
+				for (const [name, { config, iterations, options }] of Object.entries(SPOTS)) {
 					solves[name] = {
-						one: solveSpot(createRun, defineSpot, config, iterations, 1),
-						first: solveSpot(createRun, defineSpot, config, iterations, ${THREADS}),
+						one: solveSpot(createRun, defineSpot, config, iterations, 1, options),
+						first: solveSpot(createRun, defineSpot, config, iterations, ${THREADS}, options),
 						// The same threads again, after the first solve gave them back.
-						second: solveSpot(createRun, defineSpot, config, iterations, ${THREADS}),
+						second: solveSpot(createRun, defineSpot, config, iterations, ${THREADS}, options),
 					};
 				}
 				const again = await enableThreads(${THREADS});
@@ -301,7 +322,7 @@ describe('browser build threads', () => {
 		expect(notIsolated.outcome.workers).toBe(1);
 	});
 
-	for (const [name, { config, iterations }] of Object.entries(SPOTS)) {
+	for (const [name, { config, iterations, options }] of Object.entries(SPOTS)) {
 		it(`solves the ${name} on ${THREADS} threads, deterministically and as Node does`, (context) => {
 			if (!isolated) {
 				context.skip();
@@ -312,7 +333,7 @@ describe('browser build threads', () => {
 			expect(second).toEqual(first);
 
 			for (const [there, workers] of [[one, 1], [first, THREADS]] as const) {
-				const here = solveSpot(createRun, defineSpot, config, iterations, workers);
+				const here = solveSpot(createRun, defineSpot, config, iterations, workers, options);
 				expect(here.workers).toBe(workers);
 				// Same engine, same split; allow for a last-bit difference in
 				// Math.pow between V8 versions, as the single-threaded check does.
