@@ -1145,9 +1145,23 @@ step, and never less than a minute, before it gives up on them.
 
 Results are bitwise deterministic at a fixed worker count, but agree with a different count
 only to floating point: a worker sums its own slice before the totals are summed across
-workers, which associates the same addition differently, and the non-linear CFR+ clamp
-compounds that rounding. Measured, the gap sits at 1e-15 through 300 iterations and reaches
-1e-7 by 2,000 — always orders of magnitude below the exploitability at that point.
+workers, which associates the same addition differently. Regret matching then amplifies
+that rounding, as it does any small change: an action's share follows its regret's sign,
+and where hands are close to indifferent the 32-bit gap grows from iteration to iteration.
+Measured on a small turn (`Ah Kd Qc 8s`, half- and full-pot bets, two raises), 1 and 2
+threads agree on the root strategy to 2e-6 after 12 iterations, differ by up to 6e-2 after
+50 and by about 1e-2 after 300, by which point each is as exploitable as the other (0.02%
+of pot): where the equilibrium is not unique, the two solves settle on different
+strategies that are equally good. The two engines differ from each other the same way.
+
+Exact ties are kept out of this (issue #117). Where a hand's actions are worth the same,
+its regrets are analytically zero, but the node value they are measured against is a
+strategy-weighted sum and comes out an ulp off, by a sign that depends on the summation
+order — and one positive ulp plays an action purely where none plays uniformly. So an
+action value within 2^-20 of the hand's node value, relative to the larger of the two,
+adds exactly zero regret, in both engines: tied actions stay uniform whatever the thread
+count. Without it, a tree with many ties (one river size and no all-in) put 1 and 2 threads
+3% apart after 12 iterations.
 
 The single largest cost is the number of runouts: a river board has one, a turn 48, a flop
 2,352. Tree width matters nearly as much — a second bet size roughly quadruples the work.
