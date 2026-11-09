@@ -4,9 +4,10 @@
  *
  *   node --import tsx bench/lite/measure.ts <rainbow|two-tone|monotone> [variant,...] [workers]
  *
- * Variants (comma-separated, on top of `liteConfig`'s defaults):
+ * Variants (comma-separated, on top of `liteConfig`'s defaults; `donk` and
+ * `flop3`, from a round when the trims were defaults, are the defaults now):
  * `nosample` (no chanceSampling), `nodonk`, `flop2` (flop capped at two
- * aggressions), `donk` and `flop3` (those two defaults off), `unshared`,
+ * aggressions), `unshared`,
  * `raise` (one turn/river raise), `p=<x>` (sampling
  * probability), `turn+river` (share the turn too), `compact` (8-bit
  * `compactStorage` on the WebAssembly engine).
@@ -59,9 +60,6 @@ const STEP = 10;
 const lite: LiteOptions = {
 	...(variants.includes('nodonk') ? { noDonk: true } : {}),
 	...(variants.includes('flop2') ? { flopMaxRaises: 2 } : {}),
-	// The defaults' trims off: donk bets back, the caller's flop aggressions.
-	...(variants.includes('donk') ? { noDonk: false } : {}),
-	...(variants.includes('flop3') ? { flopMaxRaises: false } : {}),
 	...(variants.includes('unshared') ? { shareHistories: false } : {}),
 	...(variants.includes('raise') ? { laterRaise: true } : {}),
 	...(variants.includes('turn+river') ? { shareHistories: { fromRound: 1 } } : {}),

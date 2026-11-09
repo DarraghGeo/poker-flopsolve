@@ -29,7 +29,7 @@ const small: SpotConfig = { ...flop, board: 'Ts 9h 4d 2c', betSizes: [[0.33, 0.6
 
 describe('liteConfig', () => {
 	it('keeps the flop and cuts the turn and river to the size nearest 0.75 and no raise', () => {
-		const lite = liteConfig(caller, { flopMaxRaises: false, noDonk: false });
+		const lite = liteConfig(caller);
 		expect(lite.noDonk).toBeUndefined();
 		expect(lite.betSizes).toEqual([[0.33, 0.75, 1.5], [0.75], [0.75]]);
 		expect(lite.raiseSizes).toEqual([[0.5, 1], [1], [1]]);
@@ -49,12 +49,10 @@ describe('liteConfig', () => {
 		expect(lite.noDonk).toBe(true);
 	});
 
-	it('caps the flop at two aggressions and forbids donk bets by default', () => {
-		const lite = liteConfig({ ...caller, noDonk: [false, false, false] });
-		expect(lite.maxRaises).toEqual([2, 1, 1]);
-		expect(lite.noDonk).toBe(true);
-		expect(liteConfig({ ...caller, maxRaises: 1 }).maxRaises).toEqual([1, 1, 1]);
-		expect(liteConfig({ ...caller, noDonk: [false, true, false] }, { noDonk: false }).noDonk).toEqual([false, true, false]);
+	it('keeps the caller\'s flop aggressions and donk bets unless asked', () => {
+		expect(liteConfig({ ...caller, noDonk: [false, true, false] }).noDonk).toEqual([false, true, false]);
+		expect(liteConfig({ ...caller, noDonk: true }, { noDonk: false }).noDonk).toBe(false);
+		expect(liteConfig({ ...caller, maxRaises: 1 }, { flopMaxRaises: 2 }).maxRaises).toEqual([1, 1, 1]);
 	});
 
 	it('simplifies per-player betting side by side', () => {
@@ -67,7 +65,7 @@ describe('liteConfig', () => {
 		expect(lite.betSizes).toEqual({ oop: [[0.5], [1.2], [0.66]], ip: [[0.25, 0.75], [0.75], [0.75]] });
 		expect(lite.raiseSizes).toBeUndefined();
 		expect(lite.maxRaises).toEqual({ oop: [2, 1, 1], ip: [2, 1, 1] });
-		expect(liteConfig({ ...caller, maxRaises: { oop: 3, ip: 1 } }).maxRaises).toEqual({ oop: [2, 1, 1], ip: [1, 1, 1] });
+		expect(liteConfig({ ...caller, maxRaises: { oop: 3, ip: 1 } }, { flopMaxRaises: 2 }).maxRaises).toEqual({ oop: [2, 1, 1], ip: [1, 1, 1] });
 	});
 
 	it('builds a tree with one bet and no raise after the flop', () => {
