@@ -709,7 +709,7 @@ the difference.
 
 `solve(spot, { workers })` splits the runouts across threads, the calling thread included:
 `workers: 2` is the caller and one worker thread. Storage is indexed runout-outermost, so
-each thread owns a disjoint slice of shared memory and takes no locks. Only the round above
+each runout's storage is walked by one thread at a time and no thread takes a lock. Only the round above
 the split stays on the main thread alone, because CFR+ clamps regrets at zero and partial
 sums cannot be added through a clamp. Exploitability and EV passes are split the same way.
 

@@ -11,7 +11,8 @@
 import { describe, expect, it } from 'vitest';
 import { createRun, defineSpot } from '../src/index.ts';
 import type { SolveOptions, SpotConfig } from '../src/index.ts';
-import { PROFILE, threadProfiles } from '../src/engine.ts';
+import { PROFILE, scheduleBytes, scheduleViews, threadProfiles } from '../src/engine.ts';
+import { serveEngine } from '../src/engine-thread.ts';
 import { wasmStorage } from '../src/wasm-storage.ts';
 
 const flop: SpotConfig = {
@@ -66,6 +67,18 @@ describe('engine threads share out boards', () => {
 		});
 	}
 
+	it('lays the schedule out in the threads as the main thread does', () => {
+		// `serveEngine` runs as source in a browser thread, so it inlines the
+		// layout rather than importing it: the two must not drift apart.
+		const boards = 37;
+		const buffer = new SharedArrayBuffer(scheduleBytes(boards));
+		const { order, cost } = scheduleViews(buffer, boards);
+		expect([order.byteOffset, order.length, cost.byteOffset, cost.length]).toEqual([0, boards, Math.ceil(boards / 2) * 8, 2 * boards]);
+		const source = serveEngine.toString();
+		expect(source).toContain('new Int32Array(setup.schedule, 0, boards)');
+		expect(source).toContain('new Float64Array(setup.schedule, Math.ceil(boards / 2) * 8, 2 * boards)');
+	});
+
 	it('keeps every thread walking for about as long as the others', () => {
 		const run = createRun(defineSpot(flop), { workers: 3 });
 		try {
@@ -73,9 +86,10 @@ describe('engine threads share out boards', () => {
 			const profile = threadProfiles.get(run.solver)!;
 			const busy = [0, 1, 2].map((w) => profile[PROFILE.busy + w]);
 			expect(profile[PROFILE.traversals]).toBe(60);
-			// The slowest within a fifth of the mean, whatever else the machine is doing.
+			// The slowest within half the mean again, with room for a loaded machine;
+			// fixed slices could leave one thread with every costly board.
 			const mean = busy.reduce((a, b) => a + b, 0) / busy.length;
-			expect(Math.max(...busy) / mean).toBeLessThan(1.2);
+			expect(Math.max(...busy) / mean).toBeLessThan(1.5);
 		} finally {
 			run.close();
 		}

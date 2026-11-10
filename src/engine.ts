@@ -232,8 +232,9 @@ export const ENGINE_CONTROL = { generation: 0, done: 1, command: 2, mode: 3, tra
 /**
  * Lay a spot out in a fresh memory and instantiate the engine over it, or
  * null where unavailable. With `pool`, the memory is shared and that many
- * threads split the runouts at the plan's round, as src/parallel.ts does for
- * the JavaScript engine.
+ * threads split the plan's round between them, each taking the next board
+ * off a shared queue (`runThreaded`), where the JavaScript engine's pool in
+ * src/parallel.ts gives each worker a fixed slice.
  */
 export function createEngine(
 	input: EngineInput,
@@ -587,9 +588,12 @@ export function createEngine(
 		exports.setPhase(1, 0);
 		exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
 		const collected = performance.now();
-		// Costliest boards first, by what they took last time for this
-		// traverser, so the last boards anyone takes are the cheap ones.
+		// Costliest boards first, by what they took on this traverser's last
+		// training walk, so the last boards anyone takes are the cheap ones.
+		// Only training walks record costs: a best-response or current-profile
+		// pass, unsampled and without updates, costs a board differently.
 		const costs = cost.subarray(traverser * plan.boards, (traverser + 1) * plan.boards);
+		const timed = mode === Mode.Train && apply === 1;
 		order.sort((a, b) => costs[b] - costs[a] || a - b);
 		// Every thread takes boards off the order until none are left.
 		settings!.set([positive, negative, sum, weight, clamp, apply, iteration, dcfrRule]);
@@ -615,7 +619,7 @@ export function createEngine(
 				const out = exports.runChance(mode, traverser, plan.entryNodes[entry], slot, slot + rowBytes, positive, negative, sum, weight, clamp) >>> 2;
 				heap.copyWithin(into + (board * entries + entry) * stride, out, out + stride);
 			}
-			costs[board] = performance.now() - started;
+			if (timed) costs[board] = performance.now() - started;
 		}
 		const walked = performance.now();
 		// A thread whose walk throws says so in `failed` and counts itself

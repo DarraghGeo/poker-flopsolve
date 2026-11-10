@@ -133,7 +133,8 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 					) >>> 2; // a usize, signed on its way out; see `EngineExports`
 					heap.copyWithin(into + (board * entries + entry) * stride, out, out + stride);
 				}
-				cost[traverser * boards + board] = performance.now() - boardStarted;
+				// Training walks only, as `runThreaded` in src/engine.ts.
+				if (mode === 0 && settings[5] === 1) cost[traverser * boards + board] = performance.now() - boardStarted;
 			}
 			profile[busy] += performance.now() - started;
 		} catch (error) {
