@@ -51,25 +51,33 @@ function prepare(threads: number, shared: boolean) {
 
 /**
  * A stand-in for the engine module whose `setPhase` traps (`unreachable`)
- * from its second call on, and whose other exports do nothing. A thread
- * calls it once as it starts and again first thing in every step, inside
- * the `try` that reports a failure (see `serveEngine`), so each thread
- * starts as usual and dies in the first step, whether or not any board is
- * left for it: the main thread takes boards off the same order, and under
- * load may take them all before a worker wakes. An out-of-bounds access
+ * from its second call on, whose `runChance` always traps, and whose other
+ * exports do nothing. A thread calls `setPhase` once as it starts and
+ * again first thing in every step, inside the `try` that reports a failure
+ * (see `serveEngine`), so each thread starts as usual and dies in the first
+ * step, whether or not any board is left for it: the main thread takes boards off the same order, and under
+ * load may take them all before a worker wakes. (`runChance` used to be the
+ * only trap, and so the fault was missed then; it still traps, in case a
+ * thread's start ever stops calling `setPhase`.) An out-of-bounds access
  * would be the likelier real fault, but headless Chromium in some sandboxes
  * crashes the whole page on one rather than throwing.
  */
 function trappingEngine(): unknown {
 	const names = ['init', 'setMaxActions', 'setExchange', 'setShard', 'setPhase', 'runChance'];
 	const ascii = (text: string) => Array.from(text, (c) => c.charCodeAt(0));
-	const section = (id: number, body: number[]) => [id, body.length, ...body];
+	// Lengths are written as one byte, which LEB128 allows up to 127.
+	const section = (id: number, body: number[]) => {
+		if (body.length > 127) throw new Error('trappingEngine: section too long for its one-byte length');
+		return [id, body.length, ...body];
+	};
 	const exports = names.flatMap((name, i) => [name.length, ...ascii(name), 0, i]);
 	// Global 0 is set by the first `setPhase`; once set, the next one traps:
 	// global.get 0, if, unreachable, end, i32.const 1, global.set 0, end.
 	const setPhase = [0, 0x23, 0, 0x04, 0x40, 0x00, 0x0b, 0x41, 1, 0x24, 0, 0x0b];
 	// Every function is () -> (); calls from JavaScript may pass arguments all the same.
-	const bodies = names.flatMap((name) => (name === 'setPhase' ? [setPhase.length, ...setPhase] : [2, 0, 0x0b]));
+	const bodies = names.flatMap((name) =>
+		name === 'setPhase' ? [setPhase.length, ...setPhase] : name === 'runChance' ? [3, 0, 0x00, 0x0b] : [2, 0, 0x0b],
+	);
 	const bytes = Uint8Array.from([
 		0x00, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
 		...section(1, [1, 0x60, 0, 0]),
