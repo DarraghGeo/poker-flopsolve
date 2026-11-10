@@ -21,6 +21,7 @@ interface Page {
 	waitForFunction(fn: string, arg?: unknown, options?: { timeout: number }): Promise<unknown>;
 	evaluate<T>(fn: string): Promise<T>;
 	click(selector: string): Promise<void>;
+	selectOption(selector: string, value: string): Promise<unknown>;
 	inputValue(selector: string): Promise<string>;
 	$(selector: string): Promise<{ boundingBox(): Promise<{ x: number; y: number; width: number; height: number }> } | null>;
 	mouse: { move(x: number, y: number, options?: { steps: number }): Promise<void>; down(): Promise<void>; up(): Promise<void> };
@@ -158,6 +159,40 @@ describe('site page in a browser', () => {
 		await page.click('#run');
 		await page.waitForSelector('#results:not([hidden])', { timeout: 120_000 });
 		expect(await page.textContent('#results')).toContain('33% + 66% + 100% pot, 2 raises of 3×');
+		expect(errors).toEqual([]);
+	});
+
+	it('walks through the solution, street by street', async (context) => {
+		if (!browser) return context.skip();
+		const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+		const errors: string[] = [];
+		page.on('pageerror', (error) => errors.push(error.message));
+		await page.goto(`${url}#board=As+Kh+7d+2c&target=2&oop=AA,KK,77,AKs,65s&ip=QQ,JJ,AJs,KJs,T9s`);
+		await page.waitForFunction("!document.getElementById('run').disabled", undefined, { timeout: 20_000 });
+		await page.click('#run');
+		await page.waitForSelector('#results:not([hidden])', { timeout: 60_000 });
+		await page.waitForSelector('#explore .step-into', { timeout: 20_000 });
+		const line = (): Promise<string | null> => page.textContent('#explore .spot-line');
+		expect(await line()).toMatch(/^OOP to act · Turn/);
+		// OOP checks, IP checks: the river is dealt and OOP acts again.
+		await page.click('#explore .step-into[data-action="0"]');
+		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.startsWith('IP')", undefined, { timeout: 20_000 });
+		await page.click('#explore .step-into[data-action="0"]');
+		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.includes('River')", undefined, { timeout: 20_000 });
+		expect(await line()).toMatch(/^OOP to act · River/);
+		const cards = async (): Promise<string> => (await page.textContent('#explore .spot-line .mono')) ?? '';
+		const before = await cards();
+		const options = await page.evaluate<string[]>("[...document.querySelectorAll('#runout option')].map((o) => o.value)");
+		expect(options.length).toBeGreaterThan(30);
+		const selected = await page.evaluate<string>("document.getElementById('runout').value");
+		await page.selectOption('#runout', options.find((v) => v !== selected)!);
+		await page.waitForFunction(`document.querySelector('#explore .spot-line .mono').textContent !== ${JSON.stringify(before)}`, undefined, { timeout: 20_000 });
+		expect((await cards()).startsWith('As Kh 7d 2c ')).toBe(true);
+		expect(await page.textContent('#explore .line')).toContain('River');
+		// Back to the start from the line.
+		await page.click('#explore .crumb[data-trail="0"]');
+		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.includes('Turn')", undefined, { timeout: 20_000 });
+		expect(await page.evaluate<number>("document.querySelectorAll('#explore .crumb').length")).toBe(0);
 		expect(errors).toEqual([]);
 	});
 

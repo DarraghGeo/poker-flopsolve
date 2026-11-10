@@ -5,6 +5,7 @@
 
 import type { SpotConfig } from '../src/index.ts';
 import type { Check } from './lib/bench.ts';
+import type { NodeView } from './lib/explore.ts';
 import type { Mode } from './lib/settings.ts';
 
 /** A spot's size, from the solver's estimate. */
@@ -88,7 +89,9 @@ export type Phase = 'threads' | 'build' | 'alloc' | 'solve' | 'finish';
 export type Inbound =
 	| { type: 'estimate'; id: number; config: SpotConfig; mode: Mode }
 	| { type: 'solve'; config: SpotConfig; mode: Mode; target: number; threads: number; cap: number }
-	| { type: 'stop' };
+	| { type: 'stop' }
+	/** After `done`: a decision of the solved spot to draw. */
+	| { type: 'view'; id: number; node: number; board: number };
 
 /** A spot the solver will not build, and why. */
 export interface EstimateRefused {
@@ -109,4 +112,5 @@ export type Outbound =
 	| { type: 'progress'; iterations: number; solveMs: number; measureMs: number; wallMs: number }
 	| { type: 'check'; check: Check }
 	| { type: 'done'; report: Report }
-	| { type: 'error'; message: string };
+	| { type: 'error'; message: string }
+	| { type: 'view'; id: number; view: NodeView | null; message?: string };

@@ -5,22 +5,23 @@
  * timing every phase: starting threads, building the tree, allocating
  * storage, the iterations themselves and the exploitability measures, which
  * are timed apart so iterations per second count iterations only. The page
- * starts a fresh worker for each solve and ends it afterwards, so a solve's
- * memory and threads are gone before the next.
+ * starts a fresh worker for each solve and ends it before the next, so a
+ * solve's memory and threads are gone before the next. Until then the worker
+ * keeps the solved run and draws any decision of it the page asks for.
  *
  * Iterations run in chunks of about a fifth of a second with a yield between
  * them, so progress streams and a stop message lands.
  */
 
-import { COMBO_CARDS, createRun, defineSpot, litePreset, simdAvailable, SpotTooLargeError, trackSettle } from '../src/index.ts';
-import type { Estimate, Precision, SolveOptions, SpotConfig } from '../src/index.ts';
+import { createRun, defineSpot, litePreset, simdAvailable, SpotTooLargeError, trackSettle } from '../src/index.ts';
+import type { Estimate, Precision, Solution, SolveOptions, Spot, SpotConfig } from '../src/index.ts';
 import { DEFAULT_MAX_BYTES } from '../src/platform/browser.ts';
 import { settlePlan } from '../src/settle.ts';
 import { enableThreads, threadsUnavailable } from '../src/threads.ts';
 import { wasmStorage } from '../src/wasm-storage.ts';
 import { checkGap } from './lib/bench.ts';
 import type { Check } from './lib/bench.ts';
-import { cellOfCards, CELLS } from './lib/hands.ts';
+import { nodeView } from './lib/explore.ts';
 import { liteSummary } from './lib/lite.ts';
 import type { Mode } from './lib/settings.ts';
 import type { Inbound, Outbound, Report, SpotSummary } from './protocol.ts';
@@ -40,6 +41,8 @@ const TOO_BIG_FOR_SAMPLING = "Too big for the memory limit once Lite's card samp
 const CHUNK_MS = 200;
 
 let stopping = false;
+/** The finished solve, kept for the page to walk through. */
+let solved: { spot: Spot; solution: Solution } | null = null;
 let latestEstimate: Extract<Inbound, { type: 'estimate' }> | null = null;
 
 const yieldToMessages = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -225,7 +228,8 @@ async function solveSpot(config: SpotConfig, mode: Mode, target: number, threads
 		t = now();
 		const solution = run.snapshot();
 		const ev: [number, number] = [solution.ev(0), solution.ev(1)];
-		const root = rootStrategy(solution);
+		const first = nodeView(spot, solution, 0, 0);
+		const root: Report['root'] = { player: first.player, actions: first.actions, frequencies: first.frequencies, cells: first.cells };
 		const finishMs = now() - t;
 
 		const g = scope;
@@ -266,51 +270,25 @@ async function solveSpot(config: SpotConfig, mode: Mode, target: number, threads
 			ev,
 			root,
 		};
+		// The run stays open, and its solution readable, until the page ends this worker.
+		solved = { spot, solution };
 		post({ type: 'done', report });
-	} finally {
+	} catch (error) {
 		run.close();
+		throw error;
 	}
-}
-
-/**
- * Out of position's first decision: each action's frequency over the whole
- * range, and per grid cell, weighted by how much of each hand is held.
- */
-function rootStrategy(solution: ReturnType<ReturnType<typeof createRun>['snapshot']>): Report['root'] {
-	const view = solution.strategyAt(0, 0);
-	const reach = solution.reachAt(0, 0, view.player);
-	const actions = view.actions.length;
-	const total = new Float64Array(actions);
-	const cellMix = new Float64Array(CELLS * actions);
-	const cellWeight = new Float64Array(CELLS);
-	let mass = 0;
-	for (let i = 0; i < view.combos.length; i++) {
-		const combo = view.combos[i];
-		const weight = reach[combo];
-		if (!(weight > 0)) continue;
-		const cell = cellOfCards(COMBO_CARDS[combo * 2], COMBO_CARDS[combo * 2 + 1]);
-		mass += weight;
-		cellWeight[cell] += weight;
-		for (let a = 0; a < actions; a++) {
-			const p = view.probs[i * actions + a] * weight;
-			total[a] += p;
-			cellMix[cell * actions + a] += p;
-		}
-	}
-	const cells: (number[] | null)[] = [];
-	for (let cell = 0; cell < CELLS; cell++) {
-		const w = cellWeight[cell];
-		cells.push(w > 0 ? Array.from({ length: actions }, (_, a) => cellMix[cell * actions + a] / w) : null);
-	}
-	return {
-		player: view.player,
-		actions: [...view.actions],
-		frequencies: Array.from(total, (p) => (mass > 0 ? p / mass : 0)),
-		cells,
-	};
 }
 
 scope.onmessage = ({ data }) => {
+	if (data.type === 'view') {
+		try {
+			if (!solved) throw new Error('Nothing is solved yet.');
+			post({ type: 'view', id: data.id, view: nodeView(solved.spot, solved.solution, data.node, data.board) });
+		} catch (error) {
+			post({ type: 'view', id: data.id, view: null, message: error instanceof Error ? error.message : String(error) });
+		}
+		return;
+	}
 	if (data.type === 'stop') {
 		stopping = true;
 		return;

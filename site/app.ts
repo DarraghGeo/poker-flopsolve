@@ -45,6 +45,7 @@ import {
 	TARGETS,
 	writeSettings,
 } from './lib/settings.ts';
+import type { NodeView } from './lib/explore.ts';
 import type { Inbound, Outbound, Phase, Report, Setup, SpotSummary } from './protocol.ts';
 
 // ---------------------------------------------------------------- helpers
@@ -656,6 +657,8 @@ const resultsEl = $('results');
 const stopButton = $<HTMLButtonElement>('stop');
 
 let solver: Worker | null = null;
+/** The last solve's worker, kept after it finishes so its solution can be walked through. */
+let explorer: Worker | null = null;
 let checks: Check[] = [];
 let setup: Setup | null = null;
 let live = { iterations: 0, solveMs: 0, measureMs: 0, wallMs: 0 };
@@ -745,6 +748,10 @@ function startRun(): void {
 	enterPhase('threads');
 	runPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
+	// The last solve's memory goes before this one's is taken.
+	explorer?.terminate();
+	explorer = null;
+	explore = null;
 	solver = new Worker(workerUrl, { type: 'module' });
 	solver.onmessage = ({ data }: MessageEvent<Outbound>) => onSolverMessage(data);
 	solver.onerror = (event) => fail(event.message || 'The solver failed to load.');
@@ -788,8 +795,14 @@ function onSolverMessage(data: Outbound): void {
 	}
 }
 
-function endRun(): void {
-	solver?.terminate();
+/** End the run; `keep` hands a finished solve's worker to the walk-through instead of ending it. */
+function endRun(keep = false): void {
+	if (keep && solver) {
+		explorer = solver;
+		explorer.onmessage = ({ data }: MessageEvent<Outbound>) => {
+			if (data.type === 'view') onView(data);
+		};
+	} else solver?.terminate();
 	solver = null;
 	running = false;
 	document.body.classList.remove('running');
@@ -798,7 +811,7 @@ function endRun(): void {
 }
 
 function finish(report: Report): void {
-	endRun();
+	endRun(true);
 	phaseMs.set('threads', report.ms.threads);
 	phaseMs.set('build', report.ms.build);
 	phaseMs.set('alloc', report.ms.alloc);
@@ -1041,33 +1054,12 @@ function renderResults(report: Report): void {
 		]) +
 		`</section>`;
 
-	const root = r.root;
-	const colours = actionColours(root.actions);
-	const who = root.player === 0 ? 'OOP' : 'IP';
-	const mini = root.cells
-		.map((mix, cell) => {
-			if (!mix) return `<div class="empty">${cellLabel(cell)}</div>`;
-			let at = 0;
-			const stops = mix
-				.map((p, a) => {
-					const from = at;
-					at += p * 100;
-					return `${colours[a]} ${from.toFixed(1)}% ${at.toFixed(1)}%`;
-				})
-				.join(',');
-			return `<div style="background:linear-gradient(90deg,${stops})" title="${cellLabel(cell)}: ${mix.map((p, a) => `${actionName(root.actions[a], r.config.pot)} ${(p * 100).toFixed(0)}%`).join(', ')}">${cellLabel(cell)}</div>`;
-		})
-		.join('');
 	const solution =
-		`<section class="card"><div class="card-head"><h2>Solution</h2><span class="muted">${who} first to act</span></div>` +
+		`<section class="card" id="solution"><div class="card-head"><h2>Solution</h2></div>` +
 		`<div class="ev">${(['OOP', 'IP'] as const)
 			.map((name, p) => `<div class="ev-row"><span>${name}</span><div class="ev-bar"><i style="width:${r.ev[p].toFixed(1)}%"></i></div><b>${r.ev[p].toFixed(1)}%</b></div>`)
 			.join('')}</div>` +
-		`<div class="stack">${root.frequencies.map((p, a) => `<i style="width:${p * 100}%;background:${colours[a]}"></i>`).join('')}</div>` +
-		`<ul class="legend">${root.actions
-			.map((action, a) => `<li><span class="swatch" style="background:${colours[a]}"></span>${esc(actionName(action, r.config.pot))}<b>${(root.frequencies[a] * 100).toFixed(1)}%</b></li>`)
-			.join('')}</ul>` +
-		`<div class="mini-grid">${mini}</div>` +
+		`<div id="explore"></div>` +
 		`</section>`;
 
 	const liteCard = lite
@@ -1085,10 +1077,140 @@ function renderResults(report: Report): void {
 		`<div class="actions"><button class="secondary" id="copy-report">Copy report (JSON)</button><button class="secondary" id="copy-link">Copy link to this spot</button><button class="secondary" id="run-again">Run again</button></div>` +
 		`</section></div>`;
 	resultsEl.hidden = false;
+	// The first decision from the report, until the worker says where each action leads.
+	const first = r.root;
+	explore = {
+		trail: [{ node: 0, board: 0, round: 0, via: '' }],
+		firstStreet: STREETS.indexOf(streetOf(r.config.board)),
+		view: { ...first, node: 0, board: 0, round: 0, cards: r.config.board, pot: r.config.pot, next: first.actions.map(() => null), runouts: [] },
+	};
+	renderExplore();
+	requestView();
 	renderChart($('result-chart'), r.checks, r.target, r.mode);
 	$('copy-report').addEventListener('click', () => void copy(JSON.stringify(report, null, 2), 'Report copied'));
 	$('copy-link').addEventListener('click', () => void copy(`${location.origin}${location.pathname}#${writeSettings(runSettings)}`, 'Link copied'));
 	$('run-again').addEventListener('click', startRun);
+}
+
+// ---------------------------------------------------------------- walk-through
+
+/** One step of the line being looked at: a decision, its board, and the action that led there. */
+interface TrailStep {
+	readonly node: number;
+	readonly board: number;
+	readonly round: number;
+	/** The action taken to get here, as the page names it; empty at the start. */
+	readonly via: string;
+}
+
+/** The line being looked at, and its last decision as drawn. */
+let explore: { trail: TrailStep[]; view: NodeView; firstStreet: number } | null = null;
+let viewId = 0;
+
+const STREETS = ['Flop', 'Turn', 'River'];
+const streetOf = (cards: string): string => STREETS[cards.split(' ').length - 3] ?? '';
+
+/** Ask the kept worker for the trail's last decision. */
+function requestView(): void {
+	if (!explorer || !explore) return;
+	const at = explore.trail[explore.trail.length - 1];
+	const message: Inbound = { type: 'view', id: ++viewId, node: at.node, board: at.board };
+	explorer.postMessage(message);
+	$('explore').classList.add('loading');
+}
+
+function onView(data: Extract<Outbound, { type: 'view' }>): void {
+	if (data.id !== viewId || !explore) return;
+	$('explore').classList.remove('loading');
+	if (!data.view) {
+		$('explore').insertAdjacentHTML('afterbegin', `<div class="error-box">${esc(data.message ?? 'That decision could not be read.')}</div>`);
+		return;
+	}
+	explore.view = data.view;
+	renderExplore();
+}
+
+/** Go to the decision `step` of the trail, dropping what came after. */
+function goTo(trail: TrailStep[]): void {
+	if (!explore) return;
+	explore.trail = trail;
+	requestView();
+}
+
+function renderExplore(): void {
+	if (!explore) return;
+	const { view, trail } = explore;
+	const el = $('explore');
+	const colours = actionColours(view.actions);
+	const who = view.player === 0 ? 'OOP' : 'IP';
+	const walkable = explorer !== null;
+
+	const crumbs = trail
+		.map((step, i) => {
+			const label = i === 0 ? 'Start' : esc(step.via);
+			const street = i > 0 && step.round !== trail[i - 1].round ? `<span class="street">${STREETS[explore!.firstStreet + step.round] ?? ''}</span>` : '';
+			const crumb = i === trail.length - 1 ? `<span class="here">${label}</span>` : `<button class="crumb" data-trail="${i}">${label}</button>`;
+			// The street marker follows the action that dealt its card.
+			return crumb + street;
+		})
+		.join('<span class="sep">›</span>');
+	const runouts =
+		view.runouts.length > 1
+			? `<label class="runout"><span>${streetOf(view.cards)} card</span><select id="runout" class="input">${view.runouts
+					.map((r) => `<option value="${r.board}"${r.board === view.board ? ' selected' : ''}>${esc(r.card)}</option>`)
+					.join('')}</select></label>`
+			: '';
+	const nobody = view.frequencies.every((p) => p === 0);
+	const mini = view.cells
+		.map((mix, cell) => {
+			if (!mix) return `<div class="empty">${cellLabel(cell)}</div>`;
+			let at = 0;
+			const stops = mix
+				.map((p, a) => {
+					const from = at;
+					at += p * 100;
+					return `${colours[a]} ${from.toFixed(1)}% ${at.toFixed(1)}%`;
+				})
+				.join(',');
+			return `<div style="background:linear-gradient(90deg,${stops})" title="${cellLabel(cell)}: ${mix.map((p, a) => `${actionName(view.actions[a], view.pot)} ${(p * 100).toFixed(0)}%`).join(', ')}">${cellLabel(cell)}</div>`;
+		})
+		.join('');
+
+	el.innerHTML =
+		`<nav class="line" aria-label="Line">${crumbs}</nav>` +
+		`<p class="spot-line"><b>${who}</b> to act · ${streetOf(view.cards)} <span class="mono">${esc(view.cards)}</span> · pot ${number(view.pot, view.pot % 1 ? 1 : 0)}bb</p>` +
+		runouts +
+		(nobody ? `<p class="muted">Neither range reaches this decision: its strategy is never played.</p>` : '') +
+		`<div class="stack">${view.frequencies.map((p, a) => `<i style="width:${p * 100}%;background:${colours[a]}"></i>`).join('')}</div>` +
+		`<ul class="legend">${view.actions
+			.map((action, a) => {
+				const inner = `<span class="swatch" style="background:${colours[a]}"></span>${esc(actionName(action, view.pot))}<b>${(view.frequencies[a] * 100).toFixed(1)}%</b>`;
+				const next = view.next[a];
+				return next && walkable
+					? `<li class="walk"><button class="step-into" data-action="${a}">${inner}<em aria-hidden="true">›</em></button></li>`
+					: `<li>${inner}<em>${walkable ? 'ends' : ''}</em></li>`;
+			})
+			.join('')}</ul>` +
+		`<div class="mini-grid">${mini}</div>` +
+		(walkable ? `<p class="hint">Tap an action to follow it.</p>` : '');
+
+	el.querySelectorAll<HTMLButtonElement>('.step-into').forEach((button) => {
+		button.addEventListener('click', () => {
+			const a = Number(button.dataset.action);
+			const next = view.next[a];
+			if (!next) return;
+			const round = next.dealt ? view.round + 1 : view.round;
+			goTo([...trail, { node: next.node, board: next.board, round, via: actionName(view.actions[a], view.pot) }]);
+		});
+	});
+	el.querySelectorAll<HTMLButtonElement>('.crumb').forEach((button) => {
+		button.addEventListener('click', () => goTo(trail.slice(0, Number(button.dataset.trail) + 1)));
+	});
+	el.querySelector<HTMLSelectElement>('#runout')?.addEventListener('change', (event) => {
+		// Another card at this street: the same line on it, from where it was dealt.
+		const board = Number((event.target as HTMLSelectElement).value);
+		goTo(trail.map((step) => (step.round === view.round ? { ...step, board } : step)));
+	});
 }
 
 // ---------------------------------------------------------------- start
