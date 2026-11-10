@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const DIRECTORIES = ['src', 'test', 'bin', 'scripts', 'ui', 'examples', 'assembly', 'bench'];
+const DIRECTORIES = ['src', 'test', 'bin', 'scripts', 'ui', 'examples', 'assembly', 'bench', 'site'];
 const SKIP = new Set(['node_modules', 'dist', 'scratch', 'target', 'results', 'out', 'logs']);
 const KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*(\.[a-z0-9]+)*\.(ts|js)$/;
 
