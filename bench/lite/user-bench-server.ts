@@ -28,6 +28,8 @@ import type { BenchReport } from './user-bench-summary.ts';
 import { formatSummary, summarise } from './user-bench-summary.ts';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
+/** The largest report accepted, in characters. */
+const MAX_REPORT = 32 * 2 ** 20;
 
 /** Issue #47's betting on the three bench flops: what `solveLite` was measured on. */
 export function benchSpots(): Record<string, SpotConfig> {
@@ -80,16 +82,30 @@ export async function startBenchServer(
 	const server: Server = createServer((request, response) => {
 		const path = (request.url ?? '/').split('?')[0];
 		if (request.method === 'POST' && path === '/result') {
+			// Only this page may post: a page from another origin sends its own Origin.
+			const origin = request.headers.origin;
+			if (origin !== undefined && origin !== `http://${request.headers.host}`) return void response.writeHead(403).end();
 			let body = '';
-			request.on('data', (chunk) => (body += chunk));
+			let refused = false;
+			request.setEncoding('utf8');
+			request.on('data', (chunk: string) => {
+				body += chunk;
+				if (body.length > MAX_REPORT && !refused) {
+					refused = true;
+					response.writeHead(413).end();
+					request.destroy();
+				}
+			});
 			request.on('end', () => {
-				response.writeHead(204).end();
+				if (refused) return;
 				let report: BenchReport;
 				try {
 					report = JSON.parse(body) as BenchReport;
 				} catch {
-					return;
+					return void response.writeHead(400).end();
 				}
+				if (!Array.isArray(report?.cases) || !Array.isArray(report.errors)) return void response.writeHead(400).end();
+				response.writeHead(204).end();
 				if (options.save !== false) save(report, options.quiet === true);
 				const next = waiting.shift();
 				if (next) next(report);
@@ -101,11 +117,16 @@ export async function startBenchServer(
 		if (!file) return void response.writeHead(404).end();
 		response.writeHead(200, { 'content-type': file[0], 'cache-control': 'no-store', ...ISOLATION_HEADERS }).end(file[1]);
 	});
-	await new Promise<void>((resolve) => server.listen(options.port ?? 8788, options.host ?? '127.0.0.1', resolve));
+	await new Promise<void>((resolve, reject) => {
+		server.once('error', (error: NodeJS.ErrnoException) =>
+			reject(error.code === 'EADDRINUSE' ? new Error(`port ${options.port ?? 8788} is in use: another bench running? Pass --port`) : error));
+		server.listen(options.port ?? 8788, options.host ?? '127.0.0.1', () => resolve());
+	});
 	const { port } = server.address() as AddressInfo;
-	const host = options.host === undefined || options.host === '0.0.0.0' ? '127.0.0.1' : options.host;
+	// A wildcard address is opened as localhost, which browsers count as a secure context.
+	const host = options.host === undefined || ['0.0.0.0', '::', '127.0.0.1'].includes(options.host) ? 'localhost' : options.host;
 	return {
-		url: `http://${host === '127.0.0.1' ? 'localhost' : host}:${port}/`,
+		url: `http://${host.includes(':') ? `[${host}]` : host}:${port}/`,
 		nextReport() {
 			const ready = queued.shift();
 			return ready ? Promise.resolve(ready) : new Promise((resolve) => waiting.push(resolve));
@@ -125,9 +146,13 @@ function save(report: BenchReport, quiet: boolean): void {
 	writeFileSync(path, `${JSON.stringify(report, null, 2)}\n`);
 	if (quiet) return;
 	const env = report.environment;
-	console.log(`\n${env.userAgent}`);
-	console.log(`${env.hardwareConcurrency} cores reported, cross-origin isolated: ${env.crossOriginIsolated}, SIMD: ${env.simd}` +
-		(env.threadsUnavailable ? `, threads unavailable: ${env.threadsUnavailable}` : ''));
+	if (env) {
+		console.log(`\n${env.userAgent}`);
+		console.log(`${env.hardwareConcurrency} cores reported, cross-origin isolated: ${env.crossOriginIsolated}, SIMD: ${env.simd}` +
+			(env.threadsUnavailable ? `, threads unavailable: ${env.threadsUnavailable}` : ''));
+	} else {
+		console.log('\nNo case reported its environment.');
+	}
 	console.log(formatSummary(summarise(report.cases)));
 	for (const e of report.errors) console.log(`error in ${e.label}: ${e.error.split('\n')[0]}`);
 	console.log(`\nSaved ${path}`);
@@ -222,13 +247,22 @@ $('isolation').innerHTML = crossOriginIsolated
 	? 'Cross-origin isolated: browser threads can run.'
 	: '<span class="warn">Not cross-origin isolated: every run will be single-threaded. Open the page at the localhost address the terminal printed.</span>';
 const spotsWanted = (query.get('spots') ?? (query.has('custom') ? '' : 'rainbow')).split(',').filter(Boolean);
+const unknownSpots = spotsWanted.filter((name) => !(name in SPOTS));
 for (const box of document.querySelectorAll('input[name=spot]')) box.checked = spotsWanted.includes(box.value);
 $('custom').value = query.get('custom') ?? '';
 $('threads').value = query.get('threads') ?? '1,2,4,max';
-$('variant').value = query.get('variant') ?? 'default';
+const variantWanted = query.get('variant') ?? 'default';
+$('variant').value = variantWanted;
 const mode = query.get('mode') ?? 'settle';
-if (mode !== 'settle' && ![...$('mode').options].some((o) => o.value === mode)) $('mode').add(new Option('fixed ' + mode + ' iterations', mode));
-$('mode').value = mode;
+const modeOk = mode === 'settle' || (Number.isInteger(Number(mode)) && Number(mode) >= 1);
+if (modeOk && mode !== 'settle' && ![...$('mode').options].some((o) => o.value === mode)) $('mode').add(new Option('fixed ' + mode + ' iterations', mode));
+$('mode').value = modeOk ? mode : 'settle';
+// Settings the form cannot show are refused at Run, not quietly replaced.
+const queryProblems = [
+	...unknownSpots.map((name) => 'unknown spot "' + name + '"; try ' + Object.keys(SPOTS).join(', ')),
+	...($('variant').value === variantWanted ? [] : ['unknown variant "' + variantWanted + '"; try default, keep or both']),
+	...(modeOk ? [] : ['mode must be settle or a whole number of iterations from 1; got "' + mode + '"']),
+];
 $('resolve').checked = (query.get('resolve') ?? '1') === '1';
 
 const log = (line) => { $('log').textContent += line + '\\n'; };
@@ -244,6 +278,7 @@ function threadList() {
 }
 
 function cases() {
+	if (queryProblems.length > 0) throw new Error(queryProblems.join('; '));
 	const spots = [...document.querySelectorAll('input[name=spot]:checked')].map((box) => ({ name: box.value, config: SPOTS[box.value] }));
 	const custom = $('custom').value.trim();
 	if (custom) spots.push({ name: 'custom', config: JSON.parse(custom) });
@@ -266,7 +301,7 @@ function runOne(c) {
 			const message = event.data;
 			if (message.kind === 'progress') {
 				const p = message.progress;
-				$('status').textContent = caseLabel({ ...c, threads: c.threads }) + ': ' + p.phase +
+				$('status').textContent = caseLabel(c) + ': ' + p.phase +
 					(p.iterations ? ', ' + p.iterations + ' iterations' : '') + ', ' + ((performance.now() - t0) / 1000).toFixed(0) + ' s';
 				return;
 			}
@@ -285,11 +320,18 @@ async function runAll() {
 	$('run').disabled = true;
 	$('copy').disabled = $('download').disabled = true;
 	$('log').textContent = '';
-	let list;
-	try { list = cases(); } catch (error) { $('status').textContent = String(error.message || error); $('run').disabled = false; return; }
 	const report = { tool: 'poker-flopsolve lite browser bench', version: META.version, commit: META.commit, startedAt: new Date().toISOString(), environment: null, cases: [], errors: [] };
+	let list;
+	try { list = cases(); } catch (error) {
+		$('status').textContent = String(error.message || error);
+		$('run').disabled = false;
+		// Posted all the same, so a headless run ends instead of waiting.
+		report.errors.push({ label: 'settings', error: String(error.message || error) });
+		fetch('./result', { method: 'POST', body: JSON.stringify(report) }).catch(() => {});
+		return;
+	}
 	for (const c of list) {
-		const label = c.name + ' ' + c.variant + ' ' + (c.mode.kind === 'settle' ? 'settle' : 'fixed ' + c.mode.iterations) + ' ' + c.threads + 't asked';
+		const label = caseLabel(c) + ' asked';
 		const message = await runOne(c);
 		report.environment = report.environment ?? message.environment;
 		if (message.kind === 'done') {

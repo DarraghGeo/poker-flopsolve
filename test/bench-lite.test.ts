@@ -54,7 +54,7 @@ function playwright(): { chromium: { launch(): Promise<{ newPage(): Promise<{ go
 
 describe('the page', () => {
 	const pw = playwright();
-	it.skipIf(pw === null)('runs each case in Chromium, threaded, and posts the report back', async () => {
+	it.skipIf(pw === null)('runs each case in Chromium, threaded, and posts the report back', async (context) => {
 		const server = await startBenchServer({ port: 0, save: false });
 		const custom = JSON.stringify({
 			board: 'As Kh 7d', pot: 60, stack: 100, oop: 'AA,KK,AKs,76s', ip: 'QQ,JJ,AJs,T9s', betSizes: [[0.66]], maxRaises: 1,
@@ -64,7 +64,9 @@ describe('the page', () => {
 		try {
 			browser = await pw!.chromium.launch();
 		} catch {
+			// Playwright without a Chromium that starts: skipped, not passed.
 			await server.close();
+			context.skip();
 			return;
 		}
 		try {
@@ -72,7 +74,7 @@ describe('the page', () => {
 			await page.goto(`${server.url}?${query}`);
 			const report = await server.nextReport();
 			expect(report.errors).toEqual([]);
-			expect(report.environment.crossOriginIsolated).toBe(true);
+			expect(report.environment?.crossOriginIsolated).toBe(true);
 			expect(report.cases.map((c) => [c.variant, c.workers])).toEqual([['default', 1], ['default', 2], ['keep', 1], ['keep', 2]]);
 			for (const c of report.cases) {
 				expect(c.iterations).toBe(20);
@@ -82,6 +84,46 @@ describe('the page', () => {
 			}
 		} finally {
 			await browser.close();
+			await server.close();
+		}
+	});
+
+	it.skipIf(pw === null)('posts a report naming bad settings instead of running nothing', async (context) => {
+		const server = await startBenchServer({ port: 0, save: false });
+		let browser;
+		try {
+			browser = await pw!.chromium.launch();
+		} catch {
+			await server.close();
+			context.skip();
+			return;
+		}
+		try {
+			const page = await browser.newPage();
+			await page.goto(`${server.url}?autorun=1&spots=montone&mode=0&variant=keeep`);
+			const report = await server.nextReport();
+			expect(report.cases).toEqual([]);
+			expect(report.errors).toHaveLength(1);
+			expect(report.errors[0].error).toMatch(/unknown spot "montone".*unknown variant "keeep".*mode must be/);
+		} finally {
+			await browser.close();
+			await server.close();
+		}
+	});
+});
+
+describe('the server', () => {
+	it('refuses reports from another origin, and bodies that are not reports', async () => {
+		const server = await startBenchServer({ port: 0, save: false });
+		try {
+			const post = (body: string, headers: Record<string, string> = {}): Promise<number> =>
+				fetch(`${server.url}result`, { method: 'POST', body, headers }).then((r) => r.status);
+			expect(await post('{"cases":[],"errors":[]}', { origin: 'http://evil.example' })).toBe(403);
+			expect(await post('{}')).toBe(400);
+			expect(await post('not json')).toBe(400);
+			expect(await post('{"cases":[],"errors":[],"environment":null}')).toBe(204);
+			expect((await server.nextReport()).environment).toBeNull();
+		} finally {
 			await server.close();
 		}
 	});

@@ -18,7 +18,7 @@
 
 import { formatCards, parseCard } from '../../src/cards.ts';
 import { bettingFrom, createRun, defineSpot, litePreset, resolveSubgame, simdAvailable, trackSettle } from '../../src/index.ts';
-import type { SolveLiteOptions, SpotConfig } from '../../src/index.ts';
+import type { Solution, SolveLiteOptions, SpotConfig } from '../../src/index.ts';
 import { settlePlan } from '../../src/settle.ts';
 import { enableThreads, threadsUnavailable } from '../../src/threads.ts';
 import { NodeKind } from '../../src/tree.ts';
@@ -150,7 +150,7 @@ export async function runCase(c: BenchCase, progress: (p: BenchProgress) => void
 			const resolved = resolveSubgame(solution, node, board, {
 				player: 0,
 				iterations: RESOLVE_ITERATIONS,
-				betting: bettingFrom(c.config, tree.round[node]),
+				betting: { ...bettingFrom(c.config, tree.round[node]), removeActions: cutsBelow(c.config, solution, node) },
 				solve: { workers: threads, ...storage },
 			});
 			resolveMs = now() - t;
@@ -185,6 +185,25 @@ export async function runCase(c: BenchCase, progress: (p: BenchProgress) => void
 		checks,
 		resolve,
 	};
+}
+
+/**
+ * The caller's cuts below `node`, re-rooted there: chips count from what
+ * each player has put in. As `LiteSolution.resolve` in src/lite.ts.
+ */
+function cutsBelow(config: SpotConfig, solution: Solution, node: number): string[] {
+	const prefix = `${solution.path(node)} `;
+	const scale = solution.spot.chipScale;
+	const invested = (solution.spot.tree.pot[node] - solution.spot.potUnits) / 2;
+	return (config.removeActions ?? [])
+		.filter((line) => line.startsWith(prefix))
+		.map((line) =>
+			line
+				.slice(prefix.length)
+				.split(' ')
+				.map((word) => (/^-?[\d.]+$/.test(word) ? String((Math.round(Number(word) * scale) - invested) / scale) : word))
+				.join(' '),
+		);
 }
 
 /** The lowest card, deuces first, not on `board`: a blank turn on most flops. */

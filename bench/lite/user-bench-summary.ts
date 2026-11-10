@@ -93,7 +93,8 @@ export interface BenchReport {
 	readonly version: string;
 	readonly commit: string;
 	readonly startedAt: string;
-	readonly environment: BenchEnvironment;
+	/** From the first case that reported it; null if none did (every worker failed to load). */
+	readonly environment: BenchEnvironment | null;
 	readonly cases: readonly CaseResult[];
 	/** Cases that threw, by label. */
 	readonly errors: readonly { readonly label: string; readonly error: string }[];

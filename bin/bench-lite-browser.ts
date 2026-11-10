@@ -15,7 +15,7 @@
  * Flags set the page's defaults: `--spots` (rainbow, two-tone, monotone),
  * `--custom '<SpotConfig JSON>'`, `--threads`, `--variant` (default, keep,
  * both), `--mode` (settle, or a number of fixed iterations), `--no-resolve`,
- * `--port` (8788) and `--host` (127.0.0.1). Threads need the page to be
+ * `--port` (8788), `--host` (127.0.0.1) and, headless, `--timeout-hours` (3). Threads need the page to be
  * cross-origin isolated, which browsers allow only from a secure context:
  * localhost works, a LAN address over plain http does not.
  */
@@ -52,7 +52,14 @@ if (headless) {
 	const browser = await chromium.launch();
 	const page = await browser.newPage();
 	await page.goto(url);
+	// A hung or killed worker posts nothing; give up rather than wait forever.
+	const hours = Number(option('timeout-hours') ?? 3);
+	const timer = setTimeout(() => {
+		console.error(`No report within ${hours} hour(s); a case may have hung.`);
+		process.exit(1);
+	}, hours * 3_600_000);
 	const report = await server.nextReport();
+	clearTimeout(timer);
 	await browser.close();
 	await server.close();
 	process.exit(report.errors.length > 0 || report.cases.length === 0 ? 1 : 0);
