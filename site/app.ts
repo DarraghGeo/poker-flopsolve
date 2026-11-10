@@ -29,7 +29,9 @@ import {
 } from './lib/hands.ts';
 import { RANGE_PRESETS } from './lib/ranges.ts';
 import type { Settings, SizeKey } from './lib/settings.ts';
-import { configOf, ITERATION_CAP, readSettings, SIZE_PRESETS, TARGETS, writeSettings } from './lib/settings.ts';
+import { LITE_LIMITS } from './lib/lite.ts';
+import type { Mode } from './lib/settings.ts';
+import { autoMemory, configOf, ITERATION_CAP, MEMORY_CAPS, readSettings, SIZE_PRESETS, TARGETS, writeSettings } from './lib/settings.ts';
 import type { Inbound, Outbound, Phase, Report, Setup, SpotSummary } from './protocol.ts';
 
 // ---------------------------------------------------------------- helpers
@@ -105,6 +107,12 @@ const weights: [Float64Array, Float64Array] = [weightsOf(settings.oop), weightsO
 const grids: [Float64Array, Float64Array] = [cellsFromCombos(weights[0], COMBO_CARDS), cellsFromCombos(weights[1], COMBO_CARDS)];
 const cores = Math.max(1, navigator.hardwareConcurrency || 1);
 const isolated = window.crossOriginIsolated === true;
+const agent = navigator.userAgent;
+const deviceMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+/** iPads report a Mac; a touch screen gives them away. */
+const mobile = /Mobi|Android|iPhone|iPad/.test(agent) || (/Macintosh/.test(agent) && navigator.maxTouchPoints > 1);
+const autoMb = autoMemory({ deviceMemory, mobile });
+const mb = (n: number): string => (n >= 1024 ? `${n / 1024} GB` : `${n} MB`);
 // A shared link may ask for more threads than this machine has.
 if (settings.threads > cores) settings = { ...settings, threads: 0 };
 
@@ -418,13 +426,40 @@ segmented<SizeKey>(
 	() => settings.sizes,
 	(sizes) => update({ sizes }),
 );
+const MODE_NOTES: Record<Mode, string> = {
+	exact: 'Solves the whole game until it is within your target of perfect play.',
+	lite: 'Faster on big flops: simplifies the turn and river and stops when the first decisions settle.',
+};
+const renderMode = (): void => {
+	$('mode-note').textContent = MODE_NOTES[settings.mode];
+	$('target-field').hidden = settings.mode === 'lite';
+};
+segmented<Mode>(
+	'mode',
+	[
+		{ value: 'exact', label: 'Exact' },
+		{ value: 'lite', label: 'Lite' },
+	],
+	() => settings.mode,
+	(mode) => {
+		update({ mode });
+		renderMode();
+	},
+);
+renderMode();
+segmented<number>(
+	'memory',
+	MEMORY_CAPS.map((n) => ({ value: n, label: n === 0 ? `Auto (${mb(autoMb)})` : mb(n) })),
+	() => settings.memory,
+	(memory) => update({ memory }),
+);
 segmented<number>(
 	'target',
 	TARGETS.map((t) => ({ value: t, label: `${t}%` })),
 	() => settings.target,
 	(target) => update({ target }),
 );
-const threadOptions = [{ value: 0, label: `Auto (${isolated ? cores : 1})` }];
+const threadOptions = [{ value: 0, label: `Max (${isolated ? cores : 1})` }];
 for (const n of [1, 2, 4, 8, 16, 32]) if (n <= cores) threadOptions.push({ value: n, label: String(n) });
 segmented<number>(
 	'threads',
@@ -489,7 +524,7 @@ function scheduleEstimate(): void {
 	estimateEl.classList.add('pending');
 	estimateTimer = window.setTimeout(() => {
 		estimator ??= startEstimator();
-		const message: Inbound = { type: 'estimate', id: estimateId, config: configOf(settings) };
+		const message: Inbound = { type: 'estimate', id: estimateId, config: configOf(settings, autoMb), mode: settings.mode };
 		estimator.postMessage(message);
 	}, 180);
 }
@@ -501,13 +536,21 @@ function startEstimator(): Worker {
 		estimateEl.className = 'estimate';
 		if (data.ok) {
 			fits = true;
-			estimateEl.innerHTML = describeSpot(data.spot);
+			estimateEl.innerHTML =
+				describeSpot(data.spot) + (data.lite ? `<ul class="plain">${data.lite.map((line) => `<li>${esc(line)}</li>`).join('')}</ul>` : '');
 		} else {
 			estimateEl.classList.add('error');
 			estimateEl.innerHTML =
-				`<b>${esc(data.message)}</b>` +
-				(data.spot ? ` It needs ${formatBytes(data.spot.compressedBytes)} at 16 bits; a tab gets ${formatBytes(data.spot.maxBytes)}.` : '') +
-				(data.suggestions.length ? `<ul>${data.suggestions.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>` : '');
+				(data.tooLarge && data.spot
+					? `<b>Too big for the ${mb(data.spot.maxBytes / 2 ** 20)} memory limit</b> (needs ${formatBytes(data.spot.compressedBytes)}). ` +
+						`Try ${[
+							settings.mode === 'exact' ? 'Lite' : '',
+							data.spot.maxBytes < 2048 * 2 ** 20 ? 'a higher limit' : '',
+							'fewer bet sizes or narrower ranges',
+						]
+							.filter(Boolean)
+							.join(', ')}.`
+					: `<b>${esc(data.message)}</b>`);
 		}
 		renderRunButton();
 	};
@@ -523,8 +566,8 @@ function describeSpot(spot: SpotSummary): string {
 	const storage = spot.storageBytes;
 	return (
 		`<b>${number(spot.combos[0])}</b> vs <b>${number(spot.combos[1])}</b> combos · ` +
-		`<b>${number(spot.decisionNodes)}</b> decisions · ${streets(spot.rounds)} · ` +
-		`<b>${formatBytes(storage)}</b>${sixteen ? ' at 16-bit' : ''}`
+		`${streets(spot.rounds)} · ` +
+		`<b>${formatBytes(storage)}</b> of memory${sixteen ? ' (compressed to fit)' : ''}`
 	);
 }
 
@@ -579,25 +622,33 @@ function enterPhase(phase: Phase): void {
 	renderSteps();
 }
 
+/** Lite stops once its first decisions move less than this, % of the range, twice running. */
+const LITE_GOAL = 1;
+const goalOf = (s: Settings): number => (s.mode === 'lite' ? LITE_GOAL : s.target);
+/** What the run's measure is called: exploitability for Exact, change in the first decisions for Lite. */
+const measureName = (mode: Mode): string => (mode === 'lite' ? 'Change' : 'Exploitability');
+
 function renderLive(): void {
 	liveFrame = 0;
 	const last = checks[checks.length - 1];
 	const speed = live.solveMs > 0 ? (live.iterations / live.solveMs) * 1000 : 0;
+	const goal = goalOf(runSettings);
 	let eta = '—';
 	if (last) {
-		const at = estimateIterationsTo(checks, runSettings.target);
+		// Lite's measure jumps about too much to extrapolate.
+		const at = runSettings.mode === 'exact' ? estimateIterationsTo(checks, goal) : null;
 		if (at !== null && live.iterations > 0) {
 			const perIteration = (live.solveMs + live.measureMs) / live.iterations;
-			eta = last.exploitability <= runSettings.target ? 'done' : `~${formatMs(Math.max(0, at - live.iterations) * perIteration)}`;
+			eta = last.exploitability <= goal ? 'done' : `~${formatMs(Math.max(0, at - live.iterations) * perIteration)}`;
 		}
 		progressEl.classList.remove('waiting');
-		progressFill.style.width = `${(progressToward(checks[0].exploitability, last.exploitability, runSettings.target) * 100).toFixed(1)}%`;
+		progressFill.style.width = `${(progressToward(checks[0].exploitability, last.exploitability, goal) * 100).toFixed(1)}%`;
 	}
 	const metric = (label: string, value: string): string => `<div class="metric"><span>${label}</span><b>${value}</b></div>`;
 	liveEl.innerHTML =
 		metric('Iterations', number(live.iterations)) +
 		metric('Elapsed', formatMs(live.wallMs)) +
-		metric('Exploitability', last ? `${last.exploitability.toFixed(2)}%` : '—') +
+		metric(measureName(runSettings.mode), last ? `${last.exploitability.toFixed(2)}%` : '—') +
 		metric('Speed', speed > 0 ? `${speed >= 100 ? number(speed) : speed.toFixed(1)} it/s` : '—') +
 		metric('Time left', eta);
 }
@@ -620,11 +671,13 @@ function startRun(): void {
 	stopButton.hidden = false;
 	stopButton.disabled = false;
 	$('run-title').textContent = 'Solving';
-	$('run-sub').textContent = `${formatCards(board)} · ${SIZE_PRESETS[settings.sizes].label} · to ${settings.target}% of pot`;
+	$('run-sub').textContent =
+		`${formatCards(board)} · ${SIZE_PRESETS[settings.sizes].label} · ` +
+		(settings.mode === 'lite' ? 'Lite, until the first decisions settle' : `to ${settings.target}% of pot`);
 	progressEl.className = 'progress waiting';
 	progressFill.style.width = '0';
 	renderLive();
-	renderChart(chartEl, [], runSettings.target);
+	renderChart(chartEl, [], goalOf(runSettings), runSettings.mode);
 	enterPhase('threads');
 	runPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
@@ -633,7 +686,8 @@ function startRun(): void {
 	solver.onerror = (event) => fail(event.message || 'The solver failed to load.');
 	const message: Inbound = {
 		type: 'solve',
-		config: configOf(settings),
+		config: configOf(settings, autoMb),
+		mode: settings.mode,
 		target: settings.target,
 		threads: isolated ? Math.min(settings.threads, cores) : 1,
 		cap: ITERATION_CAP,
@@ -656,7 +710,7 @@ function onSolverMessage(data: Outbound): void {
 			return;
 		case 'check':
 			checks.push(data.check);
-			renderChart(chartEl, checks, runSettings.target);
+			renderChart(chartEl, checks, goalOf(runSettings), runSettings.mode);
 			if (!liveFrame) liveFrame = requestAnimationFrame(renderLive);
 			return;
 		case 'done':
@@ -690,11 +744,13 @@ function finish(report: Report): void {
 	live = { iterations: report.iterations, solveMs: report.ms.solve, measureMs: report.ms.measure, wallMs: report.ms.total };
 	renderLive();
 	progressEl.className = 'progress complete';
-	progressFill.style.width = report.stoppedBy === 'target' ? '100%' : progressFill.style.width;
-	const reached = report.stoppedBy === 'target';
-	$('run-title').textContent = reached
+	const reached = report.stoppedBy === 'target' || report.stoppedBy === 'settled';
+	if (reached) progressFill.style.width = '100%';
+	$('run-title').textContent = report.stoppedBy === 'target'
 		? `Reached ${report.target}% in ${formatMs(report.ms.total)}`
-		: report.stoppedBy === 'stopped'
+		: report.stoppedBy === 'settled'
+			? `Settled in ${formatMs(report.ms.total)}`
+			: report.stoppedBy === 'stopped'
 			? `Stopped after ${formatMs(report.ms.total)}`
 			: `Hit the ${number(report.iterations)}-iteration cap`;
 	renderResults(report);
@@ -731,7 +787,7 @@ function niceTicks(min: number, max: number, count: number): number[] {
 	return ticks;
 }
 
-function renderChart(el: HTMLElement, data: readonly Check[], target: number): void {
+function renderChart(el: HTMLElement, data: readonly Check[], target: number, mode: Mode): void {
 	const W = 760;
 	const H = 220;
 	const pad = { left: 44, right: 14, top: 12, bottom: 26 };
@@ -769,7 +825,7 @@ function renderChart(el: HTMLElement, data: readonly Check[], target: number): v
 		.join('');
 	const targetLine =
 		`<line x1="${pad.left}" x2="${W - pad.right}" y1="${y(target)}" y2="${y(target)}" stroke="#4f46e5" stroke-dasharray="4 4" stroke-opacity="0.55"/>` +
-		`<text x="${W - pad.right}" y="${y(target) - 6}" text-anchor="end" style="fill:#4f46e5">target ${target}%</text>`;
+		`<text x="${W - pad.right}" y="${y(target) - 6}" text-anchor="end" style="fill:#4f46e5">${mode === 'lite' ? 'settled' : 'target'} ${target}%</text>`;
 
 	let series = '';
 	if (data.length > 0) {
@@ -782,10 +838,10 @@ function renderChart(el: HTMLElement, data: readonly Check[], target: number): v
 			`<path d="${line}" fill="none" stroke="#4f46e5" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>` +
 			`<circle cx="${x(seconds[seconds.length - 1])}" cy="${y(last.exploitability)}" r="4" fill="#fff" stroke="#4f46e5" stroke-width="2"/>`;
 	} else {
-		series = `<text x="${pad.left + iw / 2}" y="${pad.top + ih / 2}" text-anchor="middle">Exploitability appears after the first iteration</text>`;
+		series = `<text x="${pad.left + iw / 2}" y="${pad.top + ih / 2}" text-anchor="middle">${mode === 'lite' ? 'The first decisions are read every 20 iterations' : 'Exploitability appears after the first iteration'}</text>`;
 	}
 	el.innerHTML =
-		`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Exploitability over solving time">` +
+		`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${measureName(mode)} over solving time">` +
 		`<defs><linearGradient id="fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4f46e5" stop-opacity="0.16"/><stop offset="1" stop-color="#4f46e5" stop-opacity="0"/></linearGradient></defs>` +
 		`${grid}${targetLine}${series}${xTicks}</svg>`;
 }
@@ -837,6 +893,7 @@ function renderResults(report: Report): void {
 	const r = report;
 	const perSecond = r.ms.solve > 0 ? (r.iterations / r.ms.solve) * 1000 : 0;
 	const perIteration = r.iterations > 0 ? r.ms.solve / r.iterations : 0;
+	const lite = r.mode === 'lite';
 	const reached = r.stoppedBy === 'target';
 	const e = r.exploitability;
 
@@ -844,14 +901,20 @@ function renderResults(report: Report): void {
 		`<div class="tile${lead ? ' lead' : ''}"><span>${label}</span><b>${value}</b><small>${note}</small></div>`;
 	const headline =
 		`<div class="headline">` +
-		tile(reached ? `Time to ${r.target}% of pot` : 'Total time', formatMs(r.ms.total), 'wall clock, setup included', true) +
+		tile(reached ? `Time to ${r.target}% of pot` : r.stoppedBy === 'settled' ? 'Time to settle' : 'Total time', formatMs(r.ms.total), 'wall clock, setup included', true) +
 		tile('Iterations per second', perSecond >= 100 ? number(perSecond) : perSecond.toFixed(1), `${number(r.iterations)} iterations`) +
 		tile('Time per iteration', formatMs(perIteration), `${r.setup.threads} thread${r.setup.threads === 1 ? '' : 's'} · ${r.setup.engine === 'wasm' ? 'WebAssembly' : 'JavaScript'}`) +
-		tile('Exploitability', e === null ? '—' : `${e.toFixed(2)}%`, `of the pot · target ${r.target}%`) +
+		(lite
+			? tile('Accuracy', 'Not measured', 'Lite cannot measure it')
+			: tile('Exploitability', e === null ? '—' : `${e.toFixed(2)}%`, `of the pot · target ${r.target}%`)) +
 		`</div>`;
 
 	const levels = [10, 5, 2, 1, 0.5, 0.3].filter((level) => level >= r.target);
-	const convergence =
+	const convergence = lite
+		? `<section class="card"><div class="card-head"><h2>Settling</h2><span class="muted">${number(r.checks.length)} readings</span></div>` +
+			`<div class="chart" id="result-chart"></div>` +
+			`<p class="muted" style="margin:12px 0 0;font-size:14px">How much the first decisions changed between readings. Lite stops once that stays under ${r.target}% twice in a row.</p></section>`
+		:
 		`<section class="card"><div class="card-head"><h2>Convergence</h2><span class="muted">${number(r.checks.length)} measures</span></div>` +
 		`<div class="chart" id="result-chart"></div>` +
 		`<table><thead><tr><th>Exploitability</th><th>Iterations</th><th>Solving time</th></tr></thead><tbody>` +
@@ -869,7 +932,7 @@ function renderResults(report: Report): void {
 		['Build tree', r.ms.build, '#a5b4fc'],
 		['Allocate', r.ms.alloc, '#818cf8'],
 		['Iterations', r.ms.solve, '#4f46e5'],
-		['Exploitability checks', r.ms.measure, '#312e81'],
+		[lite ? 'Settle checks' : 'Exploitability checks', r.ms.measure, '#312e81'],
 		['Read result', r.ms.finish, '#e5e7eb'],
 	];
 	const accounted = parts.reduce((sum, [, ms]) => sum + ms, 0) || 1;
@@ -892,7 +955,8 @@ function renderResults(report: Report): void {
 			['Combos', `${number(spot.combos[0])} OOP · ${number(spot.combos[1])} IP`],
 			['Decision nodes', number(spot.decisionNodes)],
 			['Runouts stored', number(spot.runouts)],
-			['Storage', `${formatBytes(r.setup.storageBytes)} · ${r.setup.precision === 'i16' ? '16-bit' : '32-bit'}`],
+			['Solver', lite ? 'Lite (simplified)' : 'Exact'],
+			['Memory', `${formatBytes(r.setup.storageBytes)}${r.setup.precision === 'i16' ? ', compressed' : ''} of ${formatBytes(r.setup.spot.maxBytes)} allowed`],
 		]) +
 		`</section>`;
 
@@ -939,15 +1003,22 @@ function renderResults(report: Report): void {
 		`<div class="mini-grid">${mini}</div>` +
 		`</section>`;
 
+	const liteCard = lite
+		? `<section class="card"><div class="card-head"><h2>What Lite simplified</h2></div>` +
+			`<ul class="list">${(r.lite ?? []).map((line) => `<li>${esc(line)}</li>`).join('')}</ul>` +
+			`<p class="subhead">Limitations</p>` +
+			`<ul class="list warn">${LITE_LIMITS.map((line) => `<li>${esc(line)}</li>`).join('')}</ul></section>`
+		: '';
+
 	resultsEl.innerHTML =
 		headline +
-		`<div class="result-grid">${convergence}${time}${spotCard}${machine}${solution}` +
+		`<div class="result-grid">${liteCard}${convergence}${time}${spotCard}${machine}${solution}` +
 		`<section class="card"><div class="card-head"><h2>Share</h2></div>` +
-		`<p class="muted" style="margin:0 0 14px;font-size:14px">The report holds every number above, the settings and the full exploitability trace.</p>` +
+		`<p class="muted" style="margin:0 0 14px;font-size:14px">The report holds every number above, the settings and the full trace.</p>` +
 		`<div class="actions"><button class="secondary" id="copy-report">Copy report (JSON)</button><button class="secondary" id="copy-link">Copy link to this spot</button><button class="secondary" id="run-again">Run again</button></div>` +
 		`</section></div>`;
 	resultsEl.hidden = false;
-	renderChart($('result-chart'), r.checks, r.target);
+	renderChart($('result-chart'), r.checks, r.target, r.mode);
 	$('copy-report').addEventListener('click', () => void copy(JSON.stringify(report, null, 2), 'Report copied'));
 	$('copy-link').addEventListener('click', () => void copy(`${location.origin}${location.pathname}#${writeSettings(runSettings)}`, 'Link copied'));
 	$('run-again').addEventListener('click', startRun);

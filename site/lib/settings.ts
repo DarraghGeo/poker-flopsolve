@@ -25,6 +25,12 @@ export type SizeKey = keyof typeof SIZE_PRESETS;
 /** Targets offered, % of pot. */
 export const TARGETS = [2, 1, 0.5, 0.3] as const;
 
+/** Memory caps offered, MiB; 0 picks one for the device. */
+export const MEMORY_CAPS = [0, 512, 1024, 2048] as const;
+
+/** Exact solves the whole game; Lite a simplified one, for big flops. */
+export type Mode = 'exact' | 'lite';
+
 /** Iteration cap, should the target never come. */
 export const ITERATION_CAP = 2000;
 
@@ -46,6 +52,9 @@ export interface Settings {
 	readonly target: number;
 	/** Threads; 0 for every core. */
 	readonly threads: number;
+	readonly mode: Mode;
+	/** Memory cap, MiB; 0 for the device's own (`autoMemory`). */
+	readonly memory: number;
 }
 
 const preset = (name: string): string => RANGE_PRESETS.find((p) => p.name === name)!.range;
@@ -62,11 +71,29 @@ export const DEFAULT_SETTINGS: Settings = {
 	allIn: false,
 	target: 0.5,
 	threads: 0,
+	mode: 'exact',
+	memory: 0,
 };
 
-/** The solver's spot for these settings. */
-export function configOf(settings: Settings): SpotConfig {
+/**
+ * A memory cap for this device, MiB: 2 GiB where it reports 8 GB or more,
+ * 512 MiB on phones or devices reporting under 4 GB, else 1 GiB.
+ */
+export function autoMemory(device: { deviceMemory: number | undefined; mobile: boolean }): number {
+	if (device.mobile) return 512;
+	if (device.deviceMemory === undefined) return 1024;
+	return device.deviceMemory >= 8 ? 2048 : device.deviceMemory >= 4 ? 1024 : 512;
+}
+
+/** The memory cap a solve uses, MiB. */
+export function memoryOf(settings: Settings, auto: number): number {
+	return settings.memory > 0 ? settings.memory : auto;
+}
+
+/** The solver's spot for these settings, under `auto` MiB when the memory is the device's. */
+export function configOf(settings: Settings, auto = 512): SpotConfig {
 	return {
+		maxBytes: memoryOf(settings, auto) * 2 ** 20,
 		board: settings.board,
 		pot: settings.pot,
 		stack: settings.stack,
@@ -128,6 +155,8 @@ export function readSettings(query: string): Settings {
 		allIn: flag('allin', d.allIn),
 		target: number('target', d.target, (n) => (TARGETS as readonly number[]).includes(n)),
 		threads: number('threads', d.threads, (n) => Number.isInteger(n) && n >= 0 && n <= 256),
+		mode: params.get('mode') === 'lite' ? 'lite' : d.mode,
+		memory: number('memory', d.memory, (n) => (MEMORY_CAPS as readonly number[]).includes(n)),
 	};
 }
 
@@ -148,5 +177,7 @@ export function writeSettings(settings: Settings): string {
 	put('allin', settings.allIn ? '1' : '0', d.allIn ? '1' : '0');
 	put('target', String(settings.target), String(d.target));
 	put('threads', String(settings.threads), String(d.threads));
+	put('mode', settings.mode, d.mode);
+	put('memory', String(settings.memory), String(d.memory));
 	return params.toString();
 }
