@@ -324,6 +324,26 @@ describe('solveLite keepBudget', () => {
 		expect(lite.changes.notes.some((n) => n.includes(`but for ${lite.kept.length} line`))).toBe(true);
 	});
 
+	it('settles later when a budget keeps lines, unless the caller sets the tolerance (#123)', () => {
+		const budget = { workers: 1, pickIterations: 1, keepBudget: unsharedBytes } as const;
+		expect(litePreset(small, { workers: 1 }).options.settle).toEqual({});
+		const preset = litePreset(small, budget);
+		expect(preset.options.settle).toEqual({ tolerance: 0.005 });
+		expect(preset.changes.notes.some((n) => n.startsWith('settle:') && n.includes('0.5%') && n.includes('later'))).toBe(true);
+		expect(litePreset(small, { ...budget, settle: { every: 10 } }).options.settle).toEqual({ every: 10, tolerance: 0.005 });
+		expect(litePreset(small, { ...budget, settle: { tolerance: 0.02 } }).options.settle).toEqual({ tolerance: 0.02 });
+		expect(litePreset(small, { ...budget, settle: false }).options.settle).toBeUndefined();
+		expect(() => litePreset(small, { ...budget, settle: { tolerance: -1 } })).toThrow(/tolerance/);
+	});
+
+	it('keeps the default stop when a budget keeps no line (#123)', () => {
+		// A river spot has no line into a later round to keep.
+		const river: SpotConfig = { ...flop, board: 'Ts 9h 4d 2c 3s', betSizes: [[0.5, 1]] };
+		const preset = litePreset(river, { workers: 1, pickIterations: 1, keepBudget: 2 ** 30 });
+		expect(preset.config.shareHistories).toEqual({ keepLines: [] });
+		expect(preset.options.settle).toEqual({});
+	});
+
 	it('refuses a budget the shared tree does not fit, a spot that shares nothing, and bad settings', () => {
 		expect(() => solveLite(small, { ...options, keepBudget: sharedBytes / 2 })).toThrow(/over the budget/);
 		expect(() => solveLite(small, { ...options, keepBudget: unsharedBytes, shareHistories: false })).toThrow(/shareHistories/);
