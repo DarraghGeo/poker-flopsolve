@@ -62,6 +62,26 @@ number. The line reaching the selected node is spelled out above the grid —
 Solving runs in its own worker thread, so progress streams and **Stop** ends early while
 keeping the partial answer.
 
+## Benchmark page
+
+A static page for anyone to measure the solver on their own machine, nothing installed:
+pick two ranges on a 13×13 grid (drag to paint, with weights and preset ranges), a flop
+with an optional turn and river, the pot, stack and betting, and press **Run benchmark**.
+It solves in a Web Worker on every core, shows each phase as it goes, and reports the time
+to each level of exploitability, iterations per second, where the time went, the tree's
+size, the machine and the solution's root strategy, with a JSON report and a link to share.
+
+```bash
+npm run site          # build site/ into site/dist and serve it on http://localhost:5175
+npm run site:build    # build only
+```
+
+`.github/workflows/pages.yml` publishes it to GitHub Pages each time `main` moves (set
+Settings → Pages → Source to "GitHub Actions" once). Pages cannot send the cross-origin
+isolation headers threads need, so the page registers its own service worker
+(`site/coi-sw.js`) that adds them and reloads once; where that is not possible it solves on
+one thread and says so. A tree over the tab's 512 MiB at 32 bits is solved at 16 bits.
+
 ## Ranges
 
 ```

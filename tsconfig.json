@@ -23,5 +23,5 @@
     "paths": { "poker-flopsolve": ["./src/index.ts"] },
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src", "test", "bin", "ui", "scripts", "examples", "bench", "tsup.config.ts"]
+  "include": ["src", "test", "bin", "ui", "scripts", "examples", "bench", "site/lib", "tsup.config.ts"]
 }
