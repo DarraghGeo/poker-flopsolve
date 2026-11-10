@@ -24,7 +24,7 @@ const full = indexFull(spotOn(board as BoardName, TREES[fullName]));
 const kept = baseKept(full);
 const options = { workers: 1 };
 const base = solveTo(budgetedConfig(full, kept), 0.05, 4000, options);
-const baseEv = [base.run.snapshot().ev(0), base.run.snapshot().ev(1)];
+const baseEv = [base.run.snapshot().evChips(0), base.run.snapshot().evChips(1)];
 const pot = 55;
 
 // A spread of candidates: every k-th, so all streets and depths appear.
@@ -39,7 +39,7 @@ for (const line of lines) {
 	const withIt = new Set(kept).add(line);
 	const config = budgetedConfig(full, withIt);
 	const exact = solveTo(config, 0.05, 4000, options, base.run, base.run.totalIterations);
-	const ev = exact.run.snapshot().ev(actor);
+	const ev = exact.run.snapshot().evChips(actor);
 	const truth = (100 * (ev - baseEv[actor])) / pot;
 	const estimates: Record<string, number> = {};
 	for (const iterations of [20, 60]) {

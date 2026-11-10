@@ -16,6 +16,12 @@ import { COMBO_CARDS } from '../../src/cards.ts';
 import type { CompactStorage, SolveOptions, SolveRun, SpotConfig } from '../../src/index.ts';
 import { createRun, defineSpot } from '../../src/index.ts';
 import { STORAGE_SPOTS } from './spots.ts';
+import { Mode } from '../../src/cfr.ts';
+
+/** Per-hand root EVs in chips on the half-pot baseline, as stored references hold them (`handEvs` is % of pot since #130). */
+function chipEvs(run: SolveRun, player: 0 | 1): Float64Array {
+	return run.solver.handEvs(player, run.solver.rootValues(Mode.Average).values[player]);
+}
 
 export const VARIANTS: Record<string, { storage?: CompactStorage; options?: SolveOptions; config?: Partial<SpotConfig> }> = {
 	f32: { options: { engine: 'js' } },
@@ -152,8 +158,7 @@ for (const target of checkpoints) {
 	trainMs += performance.now() - t0;
 	done = target;
 	const exploitability = run.exploitabilityPercent();
-	const snap = run.snapshot();
-	const evs = [snap.handEvs(0), snap.handEvs(1)];
+	const evs = [chipEvs(run, 0), chipEvs(run, 1)];
 	const row: Record<string, unknown> = { iterations: done, trainSeconds: +(trainMs / 1000).toFixed(1), exploitability: +exploitability.toFixed(4) };
 	// Option 3's census: the share of stored regrets that are positive, and
 	// how many hands have a single positive action, over the late rounds.

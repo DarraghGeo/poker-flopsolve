@@ -116,7 +116,7 @@ console.log(
 		` (${solution.iterations} iterations, ` +
 		`${solution.workers === 1 ? 'single-threaded' : `${solution.workers} workers`})\n` +
 		outcome +
-		`  EV out of position ${solution.ev(0).toFixed(3)} chips   ` +
+		`  EV ${solution.ev(0).toFixed(1)}% out of position, ${solution.ev(1).toFixed(1)}% in position (share of the pot)   ` +
 		`exploitability ${solution.exploitabilityPercent().toFixed(3)}% of pot\n`,
 );
 

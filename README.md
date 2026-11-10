@@ -25,7 +25,7 @@ const spot = defineSpot({
 
 const sol = solve(spot, { iterations: 500 });
 
-sol.ev(0);                     // chips per hand, out of position
+sol.ev(0);                     // OOP's share of the pot, % (ev(0) + ev(1) = 100)
 sol.exploitabilityPercent();   // distance from equilibrium, % of pot
 sol.strategyAt(node, board);   // per-combination action frequencies
 ```
@@ -166,10 +166,30 @@ dropped from both, which suits imported ranges full of hands at a percent or two
 
 ## Reading a solved spot
 
-`solution.handEvs(player)` gives each combination's root EV in chips, indexed like
-`COMBO_CARDS` (0 outside the range, on the board, or with no opponent hand to face). Weighted by range weight times the
-opponent mass each hand can face, it averages to `solution.ev(player)`, and one pass serves
-both.
+`solution.ev(player)` is the player's **share of the pot**, in percent: what they win on
+average per hand, as a percentage of the pot the spot starts with (`SpotConfig.pot`; on a
+turn or river spot, that spot's starting pot). Folding, or losing every showdown, is 0%;
+winning the pot uncontested is 100%; the two players' values add up to 100%. Percentages
+compare directly across spots with different pots. On Ks 9d 4c with a 60 pot, for example,
+`ev(0)` 71.3 and `ev(1)` 28.7 mean out of position wins 42.8 of the 60 chips on average.
+
+The pot used is `solution.evPot`. A subgame from `subgameAt` — and so `resolveSubgame` and
+`LiteSolution.resolve`, nested or not — sets `SpotConfig.evPot` to the original spot's, so a
+re-solved turn reports in the flop pot and its values read the same way down a hand. Folding
+at a subgame's root then reads below 0: the chips put in on earlier streets, given up, as a
+share of the flop pot (after a 30 bet and call into 60, folding the turn reads −50%).
+`exploitabilityPercent` stays a percentage of the spot's own pot.
+
+Up to and including 0.5.0-beta.0 `ev` was in chips, against a baseline where each player already owns half
+the pot (folding −pot/2, the two summing to 0). That number is still there as
+`solution.evChips(player)`; the conversion is `evChips = ev / 100 × evPot − evPot / 2`.
+`Solver.valuesAt`, `pairValuesAt`, `rootValues`, the regrets and `ResolvedSubgame`'s
+`alternative` and `entered` stay in chips on that baseline.
+
+`solution.handEvs(player)` gives each combination's root EV, in % of `evPot` as `ev` is,
+indexed like `COMBO_CARDS` (0 outside the range, on the board, or with no opponent hand to
+face; those carry no weight). Weighted by range weight times the opponent mass each hand can
+face, it averages to `solution.ev(player)`, and one pass serves both.
 
 Both read the average strategy by default. With `approximations: { currentProfileEv: true }`
 they read the current (regret-matched) profile instead: the strategy the next iteration would
@@ -250,7 +270,9 @@ const detailed = solve(turn, { targetPercent: 0.3 });
 
 `solution.subgameAt(node, board, betting?)` returns the spot that starts at a node that
 opens a betting round. It carries the board dealt there, the pot and stacks as they stand,
-and each player's range as their reach there (`solution.reachAt`). Ranges accept these
+and each player's range as their reach there (`solution.reachAt`), with `evPot` kept at
+the original spot's pot so the re-solve's `ev` is a share of the flop pot (see
+[Reading a solved spot](#reading-a-solved-spot)). Ranges accept these
 per-combination weights as well as notation. Measured on the bench flop: the coarse flop
 took 27 s and 150 MB with 3 threads. Each turn, re-solved with three sizes, two raises and
 a shove, took about 7 s and 15 MB. The same rich tree solved from the flop would need
