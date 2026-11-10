@@ -7,7 +7,7 @@
  * default).
  */
 
-import { parseCards } from '../../src/cards.ts';
+import { formatCards, parseCards } from '../../src/cards.ts';
 import type { SpotConfig } from '../../src/index.ts';
 import { parseRange } from '../../src/range.ts';
 import { RANGE_PRESETS } from './ranges.ts';
@@ -83,11 +83,7 @@ export function normaliseBoard(text: string): string | null {
 	try {
 		const cards = parseCards(text);
 		if (cards.length < 3 || cards.length > 5) return null;
-		return text
-			.replace(/[\s,]+/g, '')
-			.match(/../g)!
-			.map((card) => card[0].toUpperCase() + card[1].toLowerCase())
-			.join(' ');
+		return formatCards(cards);
 	} catch {
 		return null;
 	}

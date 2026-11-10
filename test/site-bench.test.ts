@@ -8,7 +8,7 @@ import {
 	progressToward,
 } from '../site/lib/bench.ts';
 import type { Check } from '../site/lib/bench.ts';
-import { configOf, DEFAULT_SETTINGS, readSettings, writeSettings } from '../site/lib/settings.ts';
+import { configOf, DEFAULT_SETTINGS, normaliseBoard, readSettings, writeSettings } from '../site/lib/settings.ts';
 import { defineSpot } from '../src/index.ts';
 
 describe('site benchmark arithmetic', () => {
@@ -84,5 +84,11 @@ describe('site settings', () => {
 		expect(readSettings(writeSettings(settings))).toEqual(settings);
 		expect(readSettings('pot=-5&threads=abc&sizes=nope&target=7&board=zz')).toEqual(DEFAULT_SETTINGS);
 		expect(readSettings('')).toEqual(DEFAULT_SETTINGS);
+	});
+
+	it('normalises boards and refuses bad ones', () => {
+		expect(normaliseBoard('asKH7d')).toBe('As Kh 7d');
+		expect(normaliseBoard('As As 7d')).toBeNull();
+		expect(normaliseBoard('As Kh')).toBeNull();
 	});
 });

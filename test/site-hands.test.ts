@@ -8,7 +8,9 @@ import {
 	cellOfCards,
 	cellsFromCombos,
 	comboCount,
+	paintCell,
 	rangeOfCells,
+	rangeOfCombos,
 	TOTAL_COMBOS,
 } from '../site/lib/hands.ts';
 
@@ -67,5 +69,15 @@ describe('site hand grid', () => {
 			for (let cell = 0; cell < CELLS; cell++) grid[cell] = weights[Math.floor(random() * weights.length)];
 			expect([...gridOf(rangeOfCells(grid))]).toEqual([...grid]);
 		}
+	});
+
+	it('keeps single combinations and exact weights when another cell is painted', () => {
+		const weights = parseRange('AA,AsKs,KK:0.333');
+		paintCell(weights, COMBO_CARDS, cellNamed('QQ'), 1);
+		const range = rangeOfCombos(weights, COMBO_CARDS);
+		expect([...parseRange(range)]).toEqual([...parseRange('AA,AsKs,KK:0.333,QQ')]);
+		expect(range).toBe('AA,QQ,KK:0.333,AsKs');
+		paintCell(weights, COMBO_CARDS, cellNamed('AKs'), 0);
+		expect(rangeOfCombos(weights, COMBO_CARDS)).toBe('AA,QQ,KK:0.333');
 	});
 });

@@ -14,6 +14,7 @@
 
 import { COMBO_CARDS, createRun, defineSpot, simdAvailable, SpotTooLargeError } from '../src/index.ts';
 import type { Estimate, Precision, SpotConfig } from '../src/index.ts';
+import { DEFAULT_MAX_BYTES } from '../src/platform/browser.ts';
 import { enableThreads, threadsUnavailable } from '../src/threads.ts';
 import { wasmStorage } from '../src/wasm-storage.ts';
 import { checkGap } from './lib/bench.ts';
@@ -34,10 +35,15 @@ const post = (message: Outbound): void => scope.postMessage(message);
 const CHUNK_MS = 200;
 
 let stopping = false;
+let latestEstimate: Extract<Inbound, { type: 'estimate' }> | null = null;
 
 const yieldToMessages = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
+/** The precision `createRun` picks by default, made explicit so the page can show it. */
+const precisionFor = (estimate: Estimate): 'f32' | 'i16' => (estimate.bytes <= DEFAULT_MAX_BYTES ? 'f32' : 'i16');
+
 function summarise(estimate: Estimate): SpotSummary {
+	const precision = precisionFor(estimate);
 	return {
 		rounds: estimate.rounds,
 		runouts: estimate.runouts,
@@ -45,6 +51,9 @@ function summarise(estimate: Estimate): SpotSummary {
 		decisionNodes: estimate.decisionNodes,
 		bytes: estimate.bytes,
 		compressedBytes: estimate.compressedBytes,
+		maxBytes: DEFAULT_MAX_BYTES,
+		precision,
+		storageBytes: precision === 'i16' ? estimate.compressedBytes : estimate.bytes,
 	};
 }
 
@@ -83,15 +92,14 @@ async function solveSpot(config: SpotConfig, target: number, threadsWanted: numb
 	t = now();
 	const spot = defineSpot(config);
 	const buildMs = now() - t;
-	const maxBytes = 512 * 2 ** 20;
-	const precision: Precision = spot.estimate.bytes <= maxBytes ? 'f32' : 'i16';
+	const precision: Precision = precisionFor(spot.estimate);
 
 	post({ type: 'phase', phase: 'alloc' });
 	await yieldToMessages();
 	t = now();
 	const run = createRun(spot, { workers: threads, precision, ...(precision === 'i16' ? { wasmStorage } : {}) });
 	const allocMs = now() - t;
-	const storageBytes = precision === 'i16' ? spot.estimate.compressedBytes : spot.estimate.bytes;
+	const storageBytes = summarise(spot.estimate).storageBytes;
 
 	post({
 		type: 'phase',
@@ -140,6 +148,14 @@ async function solveSpot(config: SpotConfig, target: number, threadsWanted: numb
 			await yieldToMessages();
 			if (stopping) {
 				stoppedBy = 'stopped';
+				// Measure where it stopped, so the report's figure matches its iterations.
+				if (checks[checks.length - 1]?.iterations !== run.completed) {
+					t = now();
+					const check = { iterations: run.completed, exploitability: run.exploitabilityPercent(), ms: solveMs };
+					measureMs += now() - t;
+					checks.push(check);
+					post({ type: 'check', check });
+				}
 				break;
 			}
 		}
@@ -238,7 +254,17 @@ scope.onmessage = ({ data }) => {
 		return;
 	}
 	if (data.type === 'estimate') {
-		estimateSpot(data.id, data.config);
+		// Messages that queued while an estimate was building run before this
+		// timeout, so only the newest is built; the page ignores older replies.
+		const first = latestEstimate === null;
+		latestEstimate = data;
+		if (first) {
+			setTimeout(() => {
+				const request = latestEstimate!;
+				latestEstimate = null;
+				estimateSpot(request.id, request.config);
+			}, 0);
+		}
 		return;
 	}
 	stopping = false;

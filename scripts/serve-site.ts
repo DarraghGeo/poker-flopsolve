@@ -29,7 +29,12 @@ const TYPES: Record<string, string> = {
 /** Serve `site/dist/`; resolves once listening. */
 export async function serveSite(options: { port?: number; isolated?: boolean } = {}): Promise<{ url: string; server: Server }> {
 	const server = createServer((request, response) => {
-		const path = decodeURIComponent((request.url ?? '/').split('?')[0]);
+		let path: string;
+		try {
+			path = decodeURIComponent((request.url ?? '/').split('?')[0]);
+		} catch {
+			return void response.writeHead(400).end();
+		}
 		const file = normalize(join(SITE_OUT, path.endsWith('/') ? `${path}index.html` : path));
 		if (!file.startsWith(SITE_OUT + sep)) return void response.writeHead(403).end();
 		try {

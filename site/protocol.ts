@@ -16,6 +16,12 @@ export interface SpotSummary {
 	readonly bytes: number;
 	/** Storage at 16 bits. */
 	readonly compressedBytes: number;
+	/** The tab's memory cap the spot is checked against. */
+	readonly maxBytes: number;
+	/** The precision a solve uses: 32 bits if the tree fits the cap, else 16. */
+	readonly precision: 'f32' | 'i16';
+	/** Storage at that precision. */
+	readonly storageBytes: number;
 }
 
 /** How the solve was set up. */

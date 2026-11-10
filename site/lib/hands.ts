@@ -9,6 +9,8 @@
  * solver's `rank * 4 + suit`, rank 0 the deuce (src/cards.ts).
  */
 
+import { formatCard } from '../../src/cards.ts';
+
 /** Ranks as the grid shows them, aces first. */
 export const GRID_RANKS = 'AKQJT98765432';
 
@@ -130,25 +132,76 @@ function notationOf(cells: ReadonlySet<number>): string[] {
 	return parts;
 }
 
-/** Format a weight as notation does: "0.5", "0.25". */
-const weightText = (weight: number): string => String(Math.round(weight * 100) / 100);
+/** Notation for weighted groups of cells, heaviest first; full weight carries no suffix. */
+function notationOfGroups(groups: Map<number, Set<number>>): string[] {
+	const parts: string[] = [];
+	for (const weight of [...groups.keys()].sort((a, b) => b - a)) {
+		const suffix = weight === 1 ? '' : `:${weight}`;
+		for (const part of notationOf(groups.get(weight)!)) parts.push(part + suffix);
+	}
+	return parts;
+}
+
+function addTo(groups: Map<number, Set<number>>, weight: number, cell: number): void {
+	if (!groups.has(weight)) groups.set(weight, new Set());
+	groups.get(weight)!.add(cell);
+}
 
 /**
  * Range notation for a grid, compressed: "TT+,A2s+,KQo,99:0.5". Cells are
- * grouped by weight, full weight first; a cell at 0 is left out.
+ * grouped by weight, rounded to hundredths; a cell at 0 is left out.
  */
 export function rangeOfCells(cells: ArrayLike<number>): string {
 	const groups = new Map<number, Set<number>>();
 	for (let cell = 0; cell < CELLS; cell++) {
 		const weight = Math.round(Math.min(1, Math.max(0, cells[cell])) * 100) / 100;
-		if (weight <= 0) continue;
-		if (!groups.has(weight)) groups.set(weight, new Set());
-		groups.get(weight)!.add(cell);
+		if (weight > 0) addTo(groups, weight, cell);
 	}
-	const parts: string[] = [];
-	for (const weight of [...groups.keys()].sort((a, b) => b - a)) {
-		const suffix = weight === 1 ? '' : `:${weightText(weight)}`;
-		for (const part of notationOf(groups.get(weight)!)) parts.push(part + suffix);
+	return notationOfGroups(groups).join(',');
+}
+
+/** The combinations in each cell, by the solver's combination index. */
+function combosByCell(comboCards: ArrayLike<number>): number[][] {
+	const out: number[][] = Array.from({ length: CELLS }, () => []);
+	for (let combo = 0; combo < TOTAL_COMBOS; combo++) out[cellOfCards(comboCards[combo * 2], comboCards[combo * 2 + 1])].push(combo);
+	return out;
+}
+
+let cached: { cards: ArrayLike<number>; cells: number[][] } | null = null;
+const cellCombosOf = (comboCards: ArrayLike<number>): number[][] => {
+	if (cached?.cards !== comboCards) cached = { cards: comboCards, cells: combosByCell(comboCards) };
+	return cached.cells;
+};
+
+/** Set every combination of a cell to `weight`, in per-combination weights. */
+export function paintCell(weights: Float64Array, comboCards: ArrayLike<number>, cell: number, weight: number): void {
+	for (const combo of cellCombosOf(comboCards)[cell]) weights[combo] = weight;
+}
+
+/**
+ * Range notation for per-combination weights, exact: a cell whose
+ * combinations share one weight is written as its class, compressed as
+ * `rangeOfCells` does; any other cell as its single combinations
+ * ("AsKs:0.5"). Weights are written as they are, not rounded.
+ */
+export function rangeOfCombos(weights: ArrayLike<number>, comboCards: ArrayLike<number>): string {
+	const groups = new Map<number, Set<number>>();
+	const singles: string[] = [];
+	const byCell = cellCombosOf(comboCards);
+	for (let cell = 0; cell < CELLS; cell++) {
+		const combos = byCell[cell];
+		const first = weights[combos[0]];
+		if (combos.every((combo) => weights[combo] === first)) {
+			if (first > 0) addTo(groups, first, cell);
+			continue;
+		}
+		for (const combo of combos) {
+			const w = weights[combo];
+			if (!(w > 0)) continue;
+			const a = comboCards[combo * 2];
+			const b = comboCards[combo * 2 + 1];
+			singles.push(formatCard(Math.max(a, b)) + formatCard(Math.min(a, b)) + (w === 1 ? '' : `:${w}`));
+		}
 	}
-	return parts.join(',');
+	return [...notationOfGroups(groups), ...singles].join(',');
 }

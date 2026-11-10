@@ -11,7 +11,7 @@
  * it is crossed and the range text rebuilt once a frame.
  */
 
-import { formatCards, parseCards, COMBO_CARDS } from '../src/cards.ts';
+import { COMBO_CARDS, formatCard, formatCards, parseCards } from '../src/cards.ts';
 import { parseRange } from '../src/range.ts';
 import type { Check } from './lib/bench.ts';
 import { estimateIterationsTo, formatBytes, formatMs, milestones, progressToward } from './lib/bench.ts';
@@ -23,7 +23,8 @@ import {
 	cellsFromCombos,
 	comboCount,
 	GRID_RANKS,
-	rangeOfCells,
+	paintCell,
+	rangeOfCombos,
 	TOTAL_COMBOS,
 } from './lib/hands.ts';
 import { RANGE_PRESETS } from './lib/ranges.ts';
@@ -40,18 +41,16 @@ const esc = (text: string): string =>
 
 const SUITS = 'shdc';
 const SUIT_GLYPHS: Record<string, string> = { s: '♠', h: '♥', d: '♦', c: '♣' };
-const RANK_CHARS = '23456789TJQKA';
-const cardName = (card: number): string => RANK_CHARS[card >> 2] + SUITS[card & 3];
 const cardHtml = (card: number): string => {
-	const suit = SUITS[card & 3];
-	return `<b class="${suit}">${RANK_CHARS[card >> 2]}</b><em class="${suit}">${SUIT_GLYPHS[suit]}</em>`;
+	const [rank, suit] = formatCard(card);
+	return `<b class="${suit}">${rank}</b><em class="${suit}">${SUIT_GLYPHS[suit]}</em>`;
 };
 
-const gridOf = (range: string): Float64Array => {
+const weightsOf = (range: string): Float64Array => {
 	try {
-		return cellsFromCombos(parseRange(range), COMBO_CARDS);
+		return parseRange(range);
 	} catch {
-		return new Float64Array(CELLS);
+		return new Float64Array(TOTAL_COMBOS);
 	}
 };
 
@@ -101,9 +100,13 @@ let settings: Settings = readSettings(location.hash);
 let board: number[] = parseCards(settings.board);
 let player: 0 | 1 = 0;
 let brush = 1;
-const grids: [Float64Array, Float64Array] = [gridOf(settings.oop), gridOf(settings.ip)];
+/** Each player's range per combination, exact, and per grid cell (the mean) for display. */
+const weights: [Float64Array, Float64Array] = [weightsOf(settings.oop), weightsOf(settings.ip)];
+const grids: [Float64Array, Float64Array] = [cellsFromCombos(weights[0], COMBO_CARDS), cellsFromCombos(weights[1], COMBO_CARDS)];
 const cores = Math.max(1, navigator.hardwareConcurrency || 1);
 const isolated = window.crossOriginIsolated === true;
+// A shared link may ask for more threads than this machine has.
+if (settings.threads > cores) settings = { ...settings, threads: 0 };
 
 const rangeOf = (p: 0 | 1): string => (p === 0 ? settings.oop : settings.ip);
 
@@ -129,7 +132,7 @@ for (let cell = 0; cell < CELLS; cell++) {
 	cellEls.push(el);
 }
 
-function paintCell(cell: number): void {
+function renderCell(cell: number): void {
 	const w = grids[player][cell];
 	const el = cellEls[cell];
 	el.style.setProperty('--w', String(w));
@@ -138,7 +141,7 @@ function paintCell(cell: number): void {
 }
 
 function paintGrid(): void {
-	for (let cell = 0; cell < CELLS; cell++) paintCell(cell);
+	for (let cell = 0; cell < CELLS; cell++) renderCell(cell);
 }
 
 function renderCounts(): void {
@@ -160,6 +163,7 @@ function renderTabs(): void {
 $('tabs').addEventListener('click', (event) => {
 	const tab = (event.target as HTMLElement).closest<HTMLElement>('.tab');
 	if (!tab) return;
+	flushTyping();
 	player = Number(tab.dataset.player) as 0 | 1;
 	renderTabs();
 });
@@ -193,7 +197,8 @@ for (const preset of RANGE_PRESETS) {
 }
 
 function setRange(range: string): void {
-	grids[player] = gridOf(range);
+	weights[player] = weightsOf(range);
+	grids[player] = cellsFromCombos(weights[player], COMBO_CARDS);
 	update(player === 0 ? { oop: range } : { ip: range });
 	rangeInput.value = range;
 	rangeInput.classList.remove('invalid');
@@ -204,21 +209,35 @@ function setRange(range: string): void {
 $('clear-range').addEventListener('click', () => setRange(''));
 
 let typing = 0;
+let pendingTyping: (() => void) | null = null;
 rangeInput.addEventListener('input', () => {
+	// Bound to the player and text of this keystroke, so a tab switch before it lands cannot misfile it.
+	const target = player;
+	const text = rangeInput.value.trim();
 	clearTimeout(typing);
-	typing = window.setTimeout(() => {
-		const text = rangeInput.value.trim();
+	pendingTyping = () => {
+		pendingTyping = null;
 		if (!parses(text)) {
-			rangeInput.classList.add('invalid');
+			if (target === player) rangeInput.classList.add('invalid');
 			return;
 		}
-		rangeInput.classList.remove('invalid');
-		grids[player] = gridOf(text);
-		update(player === 0 ? { oop: text } : { ip: text });
-		paintGrid();
+		weights[target] = parseRange(text);
+		grids[target] = cellsFromCombos(weights[target], COMBO_CARDS);
+		update(target === 0 ? { oop: text } : { ip: text });
+		if (target === player) {
+			rangeInput.classList.remove('invalid');
+			paintGrid();
+		}
 		renderCounts();
-	}, 220);
+	};
+	typing = window.setTimeout(pendingTyping, 220);
 });
+/** Land a typed range now, before anything reads the ranges. */
+function flushTyping(): void {
+	if (!pendingTyping) return;
+	clearTimeout(typing);
+	pendingTyping();
+}
 
 // Painting: one value per stroke, cells found by geometry, cells between pointer samples filled in.
 let painting = false;
@@ -237,7 +256,7 @@ function cellAt(x: number, y: number): number {
 
 function commitPaint(): void {
 	commitFrame = 0;
-	const range = rangeOfCells(grids[player]);
+	const range = rangeOfCombos(weights[player], COMBO_CARDS);
 	rangeInput.value = range;
 	rangeInput.classList.remove('invalid');
 	update(player === 0 ? { oop: range } : { ip: range });
@@ -249,12 +268,14 @@ function apply(cell: number): void {
 	lastCell = cell;
 	if (grids[player][cell] === paintValue) return;
 	grids[player][cell] = paintValue;
-	paintCell(cell);
+	paintCell(weights[player], COMBO_CARDS, cell, paintValue);
+	renderCell(cell);
 	if (!commitFrame) commitFrame = requestAnimationFrame(commitPaint);
 }
 
 gridEl.addEventListener('pointerdown', (event) => {
 	if (event.button !== 0) return;
+	flushTyping();
 	gridRect = gridEl.getBoundingClientRect();
 	const cell = cellAt(event.clientX, event.clientY);
 	if (cell < 0) return;
@@ -336,7 +357,7 @@ function renderBoard(): void {
 					.map((i) => {
 						const card = board[i];
 						if (card === undefined) return `<button class="slot${i === board.length ? ' next' : ''}" disabled aria-label="empty"></button>`;
-						return `<button class="slot filled" data-index="${i}" aria-label="Remove ${cardName(card)}">${cardHtml(card)}</button>`;
+						return `<button class="slot filled" data-index="${i}" aria-label="Remove ${formatCard(card)}">${cardHtml(card)}</button>`;
 					})
 					.join('')}</div></div>`,
 		)
@@ -455,6 +476,8 @@ function blocker(): string | null {
 
 function scheduleEstimate(): void {
 	clearTimeout(estimateTimer);
+	// Any reply in flight now describes other settings.
+	estimateId++;
 	fits = false;
 	renderRunButton();
 	const problem = blocker();
@@ -466,7 +489,7 @@ function scheduleEstimate(): void {
 	estimateEl.classList.add('pending');
 	estimateTimer = window.setTimeout(() => {
 		estimator ??= startEstimator();
-		const message: Inbound = { type: 'estimate', id: ++estimateId, config: configOf(settings) };
+		const message: Inbound = { type: 'estimate', id: estimateId, config: configOf(settings) };
 		estimator.postMessage(message);
 	}, 180);
 }
@@ -483,7 +506,7 @@ function startEstimator(): Worker {
 			estimateEl.classList.add('error');
 			estimateEl.innerHTML =
 				`<b>${esc(data.message)}</b>` +
-				(data.spot ? ` It needs ${formatBytes(data.spot.compressedBytes)} at 16 bits; a tab gets 512 MiB.` : '') +
+				(data.spot ? ` It needs ${formatBytes(data.spot.compressedBytes)} at 16 bits; a tab gets ${formatBytes(data.spot.maxBytes)}.` : '') +
 				(data.suggestions.length ? `<ul>${data.suggestions.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>` : '');
 		}
 		renderRunButton();
@@ -496,8 +519,8 @@ function startEstimator(): Worker {
 }
 
 function describeSpot(spot: SpotSummary): string {
-	const sixteen = spot.bytes > 512 * 2 ** 20;
-	const storage = sixteen ? spot.compressedBytes : spot.bytes;
+	const sixteen = spot.precision === 'i16';
+	const storage = spot.storageBytes;
 	return (
 		`<b>${number(spot.combos[0])}</b> vs <b>${number(spot.combos[1])}</b> combos · ` +
 		`<b>${number(spot.decisionNodes)}</b> decisions · ${streets(spot.rounds)} · ` +
@@ -580,6 +603,7 @@ function renderLive(): void {
 }
 
 function startRun(): void {
+	flushTyping();
 	if (running || !fits || blocker()) return;
 	running = true;
 	runSettings = settings;
@@ -611,7 +635,7 @@ function startRun(): void {
 		type: 'solve',
 		config: configOf(settings),
 		target: settings.target,
-		threads: isolated ? settings.threads : 1,
+		threads: isolated ? Math.min(settings.threads, cores) : 1,
 		cap: ITERATION_CAP,
 	};
 	solver.postMessage(message);
@@ -713,6 +737,9 @@ function renderChart(el: HTMLElement, data: readonly Check[], target: number): v
 	const pad = { left: 44, right: 14, top: 12, bottom: 26 };
 	const iw = W - pad.left - pad.right;
 	const ih = H - pad.top - pad.bottom;
+	// A measure of exactly 0 (a spot nobody can exploit) has no logarithm.
+	const floor = target / 100;
+	data = data.map((c) => ({ ...c, exploitability: Math.max(floor, c.exploitability) }));
 	const seconds = data.map((c) => c.ms / 1000);
 	const maxX = Math.max(seconds[seconds.length - 1] ?? 0, 0.001) * 1.04;
 	const top = Math.max(target * 10, ...data.map((c) => c.exploitability));
@@ -858,7 +885,7 @@ function renderResults(report: Report): void {
 	const spotCard =
 		`<section class="card"><div class="card-head"><h2>Spot</h2></div>` +
 		kv([
-			['Board', cards.map((c) => `<span class="${SUITS[c & 3]}">${RANK_CHARS[c >> 2]}${SUIT_GLYPHS[SUITS[c & 3]]}</span>`).join(' ')],
+			['Board', cards.map((c) => `<span class="${formatCard(c)[1]}">${formatCard(c)[0]}${SUIT_GLYPHS[formatCard(c)[1]]}</span>`).join(' ')],
 			['Streets', streets(spot.rounds)],
 			['Pot · stack', `${r.config.pot}bb · ${r.config.stack}bb`],
 			['Betting', `${SIZE_PRESETS[runSettings.sizes].label}${runSettings.raise ? ', one raise' : ''}${runSettings.allIn ? ', all-in' : ''}`],
@@ -927,6 +954,9 @@ function renderResults(report: Report): void {
 }
 
 // ---------------------------------------------------------------- start
+
+// A link pasted into an open tab changes only the hash; load it as a fresh page.
+window.addEventListener('hashchange', () => location.reload());
 
 renderBrush();
 renderTabs();
