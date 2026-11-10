@@ -1268,7 +1268,11 @@ realistic spots it folds nothing, at any gap (see
 spot, with runouts bucketed as by `runoutBuckets: 3`, for that many iterations. It then
 starts the real spot from those regrets. Coarse iterations are cheaper, and the real solve
 picks up roughly where they left off. The answer is still the real spot's, and
-exploitability measures the real game. Off by default.
+exploitability measures the real game. Off by default. Both runs are in memory at the
+switch and count against `maxBytes`: with `precision` unset, a spot whose 32-bit storage
+leaves no room for the coarse run is solved at 16 bits, the coarse run too (issue #148; on
+the JavaScript engine unless the solve passes `wasmStorage`), and one that does not fit
+even so throws.
 
 Measured in Chromium on one thread, stopped at 15 s, 40 coarse iterations, with root-EV
 error per combination (range-weighted mean, % of pot) against a 0.1% reference:

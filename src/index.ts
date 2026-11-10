@@ -921,7 +921,10 @@ export interface Approximations {
 	 * runs inside `createRun`, all at once and without progress reports, so
 	 * a caller stepping a run to stay responsive should keep it short; it
 	 * must fit in what `maxBytes` leaves beside the real spot, at 16 bits if
-	 * not 32, or `createRun` refuses.
+	 * not 32, or `createRun` refuses. With `precision` unset, a real spot
+	 * whose 32-bit storage leaves no room for the coarse one is solved at 16
+	 * bits, the coarse one too (issue #148; on the JavaScript engine unless
+	 * the solve passes `wasmStorage`).
 	 */
 	readonly coarseStart?: CoarseStart;
 	/**
@@ -1253,7 +1256,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		precision = 'i16';
 		layout = layoutAt(precision);
 	}
-	const storageBytes = storageAt(precision, layout);
+	let storageBytes = storageAt(precision, layout);
 	if (samplingPlan && storageBytes + baselineBytes > maxBytes) {
 		throw new Error(
 			`chanceSampling needs ${Math.ceil(baselineBytes / 2 ** 20)} MiB of baselines beside ` +
@@ -1266,8 +1269,22 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// does not fit fails here; solved only once the real run exists.
 	// The real run's storage by the larger of the layout it allocates and the
 	// estimate the coarse spot is measured by, so neither undercounts it.
-	const held = Math.max(storageBytes, storageCost(spot, precision)) + baselineBytes;
-	const coarsePlan = planCoarseStart(spot, options, maxBytes, held);
+	const held = (at: Precision, of: Layout): number =>
+		Math.max(storageAt(at, of), storageCost(spot, at)) + baselineBytes;
+	let coarsePlan: CoarsePlan | null;
+	try {
+		coarsePlan = planCoarseStart(spot, options, maxBytes, held(precision, layout));
+	} catch (error) {
+		// A default 32-bit real run that leaves no room for the coarse one
+		// drops to 16 bits, as it does for the baselines, and the coarse run
+		// with it: never wider than the real one. A bad option, or a coarse
+		// run that does not fit beside 16 bits either, is still refused.
+		if (!(error instanceof CoarseRefusal && defaulted && precision === 'f32')) throw error;
+		precision = 'i16';
+		layout = layoutAt(precision);
+		storageBytes = storageAt(precision, layout);
+		coarsePlan = planCoarseStart(spot, { ...options, precision }, maxBytes, held(precision, layout));
+	}
 
 	// The WebAssembly engine, where it applies: 32-bit storage, or 16-bit and
 	// compact storage with `wasmStorage`, and a platform with WebAssembly
@@ -1502,6 +1519,9 @@ interface CoarsePlan {
 	elapsed: number;
 }
 
+/** `planCoarseStart`'s refusal of a coarse spot that does not fit, as against a bad option. */
+class CoarseRefusal extends Error {}
+
 /** Milliseconds a run's coarse start took, by the real run's solver, for `solve()`'s clock. */
 const coarseMs = new WeakMap<Solver, number>();
 
@@ -1539,7 +1559,7 @@ function planCoarseStart(spot: Spot, options: SolveOptions, maxBytes: number, us
 	// that precision, beside the rest `estimate.compactBytes` counts at 32 bits.
 	const left = maxBytes - used;
 	const sampling = options.approximations?.chanceSampling;
-	const refuse = (needs: number): Error => new Error(
+	const refuse = (needs: number): Error => new CoarseRefusal(
 		`coarseStart needs ~${formatBytes(needs)} beside this spot's ~${formatBytes(used)}` +
 			`${sampling ? ' (storage and chanceSampling baselines, for each)' : ''}, ` +
 			`over the ${formatBytes(maxBytes)} limit; raise maxBytes or leave coarseStart off`,
