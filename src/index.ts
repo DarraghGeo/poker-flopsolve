@@ -1264,7 +1264,10 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	// Planned once the precision is settled (beside the baselines) and before
 	// the accumulators are allocated, so a bad option or a coarse spot that
 	// does not fit fails here; solved only once the real run exists.
-	const coarsePlan = planCoarseStart(spot, options, precision, maxBytes);
+	// The real run's storage by the larger of the layout it allocates and the
+	// estimate the coarse spot is measured by, so neither undercounts it.
+	const held = Math.max(storageBytes, storageCost(spot, precision)) + baselineBytes;
+	const coarsePlan = planCoarseStart(spot, options, maxBytes, held);
 
 	// The WebAssembly engine, where it applies: 32-bit storage, or 16-bit and
 	// compact storage with `wasmStorage`, and a platform with WebAssembly
@@ -1509,8 +1512,10 @@ const coarseMs = new WeakMap<Solver, number>();
  *
  * The coarse spot must fit in what `maxBytes` leaves beside the real one,
  * since both are in memory at the switch; at 32 bits if it can, else 16.
+ * `used` is what the real run holds: its storage and, with chance
+ * sampling, its baselines. The coarse run's own baselines count too.
  */
-function planCoarseStart(spot: Spot, options: SolveOptions, precision: Precision, maxBytes: number): CoarsePlan | null {
+function planCoarseStart(spot: Spot, options: SolveOptions, maxBytes: number, used: number): CoarsePlan | null {
 	const settings = options.approximations?.coarseStart;
 	if (!settings) return null;
 	const { iterations, runoutBuckets = DEFAULT_COARSE_GAP } = settings;
@@ -1532,16 +1537,21 @@ function planCoarseStart(spot: Spot, options: SolveOptions, precision: Precision
 
 	// A compact spot's coarse spot is compact too: its storage is its layout at
 	// that precision, beside the rest `estimate.compactBytes` counts at 32 bits.
-	const used = storageCost(spot, precision);
 	const left = maxBytes - used;
-	const coarsePrecision: Precision = options.precision ?? (storageCost(coarseSpot, 'f32') <= left ? 'f32' : 'i16');
-	const needs = storageCost(coarseSpot, coarsePrecision);
-	if (needs > left) {
-		throw new Error(
-			`coarseStart needs ~${formatBytes(needs)} beside this spot's ~${formatBytes(used)}, ` +
-				`over the ${formatBytes(maxBytes)} limit; raise maxBytes or leave coarseStart off`,
-		);
-	}
+	const sampling = options.approximations?.chanceSampling;
+	const refuse = (needs: number): Error => new Error(
+		`coarseStart needs ~${formatBytes(needs)} beside this spot's ~${formatBytes(used)}` +
+			`${sampling ? ' (storage and chanceSampling baselines, for each)' : ''}, ` +
+			`over the ${formatBytes(maxBytes)} limit; raise maxBytes or leave coarseStart off`,
+	);
+	// Storage first: where even the smallest storage does not fit, the
+	// baselines need not be laid out to know it.
+	const narrowest = storageCost(coarseSpot, options.precision ?? 'i16');
+	if (narrowest > left) throw refuse(narrowest);
+	const coarseBaselines = sampling ? baselineCost(coarseSpot, sampling) : 0;
+	const coarsePrecision: Precision = options.precision ?? (storageCost(coarseSpot, 'f32') + coarseBaselines <= left ? 'f32' : 'i16');
+	const needs = storageCost(coarseSpot, coarsePrecision) + coarseBaselines;
+	if (needs > left) throw refuse(needs);
 	return { spot: coarseSpot, iterations, precision: coarsePrecision, elapsed: 0 };
 }
 
@@ -1566,6 +1576,20 @@ function solveCoarse(plan: CoarsePlan, options: SolveOptions): SolveRun {
 	}
 	plan.elapsed = Date.now() - started;
 	return run;
+}
+
+/**
+ * Bytes chance sampling's baselines take for `of`, as `createRun` lays them
+ * out. They depend on the layout's blocks, not on its precision.
+ */
+function baselineCost(of: Spot, sampling: SamplingOptions): number {
+	const relevant = new Uint8Array(COMBOS);
+	for (const combo of of.players[0].combos) relevant[combo] = 1;
+	for (const combo of of.players[1].combos) relevant[combo] = 1;
+	const active = buildActiveLists(of.runouts, of.players, buildShowdownTable(of.runouts, relevant));
+	const compact = of.source.compactStorage ? compactPlan(of.source.compactStorage, of.runouts.rounds) : undefined;
+	const layout = buildLayout(of.tree, of.runouts, of.players, 4, of.historyAlias, compact);
+	return samplingBytes(planSampling(of.tree, of.runouts, active, layout, sampling));
 }
 
 /** Bytes `of` takes stored at `at`, compact storage included. */
