@@ -2,7 +2,7 @@
  * Threaded solves with a thread made to fail mid-iteration, for
  * thread-failure.test.ts and the browser checks in browser-threads.test.ts.
  *
- * Each thread starts as usual and then fails on its first walk, from a setup
+ * Each thread starts as usual and then fails in its first step, from a setup
  * altered on its way to the thread: nothing in the solver itself is faked.
  */
 
@@ -50,23 +50,31 @@ function prepare(threads: number, shared: boolean) {
 }
 
 /**
- * A stand-in for the engine module whose `runChance` traps (`unreachable`)
- * and whose other exports do nothing, so a thread starts as usual and dies
- * on its first walk. An out-of-bounds access would be the likelier real
- * fault, but headless Chromium in some sandboxes crashes the whole page on
- * one rather than throwing.
+ * A stand-in for the engine module whose `setPhase` traps (`unreachable`)
+ * from its second call on, and whose other exports do nothing. A thread
+ * calls it once as it starts and again first thing in every step, inside
+ * the `try` that reports a failure (see `serveEngine`), so each thread
+ * starts as usual and dies in the first step, whether or not any board is
+ * left for it: the main thread takes boards off the same order, and under
+ * load may take them all before a worker wakes. An out-of-bounds access
+ * would be the likelier real fault, but headless Chromium in some sandboxes
+ * crashes the whole page on one rather than throwing.
  */
 function trappingEngine(): unknown {
 	const names = ['init', 'setMaxActions', 'setExchange', 'setShard', 'setPhase', 'runChance'];
 	const ascii = (text: string) => Array.from(text, (c) => c.charCodeAt(0));
 	const section = (id: number, body: number[]) => [id, body.length, ...body];
 	const exports = names.flatMap((name, i) => [name.length, ...ascii(name), 0, i]);
+	// Global 0 is set by the first `setPhase`; once set, the next one traps:
+	// global.get 0, if, unreachable, end, i32.const 1, global.set 0, end.
+	const setPhase = [0, 0x23, 0, 0x04, 0x40, 0x00, 0x0b, 0x41, 1, 0x24, 0, 0x0b];
 	// Every function is () -> (); calls from JavaScript may pass arguments all the same.
-	const bodies = names.flatMap((name) => (name === 'runChance' ? [3, 0, 0x00, 0x0b] : [2, 0, 0x0b]));
+	const bodies = names.flatMap((name) => (name === 'setPhase' ? [setPhase.length, ...setPhase] : [2, 0, 0x0b]));
 	const bytes = Uint8Array.from([
 		0x00, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
 		...section(1, [1, 0x60, 0, 0]),
 		...section(3, [names.length, ...names.map(() => 0)]),
+		...section(6, [1, 0x7f, 0x01, 0x41, 0, 0x0b]),
 		...section(7, [names.length, ...exports]),
 		...section(10, [names.length, ...bodies]),
 	]);
@@ -75,7 +83,7 @@ function trappingEngine(): unknown {
 }
 
 /**
- * A threaded WebAssembly engine whose spawned threads trap on their first walk.
+ * A threaded WebAssembly engine whose spawned threads trap in their first step.
  * @param spawn the platform's `spawnEngineWorker`
  * @param threads threads, this one included
  */
