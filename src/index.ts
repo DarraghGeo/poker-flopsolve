@@ -1261,8 +1261,9 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		);
 	}
 
-	// Planned before anything is allocated, so a bad option or a coarse spot
-	// that does not fit fails here; solved only once the real run exists.
+	// Planned once the precision is settled (beside the baselines) and before
+	// the accumulators are allocated, so a bad option or a coarse spot that
+	// does not fit fails here; solved only once the real run exists.
 	const coarsePlan = planCoarseStart(spot, options, precision, maxBytes);
 
 	// The WebAssembly engine, where it applies: 32-bit storage, or 16-bit and

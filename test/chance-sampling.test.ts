@@ -173,12 +173,18 @@ describe('chance sampling', () => {
 			expect(spot.estimate.bytes + baselines).toBeGreaterThan(maxBytes);
 			expect(spot.estimate.compressedBytes + baselines).toBeLessThanOrEqual(maxBytes);
 			const tight = defineSpot({ ...flop, maxBytes });
-			for (const options of [{}, { wasmStorage }, { engine: 'js' as const }]) {
+			for (const [options, engine] of [[{}, 'js'], [{ wasmStorage }, 'wasm'], [{ engine: 'js' as const }, 'js']] as const) {
 				const run = createRun(tight, { workers: 1, ...options, ...sampling({ p: 0.5 }) });
 				expect(run.solver.ctx.regretScale).toBeTruthy();
+				expect(run.engine).toBe(engine);
 				run.step(2);
 				run.close();
 			}
+			// An explicit 32 bits is kept, and so refused.
+			expect(() => createRun(tight, { workers: 1, precision: 'f32', ...sampling({ p: 0.5 }) })).toThrow(/maxBytes/);
+			// Where 16 bits does not fit beside the baselines either, it still throws.
+			const tighter = defineSpot({ ...flop, maxBytes: spot.estimate.compressedBytes + 16 });
+			expect(() => createRun(tighter, { workers: 1, ...sampling({ p: 0.5 }) })).toThrow(/baselines/);
 			// Without sampling the same spot keeps 32 bits.
 			const plain = createRun(tight, { workers: 1 });
 			expect(plain.solver.ctx.regretScale ?? null).toBeNull();
