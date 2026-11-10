@@ -47,4 +47,4 @@
 {"url":"https://claude.ai/code/session_014RSNFghgT58wxtwtbwUQ6h","title":"Exactly tied actions make 1- and 2-thread solves diverge by percents, not rounding","issue":117,"state":"archived","updated":"2026-11-09T13:27:23.553Z"}
 {"url":"https://claude.ai/code/session_014RSNFiUt5CpwBR2XRN59v8","title":"Refactor and Code Clean","issue":125,"state":"archived","updated":"2026-11-09T13:27:23.553Z"}
 {"url":null,"title":"Report EV as a percentage of the flop pot won (fold = 0%), like other solvers","issue":130,"state":"active","updated":"2026-11-10T01:40:59.698Z"}
-{"url":null,"title":"Lite: a stop that waits for the turn ranges, not only the root play","issue":123,"state":"active","updated":"2026-11-10T01:41:05.754Z"}
+{"url":"https://claude.ai/code/session_014RSNFgRU8RwFX6nCriCpAt","title":"Lite: a stop that waits for the turn ranges, not only the root play","issue":123,"state":"active","updated":"2026-11-10T02:16:06.977Z"}
