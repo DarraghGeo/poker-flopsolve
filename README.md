@@ -62,6 +62,26 @@ number. The line reaching the selected node is spelled out above the grid —
 Solving runs in its own worker thread, so progress streams and **Stop** ends early while
 keeping the partial answer.
 
+## Benchmark page
+
+A static page for anyone to measure the solver on their own machine, nothing installed:
+pick two ranges on a 13×13 grid (drag to paint, with weights and preset ranges), a flop
+with an optional turn and river, the pot, stack and betting, and press **Run benchmark**.
+It solves in a Web Worker on every core, shows each phase as it goes, and reports the time
+to each level of exploitability, iterations per second, where the time went, the tree's
+size, the machine and the solution's root strategy, with a JSON report and a link to share.
+
+```bash
+npm run site          # build site/ into site/dist and serve it on http://localhost:5175
+npm run site:build    # build only
+```
+
+`.github/workflows/pages.yml` publishes it to GitHub Pages each time `main` moves (set
+Settings → Pages → Source to "GitHub Actions" once). Pages cannot send the cross-origin
+isolation headers threads need, so the page registers its own service worker
+(`site/coi-sw.js`) that adds them and reloads once; where that is not possible it solves on
+one thread and says so. A tree over the tab's 512 MiB at 32 bits is solved at 16 bits.
+
 ## Ranges
 
 ```
@@ -709,9 +729,19 @@ the difference.
 
 `solve(spot, { workers })` splits the runouts across threads, the calling thread included:
 `workers: 2` is the caller and one worker thread. Storage is indexed runout-outermost, so
-each thread owns a disjoint slice of shared memory and takes no locks. Only the round above
+each runout's storage is walked by one thread at a time and no thread takes a lock. Only the round above
 the split stays on the main thread alone, because CFR+ clamps regrets at zero and partial
 sums cannot be added through a clamp. Exploitability and EV passes are split the same way.
+
+On the WebAssembly engine the split round's boards are not cut into fixed slices: every
+thread takes the next board off a shared queue, the costliest first by what each took on the
+previous traversal, until none are left (issue #133). Under chance sampling a board's work
+changes from one iteration to the next, and fixed slices left the slowest thread walking
+about 13% longer than the mean; the queue keeps it under 1%. On As Kh 7d with `solveLite`'s
+blueprint in headless Chromium, 4 cores, it settled in 49.3 s on 2 threads and 28.1 s on 4,
+where fixed slices took 57.9 and 33.7, the same 400 iterations, and a turn re-solve took
+12.8 and 7.0 s instead of 14.5 and 8.6. `node --import tsx bench/threads/profile.ts` prints
+where a threaded traversal's time goes. The JavaScript engine's pool keeps fixed slices.
 
 Measured on a 133 vs 145 combo spot, 8 cores:
 
@@ -733,9 +763,12 @@ any chance to report it (a Node worker out of heap, a worker the browser kills) 
 a backstop instead: the main thread waits for the others at most 20× its own share of the
 step, and never less than a minute, before it gives up on them.
 
-Results are bitwise deterministic at a fixed worker count, but agree with a different count
-only to floating point: a worker sums its own slice before the totals are summed across
-workers, which associates the same addition differently. Regret matching then amplifies
+On the WebAssembly engine, each board's values are kept apart and summed in board order,
+whichever thread walked it, so a solve is bitwise the same at every thread count from two up
+(`test/thread-schedule.test.ts`). One thread, and the JavaScript pool at any count, agree with
+that only to floating point: one thread sums inside the walk, in a different association, and
+a JavaScript worker sums its own slice before the totals are summed across workers. Regret
+matching then amplifies
 that rounding, as it does any small change: an action's share follows its regret's sign,
 and where hands are close to indifferent the 32-bit gap grows from iteration to iteration.
 Measured on a small turn (`Ah Kd Qc 8s`, half- and full-pot bets, two raises), 1 and 2

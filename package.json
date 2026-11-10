@@ -43,7 +43,7 @@
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsup",
     "test": "vitest run",
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && tsc --noEmit -p site",
     "lint": "node --import tsx scripts/lint.ts",
     "solve": "node --import tsx bin/solve.ts",
     "ui": "node --import tsx ui/server.ts",
@@ -51,10 +51,13 @@
     "bench:kernels": "node --import tsx bin/kernels.ts",
     "bench:browser": "node --import tsx bin/bench-browser.ts",
     "bench:browser:threads": "node --import tsx bin/bench-browser-threads.ts",
+    "bench:lite": "node --import tsx bin/bench-lite-browser.ts",
     "bench:gpu": "node --import tsx bin/bench-gpu.ts",
     "build:wasm": "node --import tsx scripts/build-wasm.ts",
     "prepublishOnly": "npm run build",
-    "bench:compare": "node --import tsx bench/compare/run.ts"
+    "bench:compare": "node --import tsx bench/compare/run.ts",
+    "site:build": "node --import tsx scripts/build-site.ts",
+    "site": "node --import tsx scripts/serve-site.ts"
   },
   "keywords": [
     "poker",

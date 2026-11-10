@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Flopsolve Bench</title>
+	<meta name="description" content="Benchmark a postflop poker solver in your browser: pick two ranges and a board, and see how fast your machine reaches equilibrium.">
+	<meta name="theme-color" content="#ffffff">
+	<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23111827'/%3E%3Cpath d='M16 7l7 9-7 9-7-9z' fill='%23fff'/%3E%3C/svg%3E">
+	<link rel="stylesheet" href="./styles.css">
+	<script src="./coi.js"></script>
+	<script type="module" src="./app.js"></script>
+</head>
+<body>
+	<header class="top">
+		<a class="brand" href="./">
+			<span class="logo" aria-hidden="true"></span>
+			<span>flopsolve</span><span class="brand-sub">bench</span>
+		</a>
+		<a class="top-link" href="https://github.com/DarraghGeo/poker-flopsolve">GitHub</a>
+	</header>
+
+	<main>
+		<section class="hero">
+			<h1>How fast does your browser solve poker?</h1>
+			<p>Pick two ranges and a board. The solver runs here, on your own cores, and measures how long it takes to reach equilibrium.</p>
+		</section>
+
+		<div class="layout">
+			<section class="card ranges" aria-label="Ranges">
+				<div class="card-head">
+					<div class="tabs" role="tablist" id="tabs">
+						<button class="tab" role="tab" data-player="0"><span class="tab-name">OOP</span><span class="tab-meta" id="count-0"></span></button>
+						<button class="tab" role="tab" data-player="1"><span class="tab-name">IP</span><span class="tab-meta" id="count-1"></span></button>
+					</div>
+					<div class="brush" id="brush" role="radiogroup" aria-label="Brush weight"></div>
+				</div>
+				<div class="chips" id="presets"></div>
+				<div class="grid" id="grid" role="grid" aria-label="Hand grid"></div>
+				<div class="range-row">
+					<input id="range-text" class="input mono" spellcheck="false" autocomplete="off" aria-label="Range">
+					<button class="ghost" id="clear-range">Clear</button>
+				</div>
+				<p class="hint">Drag across the grid to paint. Start on a painted hand to erase.</p>
+			</section>
+
+			<div class="side">
+				<section class="card" aria-label="Board">
+					<div class="card-head">
+						<h2>Board</h2>
+						<div class="head-actions">
+							<button class="ghost" id="random-flop">Random flop</button>
+							<button class="ghost" id="clear-board">Clear</button>
+						</div>
+					</div>
+					<div class="slots" id="slots"></div>
+					<div class="deck" id="deck"></div>
+				</section>
+
+				<section class="card" aria-label="Spot">
+					<div class="card-head"><h2>Spot</h2></div>
+					<div class="fields">
+						<label class="field"><span>Pot</span><span class="affix"><input id="pot" class="input" type="number" min="0.5" step="0.5" inputmode="decimal"><i>bb</i></span></label>
+						<label class="field"><span>Stack</span><span class="affix"><input id="stack" class="input" type="number" min="0.5" step="0.5" inputmode="decimal"><i>bb</i></span></label>
+					</div>
+					<div class="field"><span>Bet size</span><div class="segmented" id="sizes"></div></div>
+					<div class="toggles">
+						<label class="switch"><input type="checkbox" id="raise"><span class="track"></span>Raises</label>
+						<label class="switch"><input type="checkbox" id="allin"><span class="track"></span>All-in</label>
+					</div>
+					<div class="field"><span>Stop at exploitability</span><div class="segmented" id="target"></div></div>
+					<div class="field"><span>Threads</span><div class="segmented" id="threads"></div></div>
+					<p class="note" id="threads-note" hidden></p>
+					<div class="estimate" id="estimate"></div>
+					<button class="primary" id="run">Run benchmark</button>
+				</section>
+			</div>
+		</div>
+
+		<section class="card run" id="run-panel" hidden aria-live="polite">
+			<div class="run-head">
+				<div>
+					<h2 id="run-title">Solving</h2>
+					<p class="muted" id="run-sub"></p>
+				</div>
+				<button class="ghost" id="stop">Stop</button>
+			</div>
+			<ol class="steps" id="steps"></ol>
+			<div class="progress" id="progress"><div class="progress-fill" id="progress-fill"></div></div>
+			<div class="live" id="live"></div>
+			<div class="chart" id="chart"></div>
+		</section>
+
+		<section id="results" hidden></section>
+	</main>
+
+	<footer class="foot">
+		<span>Runs entirely in your browser with <a href="https://www.npmjs.com/package/poker-flopsolve">poker-flopsolve</a>. Nothing is uploaded.</span>
+	</footer>
+</body>
+</html>

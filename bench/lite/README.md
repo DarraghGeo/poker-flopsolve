@@ -11,6 +11,7 @@ blueprint from `bench/blueprint-share/measure.ts <board> none` with
 | `browser.ts <board> [variants] [workers,...]` | headless Chromium: time to settle, renderer peak RSS, one timed turn re-solve |
 | `t0.ts <lite\|unshared>` | against exact T₀ on As Kh 7d (`bench/adaptive/results/rainbow-T0.json`): the simplification's cost |
 | `napkin.ts [count] [variant]` | napkinpoker's postflop-solver spots: root play at the stored per-action EVs |
+| `user-bench*.ts` (`npm run bench:lite`) | issue #133: a cross-origin isolated page on localhost that times `solveLite` phase by phase in any browser, at each thread count, and gives a JSON report to paste back (also saved under `scratch/bench-lite/`); see `bin/bench-lite-browser.ts` |
 
 Variants include `keep=<MiB>` (`keepBudget` through `keepWithin`, `PICK` picking
 iterations, on the clock) and `i16` (16-bit storage with `wasmStorage`, the budget and
