@@ -8,7 +8,9 @@ import {
 	progressToward,
 } from '../site/lib/bench.ts';
 import type { Check } from '../site/lib/bench.ts';
-import { configOf, DEFAULT_SETTINGS, normaliseBoard, readSettings, writeSettings } from '../site/lib/settings.ts';
+import { autoMemory, configOf, DEFAULT_SETTINGS, memoryOf, normaliseBoard, readSettings, writeSettings } from '../site/lib/settings.ts';
+import { liteSummary } from '../site/lib/lite.ts';
+import { litePreset } from '../src/index.ts';
 import { defineSpot } from '../src/index.ts';
 
 describe('site benchmark arithmetic', () => {
@@ -58,8 +60,10 @@ describe('site benchmark arithmetic', () => {
 		expect(formatMs(12_345)).toBe('12.3 s');
 		expect(formatMs(125_000)).toBe('2m 05s');
 		expect(formatBytes(512)).toBe('512 B');
-		expect(formatBytes(3 * 2 ** 20)).toBe('3.0 MiB');
-		expect(formatBytes(1.5 * 2 ** 30)).toBe('1.50 GiB');
+		expect(formatBytes(3 * 2 ** 20)).toBe('3 MB');
+		expect(formatBytes(286.5 * 2 ** 20)).toBe('286.5 MB');
+		expect(formatBytes(2 ** 31)).toBe('2 GB');
+		expect(formatBytes(1.5 * 2 ** 30)).toBe('1.5 GB');
 	});
 });
 
@@ -80,9 +84,9 @@ describe('site settings', () => {
 	});
 
 	it('round-trips settings through a link, ignoring nonsense', () => {
-		const settings = { ...DEFAULT_SETTINGS, board: 'As Kh 7d 2c', oop: 'AA,KK:0.5', pot: 80, threads: 2, target: 0.3 };
+		const settings = { ...DEFAULT_SETTINGS, board: 'As Kh 7d 2c', oop: 'AA,KK:0.5', pot: 80, threads: 2, target: 0.3, mode: 'lite' as const, memory: 1024 };
 		expect(readSettings(writeSettings(settings))).toEqual(settings);
-		expect(readSettings('pot=-5&threads=abc&sizes=nope&target=7&board=zz')).toEqual(DEFAULT_SETTINGS);
+		expect(readSettings('pot=-5&threads=abc&sizes=nope&target=7&board=zz&mode=fast&memory=3000')).toEqual(DEFAULT_SETTINGS);
 		expect(readSettings('')).toEqual(DEFAULT_SETTINGS);
 	});
 
@@ -90,5 +94,31 @@ describe('site settings', () => {
 		expect(normaliseBoard('asKH7d')).toBe('As Kh 7d');
 		expect(normaliseBoard('As As 7d')).toBeNull();
 		expect(normaliseBoard('As Kh')).toBeNull();
+	});
+
+	it('picks a memory cap for the device', () => {
+		expect(autoMemory({ deviceMemory: 8, mobile: false })).toBe(2048);
+		expect(autoMemory({ deviceMemory: 4, mobile: false })).toBe(1024);
+		expect(autoMemory({ deviceMemory: undefined, mobile: false })).toBe(1024);
+		expect(autoMemory({ deviceMemory: 2, mobile: false })).toBe(512);
+		expect(autoMemory({ deviceMemory: 8, mobile: true })).toBe(512);
+		expect(memoryOf({ ...DEFAULT_SETTINGS, memory: 0 }, 2048)).toBe(2048);
+		expect(memoryOf({ ...DEFAULT_SETTINGS, memory: 512 }, 2048)).toBe(512);
+		expect(configOf({ ...DEFAULT_SETTINGS, memory: 1024 }, 2048).maxBytes).toBe(2 ** 30);
+	});
+});
+
+describe('site lite summary', () => {
+	it('says in plain words what Lite simplified', () => {
+		const config = configOf({ ...DEFAULT_SETTINGS, sizes: 'two', raise: true }, 2048);
+		const lines = liteSummary(config, litePreset(config).changes);
+		expect(lines[0]).toBe('Turn and river: one bet size (75% pot), no raises.');
+		expect(lines).toContain('Similar turn and river cards are solved together.');
+		expect(lines.join(' ')).not.toMatch(/shareHistories|runoutBuckets|chanceSampling/);
+	});
+
+	it('says when there is nothing to simplify', () => {
+		const config = configOf({ ...DEFAULT_SETTINGS, board: 'Ks 9d 4c 2h 7s' }, 2048);
+		expect(liteSummary(config, litePreset(config).changes)[0]).toBe('River only: Lite changes almost nothing here, so Exact is the better test.');
 	});
 });
