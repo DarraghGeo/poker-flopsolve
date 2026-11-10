@@ -1111,13 +1111,10 @@ interface TrailStep {
 	readonly via: string;
 }
 
-/** A re-solve under way, as its progress reads. */
+/** A re-solve under way: its street, and its progress once any comes. */
 interface Resolving {
 	readonly round: number;
-	iterations: number;
-	measure: number | null;
-	goal: number;
-	settle: boolean;
+	progress: Extract<Outbound, { type: 'resolving' }> | null;
 }
 
 /** The line being looked at, and its last decision as drawn. */
@@ -1138,7 +1135,14 @@ let explore: {
  * The request not yet answered: the line it leads to once drawn, and, should
  * it fail, a line still held to fall back to.
  */
-let pending: { id: number; trail: (view: WalkView) => TrailStep[]; fallback: TrailStep[] | null; note: string | null } | null = null;
+let pending: {
+	id: number;
+	trail: (view: WalkView) => TrailStep[];
+	fallback: TrailStep[] | null;
+	note: string | null;
+	/** A re-solve: the solve it starts from, whose later ones the worker drops. */
+	from: number | null;
+} | null = null;
 let viewId = 0;
 
 const STREETS = ['Flop', 'Turn', 'River'];
@@ -1163,7 +1167,7 @@ function releaseExplorer(): void {
 /** Send `message` to the kept worker; the line becomes `trail` of its answer, or `fallback` if it fails. */
 function ask(message: Extract<Inbound, { type: 'view' | 'resolve' }>, trail: (view: WalkView) => TrailStep[], fallback: TrailStep[] | null = null, note: string | null = null): void {
 	if (!explorer || !explore) return;
-	pending = { id: message.id, trail, fallback, note };
+	pending = { id: message.id, trail, fallback, note, from: message.type === 'resolve' ? message.layer : null };
 	explorer.postMessage(message);
 	$('explore').classList.add('loading');
 }
@@ -1182,21 +1186,22 @@ function goTo(trail: TrailStep[], note: string | null = null): void {
 function resolveAt(origin: { layer: number; node: number; board: number }, then: number, round: number, trail: (view: WalkView) => TrailStep[], fallback: TrailStep[] | null): void {
 	if (!explore) return;
 	const id = ++viewId;
-	explore.resolving = { round, iterations: 0, measure: null, goal: 0, settle: true };
-	ask({ type: 'resolve', id, ...origin, then }, trail, fallback);
+	explore.resolving = { round, progress: null };
+	// A card nobody reaches is read as it stands, but for a card switched to on a re-solved street, whose line would be lost.
+	ask({ type: 'resolve', id, ...origin, then, asIs: fallback === null }, trail, fallback);
 	renderExplore();
 }
 
 function onResolving(data: Extract<Outbound, { type: 'resolving' }>): void {
 	if (!explore?.resolving || !pending || data.id !== pending.id) return;
-	Object.assign(explore.resolving, { iterations: data.iterations, measure: data.measure, goal: data.goal, settle: data.settle });
+	explore.resolving.progress = data;
 	const el = document.getElementById('resolve-status');
 	if (el) el.textContent = resolvingText(explore.resolving);
 }
 
-const resolvingText = (r: Resolving): string =>
-	`${number(r.iterations)} iterations` +
-	(r.measure === null ? '' : ` · ${r.settle ? 'change' : 'exploitability'} ${r.measure.toFixed(2)}%, stops under ${r.goal}%`);
+const resolvingText = ({ progress: p }: Resolving): string =>
+	!p ? 'Building…'
+	: `${number(p.iterations)} iterations` + (p.measure === null ? '' : ` · ${p.settle ? 'change' : 'exploitability'} ${p.measure.toFixed(2)}%, stops under ${p.goal}%`);
 
 function onView(data: Extract<Outbound, { type: 'view' }>): void {
 	if (!explore || !pending || data.id !== pending.id) return;
@@ -1214,6 +1219,8 @@ function onView(data: Extract<Outbound, { type: 'view' }>): void {
 		explore.failed = asked.note;
 	} else {
 		explore.failed = data.message ?? 'That decision could not be read.';
+		// The worker dropped the solves after the one this re-solve started from.
+		if (asked.from !== null) for (const layer of [...explore.resolved.keys()]) if (layer > asked.from) explore.resolved.delete(layer);
 		if (asked.fallback) {
 			// The solve the line was on is gone: back to where its card was dealt.
 			goTo(asked.fallback, explore.failed);
@@ -1253,7 +1260,8 @@ function renderExplore(): void {
 					.map((r) => `<option value="${r.board}"${r.board === dealt ? ' selected' : ''}>${esc([r.card, ...r.also].join(' / '))}</option>`)
 					.join('')}</select></label>`
 			: '';
-	const resolved = explore.resolved.get(view.layer);
+	// Said on the street a re-solve opened; past it, the re-solve's own later streets are simplified.
+	const resolved = view.dealtFrom ? explore.resolved.get(view.layer) : undefined;
 	const status = resolving
 		? `<div class="resolving"><p><b>Re-solving the ${streetName(resolving.round).toLowerCase()} at your bet sizes…</b> <span id="resolve-status">${esc(resolvingText(resolving))}</span></p><button class="ghost" id="resolve-stop">Stop</button></div>`
 		: resolved
@@ -1326,6 +1334,13 @@ function renderExplore(): void {
 			// A re-solved street: re-solve it on the new card, whose tree is the same, and come back to this decision.
 			const before = trail.filter((step) => step.round < view.round);
 			resolveAt({ ...from, board }, view.node, view.round, (to) => trail.map((step) => (step.round === view.round ? { ...step, layer: to.layer } : step)), before);
+			return;
+		}
+		const opening = trail.find((step) => step.round === view.round);
+		if (explore!.lite && opening && opening.round > 0) {
+			// A street read as it stands, as nobody reached its card: re-solve the new card from its first decision.
+			const before = trail.slice(0, trail.indexOf(opening));
+			resolveAt({ layer: opening.layer, node: opening.node, board }, 0, view.round, (to) => [...before, { ...opening, layer: to.layer, node: to.node, board: to.board }], null);
 			return;
 		}
 		goTo(trail.map((step) => (step.round === view.round ? { ...step, board } : step)));

@@ -122,9 +122,11 @@ export type Inbound =
 	/**
 	 * After `done`, in Lite: re-solve the street `node` opens on `board`, in
 	 * solve `layer`, at the spot's own betting, dropping the solves after
-	 * `layer`; then draw decision `then` of the new solve.
+	 * `layer`; then draw decision `then` of the new solve. If neither range
+	 * reaches the card, `asIs` draws the decision as solve `layer` has it
+	 * instead of refusing.
 	 */
-	| { type: 'resolve'; id: number; layer: number; node: number; board: number; then: number };
+	| { type: 'resolve'; id: number; layer: number; node: number; board: number; then: number; asIs: boolean };
 
 /** A spot the solver will not build, and why. */
 export interface EstimateRefused {

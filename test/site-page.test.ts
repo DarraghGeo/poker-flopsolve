@@ -269,9 +269,16 @@ describe('site page in a browser', () => {
 		expect(await legend()).toContain('(33%)');
 		expect(await legend()).toContain('(100%)');
 		expect(await page.textContent('#explore')).toContain('River re-solved at your bet sizes');
-		// Back to the start, through the solves kept.
+		// Back up the line, and down it again: the turn re-solved is kept, the river with it.
+		await page.click('#explore .crumb[data-trail="1"]');
+		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.startsWith('IP')", undefined, { timeout: 20_000 });
 		await page.click('#explore .crumb[data-trail="0"]');
 		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.includes('Flop')", undefined, { timeout: 20_000 });
+		await page.click('#explore .step-into[data-action="0"]');
+		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.startsWith('IP')", undefined, { timeout: 20_000 });
+		await page.click('#explore .step-into[data-action="0"]');
+		await settled('Turn');
+		expect(await legend()).toContain('(33%)');
 		expect(errors).toEqual([]);
 	});
 

@@ -16,7 +16,7 @@
  * them, so progress streams and a stop message lands.
  */
 
-import { createRun, defineSpot, litePreset, simdAvailable, SpotTooLargeError, trackSettle } from '../src/index.ts';
+import { COMBO_CARDS, createRun, defineSpot, litePreset, simdAvailable, SpotTooLargeError, trackSettle } from '../src/index.ts';
 import type { Estimate, Precision, Solution, SolveOptions, SolveRun, Spot, SpotConfig } from '../src/index.ts';
 import { DEFAULT_MAX_BYTES } from '../src/platform/browser.ts';
 import { settlePlan } from '../src/settle.ts';
@@ -58,7 +58,7 @@ interface Layer {
 	readonly base: number;
 	/** Where its first card was dealt; null for the benchmark's. */
 	readonly from: Origin | null;
-	/** Its storage. */
+	/** Its memory: storage, and sampling's baselines. */
 	readonly bytes: number;
 }
 
@@ -251,6 +251,21 @@ function walkView(layer: number, node: number, board: number): WalkView {
 	};
 }
 
+/** Whether each player holds a hand that gets to `node` on `board` of `layer`, the board's cards blocking theirs. */
+function reachesBoth(layer: Layer, node: number, board: number): boolean {
+	const { runouts, tree } = layer.spot;
+	const round = tree.round[node];
+	const width = runouts.width[round];
+	const cards = runouts.cards[round].subarray(board * width, board * width + width);
+	return ([0, 1] as const).every((player) => {
+		const reach = layer.solution.reachAt(node, board, player);
+		return reach.some((w, combo) => w > 0 && !cards.includes(COMBO_CARDS[combo * 2]) && !cards.includes(COMBO_CARDS[combo * 2 + 1]));
+	});
+}
+
+/** A run's memory: its storage and, sampled, the baselines beside it. */
+const heldBytes = (run: SolveRun, storageBytes: number): number => storageBytes + (run.solver.ctx.sampling?.bytes ?? 0);
+
 /** Close solves `from` and after, freeing their memory. */
 function dropLayers(from: number): void {
 	for (const layer of layers.splice(Math.max(1, from))) layer.run?.close();
@@ -268,11 +283,16 @@ async function resolveStreet(request: Extract<Inbound, { type: 'resolve' }>): Pr
 	if (!solved || solved.mode !== 'lite' || !parent) throw new Error('Nothing to re-solve: run the spot in Lite first.');
 	const started = performance.now();
 	stopping = false;
-	const reached = ([0, 1] as const).every((player) => parent.solution.reachAt(request.node, request.board, player).some((w) => w > 0));
-	if (!reached) {
-		// Nobody plays this line: nothing to re-solve, so it is read as it stands.
-		if (request.then !== 0) throw new Error('Neither range reaches this card, so there is nothing to re-solve.');
+	if (!reachesBoth(parent, request.node, request.board)) {
+		// A player never gets here: nothing to re-solve, so it is read as it stands.
+		if (!request.asIs) throw new Error('One of the ranges never gets to this card, so there is nothing to re-solve.');
 		post({ type: 'view', id, view: walkView(request.layer, request.node, request.board) });
+		return;
+	}
+	const next = layers[request.layer + 1];
+	if (next?.from && next.from.node === request.node && next.from.board === request.board) {
+		// Solved already, on the way down this line before.
+		post({ type: 'view', id, view: walkView(request.layer + 1, request.then, 0) });
 		return;
 	}
 	dropLayers(request.layer + 1);
@@ -305,7 +325,7 @@ async function resolveStreet(request: Extract<Inbound, { type: 'resolve' }>): Pr
 				progress();
 			},
 		}));
-		layers.push({ spot, solution: run.snapshot(), run, base: plan.round, from: { layer: request.layer, node: request.node, board: request.board }, bytes: storageBytes });
+		layers.push({ spot, solution: run.snapshot(), run, base: plan.round, from: { layer: request.layer, node: request.node, board: request.board }, bytes: heldBytes(run, storageBytes) });
 	} catch (error) {
 		run.close();
 		throw error;
@@ -379,7 +399,7 @@ async function solveSpot(config: SpotConfig, mode: Mode, target: number, threads
 		const ev: [number, number] = [solution.ev(0), solution.ev(1)];
 		// The run stays open, and its solution readable, until the page ends this worker.
 		solved = { config, mode, threads: run.workers, maxBytes };
-		layers = [{ spot, solution, run: null, base: 0, from: null, bytes: storageBytes }];
+		layers = [{ spot, solution, run: null, base: 0, from: null, bytes: heldBytes(run, storageBytes) }];
 		const root = walkView(0, 0, 0);
 		const finishMs = now() - t;
 
@@ -423,6 +443,8 @@ async function solveSpot(config: SpotConfig, mode: Mode, target: number, threads
 		};
 		post({ type: 'done', report });
 	} catch (error) {
+		solved = null;
+		layers = [];
 		run.close();
 		throw error;
 	}
