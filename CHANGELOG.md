@@ -21,6 +21,9 @@ The first beta of 0.5.0, published under npm's `beta` tag (`npm install poker-fl
   a storage budget, ranked on a short solve of the blueprint with its river checked down
   (`checkedDown`, `keepWithin`); `LiteSolution.kept` lists them. On issue #47's flops, 150 MiB at 16
   bits cut a turn re-solve's best-response gain by a third to a half, root play unchanged.
+  With a budget, `settle`'s tolerance defaults to 0.005, not 0.01 (#123): the kept lines' turn
+  ranges go on improving after the root play settles, and stopping later cut the re-solve gain by
+  15–34% more for a quarter to a third more time.
 
 ### New opt-ins since 0.4.1
 

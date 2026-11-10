@@ -286,26 +286,35 @@ function nearest(row: readonly BetSize[], target: number): BetSize[] {
  * `laterRaise`'s cost is on it; the trims `flopMaxRaises` and `noDonk`, and
  * what was rejected, are in docs/APPROXIMATIONS.md.
  *
- * `keepBudget` (issue #113) recovers part of the re-solve gain above. With
+ * `keepBudget` (issue #113) recovers part of the re-solve gain above, and
+ * stops later (issue #123): `settle`'s tolerance 0.005, not 0.01. With
  * `keepBudget: 150 * 2 ** 20, precision: 'i16', wasmStorage` (the recipe
- * issue #101 measured), the same measures, the pick included in the time:
+ * issue #101 measured), the same measures, the pick included in the time,
+ * on 4 threads (Chromium; the rest Node):
  *
- * | flop | kept, storage | settled | Chromium, 1 / 2 / 4 threads | peak RSS, 1 / 2 / 4 | root play loss | per-hand EV error | re-solve gain |
- * |---|---|---|---|---|---|---|---|
- * | As Kh 7d | 3 lines, 150 MiB | 440 it | 123 / 61 / 35 s | 489 / 509 / 534 MiB | 0.026 / 0.011 | 0.58 / 0.70 | 2.54 / 1.72 |
- * | Ts 9s 4h | 6 lines, 141 MiB | 320 it | 69 / 37 / 22 s | 437 / 463 / 469 MiB | 0.115 / 0.063 | 0.33 / 0.27 | 1.93 / 1.28 |
- * | Ks 9s 4s | all 19, 97 MiB | 360 it | 32 / 19 / 11 s | 290 / 301 / 317 MiB | 0.056 / 0.036 | 0.82 / 1.02 | 2.61 / 1.91 |
+ * | flop | kept, storage | settled | Chromium | peak RSS | root play loss | per-hand EV error | re-solve gain | at tolerance 0.01 |
+ * |---|---|---|---|---|---|---|---|---|
+ * | As Kh 7d | 3 lines, 150 MiB | 580 it | 45 s | 534 MiB | 0.022 / 0.008 | 0.44 / 0.52 | 1.78 / 1.42 | 440 it, 35 s, 2.46 / 1.70 |
+ * | Ts 9s 4h | 6 lines, 141 MiB | 440 it | 29 s | 467 MiB | 0.104 / 0.047 | 0.28 / 0.27 | 1.51 / 1.20 | 320 it, 22 s, 1.78 / 1.24 |
+ * | Ks 9s 4s | all 19, 97 MiB | 460 it | 13 s | 315 MiB | 0.056 / 0.031 | 0.50 / 0.63 | 1.80 / 1.24 | 360 it, 11 s, 2.51 / 1.88 |
  *
- * Root play is as without it; the re-solve gain falls by a third to a half,
- * but stays well over the unshared blueprint's 0.4–0.7. What holds the rest
- * is the stop, not the sharing: monotone keeps every line, and at 16 bits
- * or 32 alike it re-solves at 2.6 / 1.9 when its root play settles, 1.25 /
- * 0.68 unsampled (220 iterations, 37 s on 4 threads in Node), and 0.99 /
- * 0.64 run sampled to 800 iterations (20 s). At 800 iterations (`settle:
- * false, iterations: 800`) As Kh 7d re-solves at 1.33 / 1.14 in 59 s on 4
- * threads in Chromium, peaking at 533 MiB, and Ts 9s 4h at 1.10 / 0.92 in
- * 47 s (Node); plain sharing run as long gives 2.23 / 2.41 on As Kh 7d. A
- * re-solve times as without it.
+ * At the old stop, on 1 / 2 / 4 threads in Chromium, As Kh 7d took 123 / 61
+ * / 35 s and peaked at 489 / 509 / 534 MiB, Ts 9s 4h 69 / 37 / 22 s and 437
+ * / 463 / 469, Ks 9s 4s 32 / 19 / 11 s and 290 / 301 / 317; the later stop
+ * adds a quarter to a third to the time, the same peak.
+ *
+ * Root play is as without it; the re-solve gain falls by a third to a half
+ * at the old stop, and the later one takes off 15–34% more for out of
+ * position, 3–34% for in position, still over the unshared blueprint's
+ * 0.4–0.7. The rest is still the stop: the root play settles before the
+ * ranges it brings to the turn do. A stop that also waited for the kept
+ * lines' turn ranges stopped no better than a tighter root tolerance
+ * (`bench/lite/turn-stop.ts`); 0.0035 stopped at 680 / 540 / 540 iterations,
+ * re-solving at 1.57 / 1.30, 1.36 / 1.23 and 1.50 / 1.00 for 39–51% more
+ * time than 0.01. Run to 800 iterations (`settle: false, iterations: 800`),
+ * As Kh 7d re-solves at 1.33 / 1.14 in 59 s in Chromium, peaking at 533
+ * MiB, where plain sharing gives 2.23 / 2.41. A re-solve times as without
+ * it.
  *
  * Its memory: the picking solve's WebAssembly memory is freed only once the
  * caller yields to the event loop, so it stays resident beside the
