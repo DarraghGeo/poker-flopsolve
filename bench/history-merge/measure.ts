@@ -17,12 +17,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { COMBO_CARDS, COMBOS, createRun, defineSpot } from '../../src/index.ts';
 import type { SolveOptions, SolveRun, SpotConfig } from '../../src/index.ts';
 import { ActionKind } from '../../src/tree.ts';
-import { Mode } from '../../src/cfr.ts';
-
-/** Per-hand root EVs in chips on the half-pot baseline, as stored references hold them (`handEvs` is % of pot since #130). */
-function chipEvs(run: SolveRun, player: 0 | 1): Float64Array {
-	return run.solver.handEvs(player, run.solver.rootValues(Mode.Average).values[player]);
-}
 
 const OOP = 'AA-22,AKs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,AKo-ATo,KQo-KJo';
 const IP = 'TT-22,AQs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,76s,AQo-ATo,KQo';
@@ -153,13 +147,14 @@ function reference(): Reference | null {
 		exploitability = run.exploitabilityPercent();
 		console.error(`reference ${name}: ${run.completed} iterations, ${exploitability.toFixed(3)}%`);
 	}
+	const solution = run.snapshot();
 	const ref: Reference = {
 		target,
 		exploitability,
 		iterations: run.completed,
 		seconds: (performance.now() - started) / 1000,
 		weights: [0, 1].map((p) => Array.from(spot.players[p].weights)),
-		evs: [0, 1].map((p) => Array.from(chipEvs(run, p as 0 | 1))),
+		evs: [0, 1].map((p) => Array.from(solution.handEvsChips(p as 0 | 1))),
 		actions: rootActions(run),
 	};
 	run.close();
@@ -208,7 +203,8 @@ for (const variant of (args.variants ?? 'river').split(',')) {
 		const started = performance.now();
 		run.step(at - run.completed);
 		elapsed += performance.now() - started;
-		const error = evError(ref, [chipEvs(run, 0), chipEvs(run, 1)]);
+		const solution = run.snapshot();
+		const error = evError(ref, [solution.handEvsChips(0), solution.handEvsChips(1)]);
 		const gib = (bytes: number): string => `${(bytes / 2 ** 30).toFixed(2)} GiB`;
 		const actions = ref?.actions ? actionError(ref, run, rootActions(run)) : null;
 		const actionColumns = actions ? `${actions.mean.toFixed(3)} | ${actions.agree.toFixed(1)}%` : '– | –';

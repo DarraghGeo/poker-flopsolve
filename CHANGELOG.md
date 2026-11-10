@@ -11,8 +11,8 @@ Not in 0.5.0-beta.0, which was already published: this lands in the next beta or
   showdown) is 0%, winning the pot uncontested is 100%, and `ev(0) + ev(1)` is 100. On Ks 9d 4c
   with a 60 pot, `12.5 / −12.5` chips now reads `70.8 / 29.2`%.
 - The pot is the spot's starting pot (`SpotConfig.pot`), exposed as `Solution.evPot`. Convert
-  back with **old chips = `pct / 100 × pot − pot / 2`**, or read `Solution.evChips(player)`,
-  which returns the old number.
+  back with **old chips = `pct / 100 × pot − pot / 2`**, or read `Solution.evChips(player)`
+  and `Solution.handEvsChips(player)`, which return the old numbers.
 - New `SpotConfig.evPot` (default `pot`). `Solution.subgameAt` sets it to the original spot's,
   so `resolveSubgame` and `LiteSolution.resolve` (nested too) report in % of the **original
   flop pot**: values read the same way down a hand, and folding at a subgame's root reads below

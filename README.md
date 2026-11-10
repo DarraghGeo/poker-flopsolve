@@ -171,7 +171,8 @@ average per hand, as a percentage of the pot the spot starts with (`SpotConfig.p
 turn or river spot, that spot's starting pot). Folding, or losing every showdown, is 0%;
 winning the pot uncontested is 100%; the two players' values add up to 100%. Percentages
 compare directly across spots with different pots. On Ks 9d 4c with a 60 pot, for example,
-`ev(0)` 71.3 and `ev(1)` 28.7 mean out of position wins 42.8 of the 60 chips on average.
+`ev(0)` 70.8 and `ev(1)` 29.2 mean out of position wins 42.5 of the 60 chips on average
+(the old chip reading was 12.5 / −12.5).
 
 The pot used is `solution.evPot`. A subgame from `subgameAt` — and so `resolveSubgame` and
 `LiteSolution.resolve`, nested or not — sets `SpotConfig.evPot` to the original spot's, so a
@@ -182,7 +183,7 @@ share of the flop pot (after a 30 bet and call into 60, folding the turn reads �
 
 Up to and including 0.5.0-beta.0 `ev` was in chips, against a baseline where each player already owns half
 the pot (folding −pot/2, the two summing to 0). That number is still there as
-`solution.evChips(player)`; the conversion is `evChips = ev / 100 × evPot − evPot / 2`.
+`solution.evChips(player)`, and per hand as `solution.handEvsChips(player)`; the conversion is `evChips = ev / 100 × evPot − evPot / 2`.
 `Solver.valuesAt`, `pairValuesAt`, `rootValues`, the regrets and `ResolvedSubgame`'s
 `alternative` and `entered` stay in chips on that baseline.
 

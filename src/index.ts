@@ -554,7 +554,9 @@ export function defineSpot(config: SpotConfig): Spot {
 
 	if (config.pot <= 0) throw new Error('pot must be positive');
 	if (config.stack <= 0) throw new Error('stack must be positive');
-	if (config.evPot !== undefined && !(config.evPot > 0)) throw new Error('evPot must be positive');
+	if (config.evPot !== undefined && !(Number.isFinite(config.evPot) && config.evPot > 0)) {
+		throw new Error(`evPot must be a positive number of chips; got ${config.evPot}`);
+	}
 
 	const rows = betRows(config, rounds);
 
@@ -1045,7 +1047,8 @@ export interface Solution {
 	readonly solver: Solver;
 	/**
 	 * The pot, in chips, that `ev` and `handEvs` are percentages of:
-	 * `SpotConfig.evPot`, which defaults to the spot's own `pot`. A subgame
+	 * `SpotConfig.evPot`, which defaults to the spot's own `pot` (rounded to
+	 * chip units, as the tree holds it). A subgame
 	 * from `subgameAt` carries the original spot's.
 	 */
 	readonly evPot: number;
@@ -1066,6 +1069,8 @@ export interface Solution {
 	 * both players level. `Solver.valuesAt` and the traversal use it.
 	 */
 	evChips(player: 0 | 1): number;
+	/** `handEvs` in chips on `evChips`'s half-pot baseline. Returns a fresh copy. */
+	handEvsChips(player: 0 | 1): Float64Array;
 	/**
 	 * Root EV for each combination a player can hold, in percent of `evPot`
 	 * as `ev` is, indexed like `COMBO_CARDS` (as `reachAt` is): what that hand
@@ -1565,7 +1570,8 @@ export function storageCost(of: Spot, at: Precision): number {
  * runouts are stored do not change the game, so they are left out.
  */
 function sameSpot(a: SpotConfig, b: SpotConfig): boolean {
-	const plain = ({ maxBytes: _bytes, maxCombos: _combos, isomorphism: _iso, ...game }: SpotConfig): string =>
+	// `evPot` only says how EV is reported, not what game is played.
+	const plain = ({ maxBytes: _bytes, maxCombos: _combos, isomorphism: _iso, evPot: _evPot, ...game }: SpotConfig): string =>
 		JSON.stringify(game, (_, value: unknown) => (value instanceof Float64Array ? Array.from(value) : value));
 	const kept = (config: SpotConfig): readonly string[] | undefined =>
 		typeof config.shareHistories === 'object' ? config.shareHistories.keepLines : undefined;
@@ -1856,8 +1862,11 @@ function makeSolution(
 	const rootValues = (): RootValues =>
 		(cachedEv ??= solver.rootValues(currentProfileEv ? Mode.Current : Mode.Average));
 	const cachedHands: [Float64Array | null, Float64Array | null] = [null, null];
+	const cachedChips: [Float64Array | null, Float64Array | null] = [null, null];
 	let cachedExploit: number | null = null;
-	const evPot = spot.source.evPot ?? spot.source.pot;
+	// The pot as the tree holds it, rounded to chip units, so the half-pot
+	// baseline cancels exactly and a fold reads 0.
+	const evPot = spot.source.evPot ?? spot.potUnits / spot.chipScale;
 	// Chips on the half-pot baseline to a share of `evPot`.
 	const share = (chips: number): number => (100 * (chips + evPot / 2)) / evPot;
 
@@ -1879,6 +1888,10 @@ function makeSolution(
 		handEvs(player) {
 			cachedHands[player] ??= solver.handEvs(player, rootValues().values[player], share);
 			return cachedHands[player].slice();
+		},
+		handEvsChips(player) {
+			cachedChips[player] ??= solver.handEvs(player, rootValues().values[player]);
+			return cachedChips[player].slice();
 		},
 		exploitability() {
 			cachedExploit ??= solver.exploitability();

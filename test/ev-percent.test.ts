@@ -80,6 +80,32 @@ describe('ev as a percentage of the flop pot', () => {
 		for (const combo of spot.players[0].combos) expect(evs[combo]).toBeCloseTo(0, 3);
 	});
 
+	it('measures against the pot as rounded to chip units, so a fold is exactly 0', () => {
+		// 55.555 rounds to 55.56 at the default chip scale of 100.
+		const spot = defineSpot({ board: 'As Ks Qs 2d 3c', pot: 55.555, stack: 100, oop: 'JsTs', ip: '2h2c', betSizes: [[0.5]], maxRaises: 0 });
+		const shown = solve(spot, { iterations: 5 });
+		expect(shown.evPot).toBe(spot.potUnits / spot.chipScale);
+		expect(shown.ev(1)).toBeCloseTo(0, 9);
+		expect(shown.ev(0)).toBeCloseTo(100, 9);
+	});
+
+	it('refuses an evPot that is not a positive finite number', () => {
+		for (const evPot of [0, -1, Infinity, Number.NaN]) {
+			expect(() => defineSpot({ ...turn, evPot })).toThrow(/evPot/);
+		}
+	});
+
+	it('gives handEvsChips on the half-pot baseline', () => {
+		for (const player of [0, 1] as const) {
+			const pct = sol.handEvs(player);
+			const chips = sol.handEvsChips(player);
+			for (const combo of sol.spot.players[player].combos) {
+				if (pct[combo] === 0 && chips[combo] === 0) continue;
+				expect(chips[combo]).toBeCloseTo((pct[combo] / 100) * turn.pot - turn.pot / 2, 9);
+			}
+		}
+	});
+
 	it('values a pure showdown at 100 and 0', () => {
 		const spot = defineSpot({ board: 'As Ks Qs 2d 3c', pot: 80, stack: 100, oop: 'JsTs', ip: '2h2c', betSizes: [[0.5]], maxRaises: 0 });
 		const shown = solve(spot, { iterations: 20 });
@@ -114,6 +140,20 @@ describe('a re-solved subgame', () => {
 		for (const player of [0, 1] as const) {
 			expect(sub.ev(player)).toBeCloseTo((100 * (sub.evChips(player) + turn.pot / 2)) / turn.pot, 9);
 			expect(weightedMean(sub, player)).toBeCloseTo(sub.ev(player), 9);
+		}
+	});
+
+	it('warm-starts averages between a subgame config and the same spot without evPot', () => {
+		const config = sol.subgameAt(called, 0);
+		const { evPot: _evPot, ...plain } = config;
+		const first = createRun(defineSpot(plain), { workers: 1 });
+		first.step(20);
+		const warm = createRun(defineSpot(config), { workers: 1, warmStart: first });
+		try {
+			expect(warm.warmStart?.averages).toBe(true);
+		} finally {
+			first.close();
+			warm.close();
 		}
 	});
 
