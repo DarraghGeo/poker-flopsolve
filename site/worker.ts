@@ -34,6 +34,8 @@ const scope = self as unknown as {
 
 const post = (message: Outbound): void => scope.postMessage(message);
 
+const TOO_BIG_FOR_SAMPLING = "Too big for the memory limit once Lite's card sampling is added. Try a higher limit, fewer bet sizes or narrower ranges.";
+
 /** Solving time each chunk aims at, so progress streams and stop lands. */
 const CHUNK_MS = 200;
 
@@ -112,19 +114,31 @@ async function solveSpot(config: SpotConfig, mode: Mode, target: number, threads
 	const prepared = prepare(config, mode, threads);
 	const spot = defineSpot(prepared.config);
 	const buildMs = now() - t;
-	const precision: Precision = precisionFor(spot.estimate, maxBytes);
 
 	post({ type: 'phase', phase: 'alloc' });
 	await yieldToMessages();
 	t = now();
-	const run = createRun(spot, {
-		...prepared.options,
-		workers: threads,
-		precision,
-		...(precision === 'i16' ? { wasmStorage } : {}),
-	});
+	const open = (at: Precision): ReturnType<typeof createRun> =>
+		createRun(spot, { ...prepared.options, workers: threads, precision: at, ...(at === 'i16' ? { wasmStorage } : {}) });
+	let precision: Precision = precisionFor(spot.estimate, maxBytes);
+	let run: ReturnType<typeof createRun>;
+	try {
+		run = open(precision);
+	} catch (error) {
+		// Lite's sampling needs memory beside the tree, which the estimate does
+		// not count: compress the tree to make room, or say plainly why not.
+		if (!/over maxBytes/.test(String(error))) throw error;
+		if (precision === 'i16') throw new Error(TOO_BIG_FOR_SAMPLING);
+		precision = 'i16';
+		try {
+			run = open(precision);
+		} catch (again) {
+			throw /over maxBytes/.test(String(again)) ? new Error(TOO_BIG_FOR_SAMPLING) : again;
+		}
+	}
 	const allocMs = now() - t;
-	const storageBytes = summarise(spot.estimate, maxBytes).storageBytes;
+	const storageBytes = precision === 'i16' ? spot.estimate.compressedBytes : spot.estimate.bytes;
+	const used = { ...summarise(spot.estimate, maxBytes), precision, storageBytes };
 	const settle = mode === 'lite' && prepared.options.settle ? settlePlan(prepared.options.settle) : null;
 	const tracker = settle ? trackSettle(settle) : null;
 	// Lite's stop, in % of the range, is the target its chart shows.
@@ -133,12 +147,13 @@ async function solveSpot(config: SpotConfig, mode: Mode, target: number, threads
 	post({
 		type: 'phase',
 		phase: 'solve',
+		goal,
 		setup: {
 			threads: run.workers,
 			engine: run.engine,
 			precision,
 			storageBytes,
-			spot: summarise(spot.estimate, maxBytes),
+			spot: used,
 		},
 	});
 
@@ -238,7 +253,7 @@ async function solveSpot(config: SpotConfig, mode: Mode, target: number, threads
 				engine: run.engine,
 				precision,
 				storageBytes,
-				spot: summarise(spot.estimate, maxBytes),
+				spot: used,
 			},
 			environment: {
 				userAgent: g.navigator.userAgent,

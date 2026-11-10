@@ -104,7 +104,8 @@ export interface EstimateRefused {
 export type Outbound =
 	| { type: 'estimate'; id: number; ok: true; spot: SpotSummary; lite: string[] | null }
 	| EstimateRefused
-	| { type: 'phase'; phase: Phase; setup?: Setup }
+	/** `goal`: where the solve stops on its measure, sent as it starts. */
+	| { type: 'phase'; phase: Phase; setup?: Setup; goal?: number }
 	| { type: 'progress'; iterations: number; solveMs: number; measureMs: number; wallMs: number }
 	| { type: 'check'; check: Check }
 	| { type: 'done'; report: Report }

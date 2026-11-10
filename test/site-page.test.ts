@@ -143,4 +143,20 @@ describe('site page in a browser', () => {
 		expect(results).toContain('Limitations');
 		expect(results).toContain('Not measured');
 	});
+
+	it('makes room for Lite\'s sampling when the tree alone fits the limit', async (context) => {
+		if (!browser) return context.skip();
+		const page = await browser.newPage();
+		const anyTwo = encodeURIComponent(RANGE_PRESETS.find((p) => p.name === 'Any two')!.range);
+		// 441 MB at 32 bits fits 512 MB, but sampling needs ~195 MB more.
+		await page.goto(`${url}#mode=lite&raise=1&memory=512&ip=${anyTwo}`);
+		await page.waitForFunction("!document.getElementById('run').disabled", undefined, { timeout: 20_000 });
+		await page.click('#run');
+		await page.waitForFunction("document.querySelectorAll('.step.done').length >= 3 || !document.getElementById('results').hidden", undefined, { timeout: 60_000 });
+		expect(await page.textContent('#run-title')).toBe('Solving');
+		expect(await page.textContent('#run-sub')).toContain('compressed');
+		await page.click('#stop');
+		await page.waitForSelector('#results:not([hidden])', { timeout: 120_000 });
+		expect(await page.textContent('#run-title')).toMatch(/^Stopped/);
+	});
 });

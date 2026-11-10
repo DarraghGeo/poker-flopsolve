@@ -76,10 +76,11 @@ export function formatMs(ms: number): string {
 	return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
 }
 
-/** A size for people, in binary units named as most systems name them: "512 B", "3.0 MB", "1.50 GB". */
+/** A size for people, in binary units named as most systems name them: "512 B", "3 MB", "286.5 MB", "1.5 GB". */
 export function formatBytes(bytes: number): string {
+	const trim = (n: number, digits: number): string => String(Number(n.toFixed(digits)));
 	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 2 ** 20) return `${(bytes / 1024).toFixed(1)} KB`;
-	if (bytes < 2 ** 30) return `${(bytes / 2 ** 20).toFixed(1)} MB`;
-	return `${(bytes / 2 ** 30).toFixed(2)} GB`;
+	if (bytes < 2 ** 20) return `${trim(bytes / 1024, 1)} KB`;
+	if (bytes < 2 ** 30) return `${trim(bytes / 2 ** 20, 1)} MB`;
+	return `${trim(bytes / 2 ** 30, 2)} GB`;
 }

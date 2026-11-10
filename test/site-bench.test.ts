@@ -60,8 +60,10 @@ describe('site benchmark arithmetic', () => {
 		expect(formatMs(12_345)).toBe('12.3 s');
 		expect(formatMs(125_000)).toBe('2m 05s');
 		expect(formatBytes(512)).toBe('512 B');
-		expect(formatBytes(3 * 2 ** 20)).toBe('3.0 MB');
-		expect(formatBytes(1.5 * 2 ** 30)).toBe('1.50 GB');
+		expect(formatBytes(3 * 2 ** 20)).toBe('3 MB');
+		expect(formatBytes(286.5 * 2 ** 20)).toBe('286.5 MB');
+		expect(formatBytes(2 ** 31)).toBe('2 GB');
+		expect(formatBytes(1.5 * 2 ** 30)).toBe('1.5 GB');
 	});
 });
 

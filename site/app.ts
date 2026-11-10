@@ -112,7 +112,9 @@ const deviceMemory = (navigator as Navigator & { deviceMemory?: number }).device
 /** iPads report a Mac; a touch screen gives them away. */
 const mobile = /Mobi|Android|iPhone|iPad/.test(agent) || (/Macintosh/.test(agent) && navigator.maxTouchPoints > 1);
 const autoMb = autoMemory({ deviceMemory, mobile });
-const mb = (n: number): string => (n >= 1024 ? `${n / 1024} GB` : `${n} MB`);
+const mb = (n: number): string => formatBytes(n * 2 ** 20);
+// A shared link may ask for more memory than a phone can give.
+if (mobile && settings.memory > autoMb) settings = { ...settings, memory: 0 };
 // A shared link may ask for more threads than this machine has.
 if (settings.threads > cores) settings = { ...settings, threads: 0 };
 
@@ -622,9 +624,10 @@ function enterPhase(phase: Phase): void {
 	renderSteps();
 }
 
-/** Lite stops once its first decisions move less than this, % of the range, twice running. */
-const LITE_GOAL = 1;
-const goalOf = (s: Settings): number => (s.mode === 'lite' ? LITE_GOAL : s.target);
+/** Where the run stops on its measure; the worker sends it once the solve starts (Lite's is the solver's own). */
+let runGoal: number | null = null;
+/** The furthest the progress bar has been this run: Lite's measure jumps about, the bar should not. */
+let bestProgress = 0;
 /** What the run's measure is called: exploitability for Exact, change in the first decisions for Lite. */
 const measureName = (mode: Mode): string => (mode === 'lite' ? 'Change' : 'Exploitability');
 
@@ -632,9 +635,9 @@ function renderLive(): void {
 	liveFrame = 0;
 	const last = checks[checks.length - 1];
 	const speed = live.solveMs > 0 ? (live.iterations / live.solveMs) * 1000 : 0;
-	const goal = goalOf(runSettings);
+	const goal = runGoal;
 	let eta = '—';
-	if (last) {
+	if (last && goal !== null) {
 		// Lite's measure jumps about too much to extrapolate.
 		const at = runSettings.mode === 'exact' ? estimateIterationsTo(checks, goal) : null;
 		if (at !== null && live.iterations > 0) {
@@ -642,7 +645,8 @@ function renderLive(): void {
 			eta = last.exploitability <= goal ? 'done' : `~${formatMs(Math.max(0, at - live.iterations) * perIteration)}`;
 		}
 		progressEl.classList.remove('waiting');
-		progressFill.style.width = `${(progressToward(checks[0].exploitability, last.exploitability, goal) * 100).toFixed(1)}%`;
+		bestProgress = Math.max(bestProgress, progressToward(checks[0].exploitability, last.exploitability, goal));
+		progressFill.style.width = `${(bestProgress * 100).toFixed(1)}%`;
 	}
 	const metric = (label: string, value: string): string => `<div class="metric"><span>${label}</span><b>${value}</b></div>`;
 	liveEl.innerHTML =
@@ -677,7 +681,9 @@ function startRun(): void {
 	progressEl.className = 'progress waiting';
 	progressFill.style.width = '0';
 	renderLive();
-	renderChart(chartEl, [], goalOf(runSettings), runSettings.mode);
+	runGoal = settings.mode === 'exact' ? settings.target : null;
+	bestProgress = 0;
+	renderChart(chartEl, [], runGoal, runSettings.mode);
 	enterPhase('threads');
 	runPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
@@ -700,7 +706,8 @@ function onSolverMessage(data: Outbound): void {
 		case 'phase':
 			if (data.setup) {
 				setup = data.setup;
-				$('run-sub').textContent += ` · ${setup.threads} thread${setup.threads === 1 ? '' : 's'} · ${formatBytes(setup.storageBytes)}`;
+				runGoal = data.goal ?? runGoal;
+				$('run-sub').textContent += ` · ${setup.threads} thread${setup.threads === 1 ? '' : 's'} · ${formatBytes(setup.storageBytes)}${setup.precision === 'i16' ? ' (compressed)' : ''}`;
 			}
 			enterPhase(data.phase);
 			return;
@@ -710,7 +717,7 @@ function onSolverMessage(data: Outbound): void {
 			return;
 		case 'check':
 			checks.push(data.check);
-			renderChart(chartEl, checks, goalOf(runSettings), runSettings.mode);
+			renderChart(chartEl, checks, runGoal, runSettings.mode);
 			if (!liveFrame) liveFrame = requestAnimationFrame(renderLive);
 			return;
 		case 'done':
@@ -787,7 +794,9 @@ function niceTicks(min: number, max: number, count: number): number[] {
 	return ticks;
 }
 
-function renderChart(el: HTMLElement, data: readonly Check[], target: number, mode: Mode): void {
+function renderChart(el: HTMLElement, data: readonly Check[], goal: number | null, mode: Mode): void {
+	// Until Lite's worker says where it settles, scale as if at 1% and draw no line.
+	const target = goal ?? 1;
 	const W = 760;
 	const H = 220;
 	const pad = { left: 44, right: 14, top: 12, bottom: 26 };
@@ -823,7 +832,7 @@ function renderChart(el: HTMLElement, data: readonly Check[], target: number, mo
 	const xTicks = ticks
 		.map((s) => `<text x="${x(s)}" y="${H - 6}" text-anchor="middle">${number(s, s === 0 ? 0 : decimals)}s</text>`)
 		.join('');
-	const targetLine =
+	const targetLine = goal === null ? '' :
 		`<line x1="${pad.left}" x2="${W - pad.right}" y1="${y(target)}" y2="${y(target)}" stroke="#4f46e5" stroke-dasharray="4 4" stroke-opacity="0.55"/>` +
 		`<text x="${W - pad.right}" y="${y(target) - 6}" text-anchor="end" style="fill:#4f46e5">${mode === 'lite' ? 'settled' : 'target'} ${target}%</text>`;
 
