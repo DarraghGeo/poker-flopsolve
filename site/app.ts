@@ -28,10 +28,24 @@ import {
 	TOTAL_COMBOS,
 } from './lib/hands.ts';
 import { RANGE_PRESETS } from './lib/ranges.ts';
-import type { Settings, SizeKey } from './lib/settings.ts';
+import type { Settings } from './lib/settings.ts';
 import { LITE_LIMITS } from './lib/lite.ts';
 import type { Mode } from './lib/settings.ts';
-import { autoMemory, configOf, ITERATION_CAP, MEMORY_CAPS, readSettings, SIZE_PRESETS, TARGETS, writeSettings } from './lib/settings.ts';
+import {
+	autoMemory,
+	BET_SIZES,
+	bettingLabel,
+	configOf,
+	ITERATION_CAP,
+	MAX_RAISES,
+	MAX_SIZES,
+	MEMORY_CAPS,
+	RAISE_SIZES,
+	readSettings,
+	TARGETS,
+	writeSettings,
+} from './lib/settings.ts';
+import type { NodeView } from './lib/explore.ts';
 import type { Inbound, Outbound, Phase, Report, Setup, SpotSummary } from './protocol.ts';
 
 // ---------------------------------------------------------------- helpers
@@ -394,7 +408,6 @@ $('clear-board').addEventListener('click', () => setBoard([]));
 
 const potInput = $<HTMLInputElement>('pot');
 const stackInput = $<HTMLInputElement>('stack');
-const raiseInput = $<HTMLInputElement>('raise');
 const allInInput = $<HTMLInputElement>('allin');
 
 function segmented<T>(id: string, options: readonly { value: T; label: string; disabled?: boolean }[], current: () => T, set: (value: T) => void): () => void {
@@ -422,12 +435,60 @@ function segmented<T>(id: string, options: readonly { value: T; label: string; d
 	return render;
 }
 
-segmented<SizeKey>(
-	'sizes',
-	(Object.keys(SIZE_PRESETS) as SizeKey[]).map((key) => ({ value: key, label: SIZE_PRESETS[key].label })),
-	() => settings.sizes,
-	(sizes) => update({ sizes }),
+/**
+ * Toggle buttons for a set of sizes, any mix of up to `MAX_SIZES`; `min` is
+ * how many must stay picked. A size past the limit is disabled until another
+ * is dropped.
+ */
+function sizePicker(id: string, offered: readonly number[], label: (size: number) => string, min: number, current: () => readonly number[], set: (sizes: number[]) => void): () => void {
+	const el = $(id);
+	el.setAttribute('role', 'group');
+	el.innerHTML = '';
+	const buttons = offered.map((size) => {
+		const button = document.createElement('button');
+		button.textContent = label(size);
+		button.addEventListener('click', () => {
+			const picked = current();
+			const next = picked.includes(size) ? picked.filter((s) => s !== size) : [...picked, size].sort((a, b) => a - b);
+			if (next.length < min || next.length > MAX_SIZES) return;
+			set(next);
+			render();
+		});
+		el.append(button);
+		return button;
+	});
+	const render = (): void => {
+		const picked = current();
+		buttons.forEach((button, i) => {
+			const on = picked.includes(offered[i]);
+			button.setAttribute('aria-pressed', String(on));
+			button.disabled = !on && picked.length >= MAX_SIZES;
+		});
+	};
+	render();
+	return render;
+}
+
+sizePicker('bets', BET_SIZES, (size) => `${Math.round(size * 100)}%`, 1, () => settings.bets, (bets) => update({ bets }));
+const renderRaises = (): void => {
+	$('raise-sizes-field').hidden = settings.raises === 0;
+	$('raise-note').textContent =
+		settings.raiseSizes.length === 0 ? 'None picked: raises use the bet sizes, as fractions of the pot.' : 'Multiples of the bet being raised.';
+};
+segmented<number>(
+	'raises',
+	Array.from({ length: MAX_RAISES + 1 }, (_, n) => ({ value: n, label: n === 0 ? 'None' : String(n) })),
+	() => settings.raises,
+	(raises) => {
+		update({ raises });
+		renderRaises();
+	},
 );
+sizePicker('raise-sizes', RAISE_SIZES, (times) => `${times}×`, 0, () => settings.raiseSizes, (raiseSizes) => {
+	update({ raiseSizes });
+	renderRaises();
+});
+renderRaises();
 const MODE_NOTES: Record<Mode, string> = {
 	exact: 'Solves the whole game until it is within your target of perfect play.',
 	lite: 'Faster on big flops: simplifies the turn and river and stops when the first decisions settle.',
@@ -477,7 +538,6 @@ if (!isolated) {
 
 potInput.value = String(settings.pot);
 stackInput.value = String(settings.stack);
-raiseInput.checked = settings.raise;
 allInInput.checked = settings.allIn;
 
 const positive = (input: HTMLInputElement, fallback: number): number => {
@@ -488,7 +548,6 @@ const positive = (input: HTMLInputElement, fallback: number): number => {
 };
 potInput.addEventListener('input', () => update({ pot: positive(potInput, settings.pot) }));
 stackInput.addEventListener('input', () => update({ stack: positive(stackInput, settings.stack) }));
-raiseInput.addEventListener('change', () => update({ raise: raiseInput.checked }));
 allInInput.addEventListener('change', () => update({ allIn: allInInput.checked }));
 
 // ---------------------------------------------------------------- estimate
@@ -513,6 +572,8 @@ function blocker(): string | null {
 
 function scheduleEstimate(): void {
 	clearTimeout(estimateTimer);
+	// The results no longer match the form: free the solve they came from.
+	releaseExplorer();
 	// Any reply in flight now describes other settings.
 	estimateId++;
 	fits = false;
@@ -598,6 +659,8 @@ const resultsEl = $('results');
 const stopButton = $<HTMLButtonElement>('stop');
 
 let solver: Worker | null = null;
+/** The last solve's worker, kept after it finishes so its solution can be walked through. */
+let explorer: Worker | null = null;
 let checks: Check[] = [];
 let setup: Setup | null = null;
 let live = { iterations: 0, solveMs: 0, measureMs: 0, wallMs: 0 };
@@ -676,7 +739,7 @@ function startRun(): void {
 	stopButton.disabled = false;
 	$('run-title').textContent = 'Solving';
 	$('run-sub').textContent =
-		`${formatCards(board)} · ${SIZE_PRESETS[settings.sizes].label} · ` +
+		`${formatCards(board)} · ${bettingLabel(settings)} · ` +
 		(settings.mode === 'lite' ? 'Lite, until the first decisions settle' : `to ${settings.target}% of pot`);
 	progressEl.className = 'progress waiting';
 	progressFill.style.width = '0';
@@ -687,6 +750,9 @@ function startRun(): void {
 	enterPhase('threads');
 	runPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
+	// The last solve's memory goes before this one's is taken.
+	releaseExplorer();
+	explore = null;
 	solver = new Worker(workerUrl, { type: 'module' });
 	solver.onmessage = ({ data }: MessageEvent<Outbound>) => onSolverMessage(data);
 	solver.onerror = (event) => fail(event.message || 'The solver failed to load.');
@@ -730,8 +796,16 @@ function onSolverMessage(data: Outbound): void {
 	}
 }
 
-function endRun(): void {
-	solver?.terminate();
+/** End the run; `keep` hands a finished solve's worker to the walk-through instead of ending it. */
+function endRun(keep = false): void {
+	if (keep && solver) {
+		explorer = solver;
+		explorer.onmessage = ({ data }: MessageEvent<Outbound>) => {
+			if (data.type === 'view') onView(data);
+		};
+		// The results stand; only the walk-through stops.
+		explorer.onerror = () => releaseExplorer();
+	} else solver?.terminate();
 	solver = null;
 	running = false;
 	document.body.classList.remove('running');
@@ -740,7 +814,7 @@ function endRun(): void {
 }
 
 function finish(report: Report): void {
-	endRun();
+	endRun(true);
 	phaseMs.set('threads', report.ms.threads);
 	phaseMs.set('build', report.ms.build);
 	phaseMs.set('alloc', report.ms.alloc);
@@ -960,7 +1034,7 @@ function renderResults(report: Report): void {
 			['Board', cards.map((c) => `<span class="${formatCard(c)[1]}">${formatCard(c)[0]}${SUIT_GLYPHS[formatCard(c)[1]]}</span>`).join(' ')],
 			['Streets', streets(spot.rounds)],
 			['Pot · stack', `${r.config.pot}bb · ${r.config.stack}bb`],
-			['Betting', `${SIZE_PRESETS[runSettings.sizes].label}${runSettings.raise ? ', one raise' : ''}${runSettings.allIn ? ', all-in' : ''}`],
+			['Betting', bettingLabel(runSettings)],
 			['Combos', `${number(spot.combos[0])} OOP · ${number(spot.combos[1])} IP`],
 			['Decision nodes', number(spot.decisionNodes)],
 			['Runouts stored', number(spot.runouts)],
@@ -983,33 +1057,12 @@ function renderResults(report: Report): void {
 		]) +
 		`</section>`;
 
-	const root = r.root;
-	const colours = actionColours(root.actions);
-	const who = root.player === 0 ? 'OOP' : 'IP';
-	const mini = root.cells
-		.map((mix, cell) => {
-			if (!mix) return `<div class="empty">${cellLabel(cell)}</div>`;
-			let at = 0;
-			const stops = mix
-				.map((p, a) => {
-					const from = at;
-					at += p * 100;
-					return `${colours[a]} ${from.toFixed(1)}% ${at.toFixed(1)}%`;
-				})
-				.join(',');
-			return `<div style="background:linear-gradient(90deg,${stops})" title="${cellLabel(cell)}: ${mix.map((p, a) => `${actionName(root.actions[a], r.config.pot)} ${(p * 100).toFixed(0)}%`).join(', ')}">${cellLabel(cell)}</div>`;
-		})
-		.join('');
 	const solution =
-		`<section class="card"><div class="card-head"><h2>Solution</h2><span class="muted">${who} first to act</span></div>` +
+		`<section class="card" id="solution"><div class="card-head"><h2>Solution</h2></div>` +
 		`<div class="ev">${(['OOP', 'IP'] as const)
 			.map((name, p) => `<div class="ev-row"><span>${name}</span><div class="ev-bar"><i style="width:${r.ev[p].toFixed(1)}%"></i></div><b>${r.ev[p].toFixed(1)}%</b></div>`)
 			.join('')}</div>` +
-		`<div class="stack">${root.frequencies.map((p, a) => `<i style="width:${p * 100}%;background:${colours[a]}"></i>`).join('')}</div>` +
-		`<ul class="legend">${root.actions
-			.map((action, a) => `<li><span class="swatch" style="background:${colours[a]}"></span>${esc(actionName(action, r.config.pot))}<b>${(root.frequencies[a] * 100).toFixed(1)}%</b></li>`)
-			.join('')}</ul>` +
-		`<div class="mini-grid">${mini}</div>` +
+		`<div id="explore"></div>` +
 		`</section>`;
 
 	const liteCard = lite
@@ -1027,10 +1080,153 @@ function renderResults(report: Report): void {
 		`<div class="actions"><button class="secondary" id="copy-report">Copy report (JSON)</button><button class="secondary" id="copy-link">Copy link to this spot</button><button class="secondary" id="run-again">Run again</button></div>` +
 		`</section></div>`;
 	resultsEl.hidden = false;
+	explore = { trail: [{ node: 0, board: 0, round: 0, via: '' }], firstStreet: STREETS.indexOf(streetOf(r.config.board)), view: r.root, failed: null };
+	renderExplore();
 	renderChart($('result-chart'), r.checks, r.target, r.mode);
 	$('copy-report').addEventListener('click', () => void copy(JSON.stringify(report, null, 2), 'Report copied'));
 	$('copy-link').addEventListener('click', () => void copy(`${location.origin}${location.pathname}#${writeSettings(runSettings)}`, 'Link copied'));
 	$('run-again').addEventListener('click', startRun);
+}
+
+// ---------------------------------------------------------------- walk-through
+
+/** One step of the line being looked at: a decision, its board, and the action that led there. */
+interface TrailStep {
+	readonly node: number;
+	readonly board: number;
+	readonly round: number;
+	/** The action taken to get here, as the page names it; empty at the start. */
+	readonly via: string;
+}
+
+/** The line being looked at, and its last decision as drawn. */
+let explore: {
+	/** The line as drawn; a step asked for joins it once the worker answers. */
+	trail: TrailStep[];
+	view: NodeView;
+	firstStreet: number;
+	/** Why the last step asked for could not be drawn. */
+	failed: string | null;
+} | null = null;
+/** The line asked for and not yet drawn. */
+let pendingTrail: TrailStep[] | null = null;
+let viewId = 0;
+
+const STREETS = ['Flop', 'Turn', 'River'];
+const streetOf = (cards: string): string => STREETS[cards.split(' ').length - 3] ?? '';
+
+/**
+ * End the kept worker and free the last solve's memory: before a new solve,
+ * or once the form changes and the results no longer match it. The results
+ * stay, without the walk-through.
+ */
+function releaseExplorer(): void {
+	if (!explorer) return;
+	explorer.terminate();
+	explorer = null;
+	pendingTrail = null;
+	if (explore) renderExplore();
+}
+
+/** Ask the kept worker to draw `trail`'s last decision; the line moves there once it answers. */
+function goTo(trail: TrailStep[]): void {
+	if (!explorer || !explore) return;
+	const at = trail[trail.length - 1];
+	pendingTrail = trail;
+	const message: Inbound = { type: 'view', id: ++viewId, node: at.node, board: at.board };
+	explorer.postMessage(message);
+	$('explore').classList.add('loading');
+}
+
+function onView(data: Extract<Outbound, { type: 'view' }>): void {
+	if (data.id !== viewId || !explore || !pendingTrail) return;
+	if (data.view) {
+		explore.trail = pendingTrail;
+		explore.view = data.view;
+		explore.failed = null;
+	} else explore.failed = data.message ?? 'That decision could not be read.';
+	pendingTrail = null;
+	renderExplore();
+}
+
+function renderExplore(): void {
+	if (!explore) return;
+	const { view, trail } = explore;
+	const el = $('explore');
+	const colours = actionColours(view.actions);
+	const who = view.player === 0 ? 'OOP' : 'IP';
+	const walkable = explorer !== null;
+
+	const crumbs = trail
+		.map((step, i) => {
+			const label = i === 0 ? 'Start' : esc(step.via);
+			const street = i > 0 && step.round !== trail[i - 1].round ? `<span class="street">${STREETS[explore!.firstStreet + step.round] ?? ''}</span>` : '';
+			const crumb =
+				i === trail.length - 1 ? `<span class="here">${label}</span>`
+				: walkable ? `<button class="crumb" data-trail="${i}">${label}</button>`
+				: `<span>${label}</span>`;
+			// The street marker follows the action that dealt its card.
+			return crumb + street;
+		})
+		.join('<span class="sep">›</span>');
+	const runouts =
+		view.runouts.length > 1
+			? `<label class="runout"><span>${streetOf(view.cards)} card</span><select id="runout" class="input"${walkable ? '' : ' disabled'}>${view.runouts
+					.map((r) => `<option value="${r.board}"${r.board === view.board ? ' selected' : ''}>${esc([r.card, ...r.also].join(' / '))}</option>`)
+					.join('')}</select></label>`
+			: '';
+	const nobody = view.frequencies.every((p) => p === 0);
+	const mini = view.cells
+		.map((mix, cell) => {
+			if (!mix) return `<div class="empty">${cellLabel(cell)}</div>`;
+			let at = 0;
+			const stops = mix
+				.map((p, a) => {
+					const from = at;
+					at += p * 100;
+					return `${colours[a]} ${from.toFixed(1)}% ${at.toFixed(1)}%`;
+				})
+				.join(',');
+			return `<div style="background:linear-gradient(90deg,${stops})" title="${cellLabel(cell)}: ${mix.map((p, a) => `${actionName(view.actions[a], view.pot)} ${(p * 100).toFixed(0)}%`).join(', ')}">${cellLabel(cell)}</div>`;
+		})
+		.join('');
+
+	el.classList.remove('loading');
+	el.innerHTML =
+		(explore.failed ? `<div class="error-box">${esc(explore.failed)}</div>` : '') +
+		`<nav class="line" aria-label="Line">${crumbs}</nav>` +
+		`<p class="spot-line"><b>${who}</b> to act · ${streetOf(view.cards)} <span class="mono">${esc(view.cards)}</span> · pot ${number(view.pot, view.pot % 1 ? 1 : 0)}bb</p>` +
+		runouts +
+		(nobody ? `<p class="muted">Neither range reaches this decision: its strategy is never played.</p>` : '') +
+		`<div class="stack">${view.frequencies.map((p, a) => `<i style="width:${p * 100}%;background:${colours[a]}"></i>`).join('')}</div>` +
+		`<ul class="legend">${view.actions
+			.map((action, a) => {
+				const inner = `<span class="swatch" style="background:${colours[a]}"></span>${esc(actionName(action, view.pot))}<b>${(view.frequencies[a] * 100).toFixed(1)}%</b>`;
+				const next = view.next[a];
+				return next && walkable
+					? `<li class="walk"><button class="step-into" data-action="${a}">${inner}<em aria-hidden="true">›</em></button></li>`
+					: `<li>${inner}<em>${walkable ? 'ends' : ''}</em></li>`;
+			})
+			.join('')}</ul>` +
+		`<div class="mini-grid">${mini}</div>` +
+		`<p class="hint">${walkable ? 'Tap an action to follow it.' : 'Run the spot again to walk through its solution.'}</p>`;
+
+	el.querySelectorAll<HTMLButtonElement>('.step-into').forEach((button) => {
+		button.addEventListener('click', () => {
+			const a = Number(button.dataset.action);
+			const next = view.next[a];
+			if (!next) return;
+			goTo([...trail, { node: next.node, board: next.board, round: next.round, via: actionName(view.actions[a], view.pot) }]);
+		});
+	});
+	el.querySelectorAll<HTMLButtonElement>('.crumb').forEach((button) => {
+		button.addEventListener('click', () => goTo(trail.slice(0, Number(button.dataset.trail) + 1)));
+	});
+	el.querySelector<HTMLSelectElement>('#runout')?.addEventListener('change', (event) => {
+		// Another card at this street: the same line on it, from where it was dealt.
+		const board = Number((event.target as HTMLSelectElement).value);
+		goTo(trail.map((step) => (step.round === view.round ? { ...step, board } : step)));
+	});
 }
 
 // ---------------------------------------------------------------- start
