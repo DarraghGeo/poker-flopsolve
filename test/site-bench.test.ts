@@ -147,6 +147,8 @@ describe('site lite summary', () => {
 		const config = configOf({ ...DEFAULT_SETTINGS, bets: [0.33, 0.75], raises: 1 }, 2048);
 		const lines = liteSummary(config, litePreset(config).changes);
 		expect(lines[0]).toBe('Turn and river: one bet size (75% pot), no raises.');
+		// Issue #147: the walk-through puts the sizes back.
+		expect(lines[1]).toBe('Deal a turn or river card in the walk-through and that street is re-solved at your bet sizes, raise sizes and raises.');
 		expect(lines).toContain('Similar turn and river cards are solved together.');
 		expect(lines.join(' ')).not.toMatch(/shareHistories|runoutBuckets|chanceSampling/);
 	});

@@ -10,7 +10,7 @@ import type { PresetChanges, SpotConfig } from '../../src/index.ts';
 
 /** What Lite gives up, the same for every spot. */
 export const LITE_LIMITS: readonly string[] = [
-	'The first decisions come out close to exact; later streets are only a rough guide.',
+	'The first decisions come out close to exact; later streets are only a rough guide until the walk-through re-solves them.',
 	'It has no accuracy figure: it cannot measure how far it is from perfect play.',
 	'Its times are not comparable with Exact, which solves the whole game.',
 ];
@@ -30,6 +30,8 @@ export function liteSummary(config: SpotConfig, changes: PresetChanges): string[
 		const kept = sizes.reduce((best, s) => (Math.abs(s - 0.75) < Math.abs(best - 0.75) ? s : best), sizes[0] ?? 0.75);
 		const streets = changes.roundsSimplified.map((street, i) => (i === 0 ? capital(street) : street)).join(' and ');
 		lines.push(`${streets}: one bet size (${Math.round(kept * 100)}% pot), no raises.`);
+		const deal = cards === 3 ? 'a turn or river' : 'a river';
+		lines.push(`Deal ${deal} card in the walk-through and that street is re-solved at your bet sizes, raise sizes and raises.`);
 	} else {
 		lines.push('Your bet sizes are kept as they are.');
 	}
