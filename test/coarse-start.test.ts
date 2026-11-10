@@ -126,6 +126,36 @@ describe('coarse start', () => {
 		}
 	});
 
+	it('counts both runs\' sampling baselines in the coarse budget (issue #141)', () => {
+		const chanceSampling = { p: 0.5 };
+		const baselines = (config: SpotConfig): number => {
+			const probe = createRun(defineSpot(config), { ...ONE, precision: 'f32', approximations: { chanceSampling } });
+			const bytes = probe.solver.ctx.sampling!.bytes;
+			probe.close();
+			return bytes;
+		};
+		const spot = defineSpot(flop);
+		const coarse = defineSpot({ ...flop, runoutBuckets: 3 });
+		const main = baselines(flop);
+		const own = baselines({ ...flop, runoutBuckets: 3 });
+		expect(main).toBeGreaterThan(0);
+		expect(own).toBeGreaterThan(0);
+		const start = (maxBytes: number, precision?: 'f32') => () => {
+			const run = createRun(defineSpot({ ...flop, maxBytes }), {
+				...ONE, precision, approximations: { chanceSampling, coarseStart: { iterations: 2 } },
+			});
+			run.close();
+		};
+		// The coarse storage fits beside the real storage, but not beside its baselines too.
+		expect(start(spot.estimate.bytes + main + coarse.estimate.compressedBytes + 16)).toThrow(/coarseStart/);
+		expect(start(spot.estimate.bytes + coarse.estimate.bytes + own + 16, 'f32')).toThrow(/coarseStart/);
+		expect(start(spot.estimate.bytes + main + coarse.estimate.bytes + 16, 'f32')).toThrow(/coarseStart/);
+		// Room for everything at 32 bits.
+		expect(start(spot.estimate.bytes + main + coarse.estimate.bytes + own + 16, 'f32')).not.toThrow();
+		// Room for the coarse run only at 16 bits: the default drops to it.
+		expect(start(spot.estimate.bytes + main + coarse.estimate.compressedBytes + own + 16)).not.toThrow();
+	});
+
 	it('counts the coarse solve in solve()\'s elapsed time', () => {
 		const solution = solve(defineSpot(flop), { ...ONE, iterations: 1, exploitEvery: 1, approximations: { coarseStart: { iterations: 30 } } });
 		const cold = solve(defineSpot(flop), { ...ONE, iterations: 1, exploitEvery: 1 });
