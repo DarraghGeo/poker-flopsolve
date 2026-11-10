@@ -35,6 +35,37 @@ export interface Setup {
 	readonly spot: SpotSummary;
 }
 
+/** Where a re-solved street was dealt: the decision and board, in the solve it came from. */
+export interface Origin {
+	readonly layer: number;
+	readonly node: number;
+	readonly board: number;
+}
+
+/**
+ * A decision as the walk-through draws it. `layer` is the solve it is read
+ * from: 0 the benchmark's, then each street Lite re-solved (issue #147);
+ * node and board are that solve's, `round` and the steps' rounds the
+ * original spot's.
+ */
+export interface WalkView extends NodeView {
+	readonly layer: number;
+	/**
+	 * Set on the street a re-solve opened: where its card was dealt. Its
+	 * `runouts` are then that solve's, to re-solve on another card.
+	 */
+	readonly dealtFrom: Origin | null;
+}
+
+/** How a re-solve went. */
+export interface Resolved {
+	/** The street re-solved, 0 at the spot's first. */
+	readonly round: number;
+	readonly iterations: number;
+	readonly ms: number;
+	readonly stoppedBy: 'target' | 'settled' | 'iterations' | 'stopped';
+}
+
 /** Everything one benchmark measured. */
 export interface Report {
 	readonly config: SpotConfig;
@@ -76,7 +107,7 @@ export interface Report {
 	/** Each player's share of the pot, %. */
 	readonly ev: readonly [number, number];
 	/** The first decision, as the walk-through draws it. */
-	readonly root: NodeView;
+	readonly root: WalkView;
 }
 
 export type Phase = 'threads' | 'build' | 'alloc' | 'solve' | 'finish';
@@ -84,9 +115,16 @@ export type Phase = 'threads' | 'build' | 'alloc' | 'solve' | 'finish';
 export type Inbound =
 	| { type: 'estimate'; id: number; config: SpotConfig; mode: Mode }
 	| { type: 'solve'; config: SpotConfig; mode: Mode; target: number; threads: number; cap: number }
+	/** Stop the solve, or a re-solve, where it is. */
 	| { type: 'stop' }
-	/** After `done`: a decision of the solved spot to draw. */
-	| { type: 'view'; id: number; node: number; board: number };
+	/** After `done`: a decision of a solve the worker holds to draw. */
+	| { type: 'view'; id: number; layer: number; node: number; board: number }
+	/**
+	 * After `done`, in Lite: re-solve the street `node` opens on `board`, in
+	 * solve `layer`, at the spot's own betting, dropping the solves after
+	 * `layer`; then draw decision `then` of the new solve.
+	 */
+	| { type: 'resolve'; id: number; layer: number; node: number; board: number; then: number };
 
 /** A spot the solver will not build, and why. */
 export interface EstimateRefused {
@@ -108,4 +146,7 @@ export type Outbound =
 	| { type: 'check'; check: Check }
 	| { type: 'done'; report: Report }
 	| { type: 'error'; message: string }
-	| { type: 'view'; id: number; view: NodeView | null; message?: string };
+	/** A re-solve's progress; `measure` is its last reading, % as the solve's own. */
+	| { type: 'resolving'; id: number; iterations: number; measure: number | null; goal: number; settle: boolean }
+	/** `resolved` when the view follows a re-solve. */
+	| { type: 'view'; id: number; view: WalkView | null; message?: string; resolved?: Resolved };
