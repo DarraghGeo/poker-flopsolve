@@ -324,6 +324,17 @@ describe('solveLite keepBudget', () => {
 		expect(lite.changes.notes.some((n) => n.includes(`but for ${lite.kept.length} line`))).toBe(true);
 	});
 
+	it('settles later with a budget, unless the caller sets the tolerance (#123)', () => {
+		const budget = { workers: 1, pickIterations: 10, keepBudget: (sharedBytes + unsharedBytes) / 2 } as const;
+		expect(litePreset(small, { workers: 1 }).options.settle).toEqual({});
+		expect(litePreset(small, budget).options.settle).toEqual({ tolerance: 0.005 });
+		expect(litePreset(small, { ...budget, settle: { every: 10 } }).options.settle).toEqual({ every: 10, tolerance: 0.005 });
+		expect(litePreset(small, { ...budget, settle: { tolerance: 0.02 } }).options.settle).toEqual({ tolerance: 0.02 });
+		expect(litePreset(small, { ...budget, settle: false }).options.settle).toBeUndefined();
+		const preset = litePreset(small, budget);
+		expect(preset.changes.notes.some((n) => n.startsWith('settle:') && n.includes('0.5%'))).toBe(true);
+	});
+
 	it('refuses a budget the shared tree does not fit, a spot that shares nothing, and bad settings', () => {
 		expect(() => solveLite(small, { ...options, keepBudget: sharedBytes / 2 })).toThrow(/over the budget/);
 		expect(() => solveLite(small, { ...options, keepBudget: unsharedBytes, shareHistories: false })).toThrow(/shareHistories/);

@@ -52,3 +52,14 @@ since removed (see `docs/APPROXIMATIONS.md`).
 The `acc-*` logs and the `diag-*` logs but two-tone's used a pick sampling both rounds; it kept the same
 lines as the turn-only pick on every flop, so their hybrid solves are the same.
 
+
+`out/turn-stop/` is issue #123, what stop rule `keepBudget` should use (150 MiB, `i16`, 4 threads):
+
+- `<board>-4t.log` / `.json`: `turn-stop.ts`, the blueprint to 800 iterations with the turn re-solves
+  at 7 checkpoints, and where each candidate rule stops (a later root-play stop, or one that also
+  waits for the kept lines' turn ranges). A rule's gain there is that of the next checkpoint, so it
+  flatters rules that stop between them.
+- `acc-<board>-<rule>.log` / `.json`: `measure.ts <board> keep=150,i16 4` with `RULE=<rule>`, the
+  re-solve gain at the exact stop: today's 20:0.01:2 against 20:0.005:2 and 20:0.0035:2.
+- `browser-<board>-20_0.005_2.log`: `browser.ts <board> keep=150,i16 4` with `RULE=20:0.005:2`,
+  the rule `solveLite` now uses with `keepBudget`.
