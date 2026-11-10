@@ -103,6 +103,25 @@ function streetLabel(spot: Spot, node: number, edge: number): string {
 	return `${ACTION_LABELS[action]} ${(tree.edgeTarget[edge] - before) / spot.chipScale}`;
 }
 
+/**
+ * The cards that could have come at `round` instead of `board`'s, `board`'s
+ * own among them; empty at the first round.
+ */
+export function runoutsOf(spot: Spot, round: number, board: number): NodeView['runouts'] {
+	const { runouts } = spot;
+	if (round === 0) return [];
+	const width = runouts.width[round];
+	const parent = runouts.parent[round][board];
+	const orbits = runouts.orbitStart[round];
+	const siblings: { board: number; card: string; also: string[] }[] = [];
+	for (let b = runouts.childStart[round][parent]; b < runouts.childStart[round][parent + 1]; b++) {
+		const also: string[] = [];
+		for (let m = orbits[b] + 1; m < orbits[b + 1]; m++) also.push(formatCards([runouts.orbitCard[round][m]]));
+		siblings.push({ board: b, card: formatCards([runouts.cards[round][b * width + width - 1]]), also });
+	}
+	return siblings;
+}
+
 /** The view of `node` on `board`. */
 export function nodeView(spot: Spot, solution: Solution, node: number, board: number): NodeView {
 	const { tree, runouts } = spot;
@@ -142,17 +161,6 @@ export function nodeView(spot: Spot, solution: Solution, node: number, board: nu
 		cells.push(w > 0 ? Array.from({ length: actions }, (_, k) => cellMix[cell * actions + k] / w) : null);
 	}
 
-	const siblings: { board: number; card: string; also: string[] }[] = [];
-	if (round > 0) {
-		const parent = runouts.parent[round][board];
-		const orbits = runouts.orbitStart[round];
-		for (let b = runouts.childStart[round][parent]; b < runouts.childStart[round][parent + 1]; b++) {
-			const also: string[] = [];
-			for (let m = orbits[b] + 1; m < orbits[b + 1]; m++) also.push(formatCards([runouts.orbitCard[round][m]]));
-			siblings.push({ board: b, card: formatCards([runouts.cards[round][b * width + width - 1]]), also });
-		}
-	}
-
 	return {
 		node,
 		board,
@@ -164,6 +172,6 @@ export function nodeView(spot: Spot, solution: Solution, node: number, board: nu
 		frequencies: Array.from(total, (p) => (mass > 0 ? p / mass : 0)),
 		cells,
 		next: view.actions.map((_, k) => stepOf(spot, node, board, k)),
-		runouts: siblings,
+		runouts: runoutsOf(spot, round, board),
 	};
 }

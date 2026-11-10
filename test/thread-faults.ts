@@ -2,7 +2,7 @@
  * Threaded solves with a thread made to fail mid-iteration, for
  * thread-failure.test.ts and the browser checks in browser-threads.test.ts.
  *
- * Each thread starts as usual and then fails on its first walk, from a setup
+ * Each thread starts as usual and then fails in its first step, from a setup
  * altered on its way to the thread: nothing in the solver itself is faked.
  */
 
@@ -50,23 +50,44 @@ function prepare(threads: number, shared: boolean) {
 }
 
 /**
- * A stand-in for the engine module whose `runChance` traps (`unreachable`)
- * and whose other exports do nothing, so a thread starts as usual and dies
- * on its first walk. An out-of-bounds access would be the likelier real
- * fault, but headless Chromium in some sandboxes crashes the whole page on
- * one rather than throwing.
+ * A stand-in for the engine module whose exports do nothing, except that
+ * `setPhase` traps (`unreachable`) from its second call on, and `runChance`
+ * always does, as a backstop. The first call
+ * is in the thread's start-up, so the thread gets ready as usual; the next is
+ * the first thing its part of each step does, inside the walk's `try`.
+ *
+ * The trap must come before the thread takes a board. Threads take boards
+ * off a shared counter that the main thread takes from as well, so a thread
+ * that wakes late may find none left. A fault that waits for a board
+ * (`runChance`) then never fires, and the step succeeds.
+ *
+ * A trap stands in for the likelier real fault, an out-of-bounds access,
+ * because headless Chromium in some sandboxes crashes the whole page on one
+ * rather than throwing.
  */
 function trappingEngine(): unknown {
 	const names = ['init', 'setMaxActions', 'setExchange', 'setShard', 'setPhase', 'runChance'];
 	const ascii = (text: string) => Array.from(text, (c) => c.charCodeAt(0));
 	const section = (id: number, body: number[]) => [id, body.length, ...body];
 	const exports = names.flatMap((name, i) => [name.length, ...ascii(name), 0, i]);
+	// calls += 1; if (calls > 1) unreachable
+	const trapAfterFirst = [
+		0x00, // no locals
+		0x23, 0, 0x41, 1, 0x6a, 0x24, 0, // global 0 += 1
+		0x23, 0, 0x41, 1, 0x4a, // global 0 > 1
+		0x04, 0x40, 0x00, 0x0b, // if: unreachable
+		0x0b,
+	];
 	// Every function is () -> (); calls from JavaScript may pass arguments all the same.
-	const bodies = names.flatMap((name) => (name === 'runChance' ? [3, 0, 0x00, 0x0b] : [2, 0, 0x0b]));
+	const trap = [0x00, 0x00, 0x0b];
+	const body = (name: string) => (name === 'setPhase' ? trapAfterFirst : name === 'runChance' ? trap : [0x00, 0x0b]);
+	const bodies = names.flatMap((name) => [body(name).length, ...body(name)]);
 	const bytes = Uint8Array.from([
 		0x00, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
 		...section(1, [1, 0x60, 0, 0]),
 		...section(3, [names.length, ...names.map(() => 0)]),
+		// One mutable i32, starting at 0: how many times `setPhase` has run.
+		...section(6, [1, 0x7f, 1, 0x41, 0, 0x0b]),
 		...section(7, [names.length, ...exports]),
 		...section(10, [names.length, ...bodies]),
 	]);
@@ -75,12 +96,15 @@ function trappingEngine(): unknown {
 }
 
 /**
- * A threaded WebAssembly engine whose spawned threads trap on their first walk.
+ * A threaded WebAssembly engine whose spawned threads trap in their first step,
+ * whether or not they get a board to walk.
  * @param spawn the platform's `spawnEngineWorker`
  * @param threads threads, this one included
  */
 export function brokenEngine(spawn: SpawnEngineWorker, threads = 2): Engine {
 	const { spot, plan, ctx } = prepare(threads, false);
+	// Compiled once; each thread instantiates it, so each has its own count.
+	const module = trappingEngine();
 	const engine = createEngine(
 		{
 			tree: spot.tree, runouts: spot.runouts, players: spot.players, layout: ctx.layout, active: ctx.active,
@@ -88,7 +112,7 @@ export function brokenEngine(spawn: SpawnEngineWorker, threads = 2): Engine {
 		},
 		{
 			plan, threads,
-			spawn: (setup, onError) => spawn({ ...setup, module: trappingEngine() }, onError),
+			spawn: (setup, onError) => spawn({ ...setup, module }, onError),
 		},
 	);
 	if (!engine) throw new Error('The WebAssembly engine is not available here');

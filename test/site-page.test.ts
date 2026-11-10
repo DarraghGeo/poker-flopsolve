@@ -216,6 +216,72 @@ describe('site page in a browser', () => {
 		expect(results).toContain('Not measured');
 	});
 
+	it('re-solves each card Lite deals at the form\'s betting', async (context) => {
+		if (!browser) return context.skip();
+		const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+		const errors: string[] = [];
+		page.on('pageerror', (error) => errors.push(error.message));
+		await page.goto(`${url}#board=Ks+9d+4c&mode=lite&bets=0.33,1&raises=1&rx=3&oop=AA,KQs,98s,76s,44&ip=KK,AKo,T9s,QJs,99`);
+		await page.waitForFunction("!document.getElementById('run').disabled", undefined, { timeout: 20_000 });
+		expect(await page.textContent('#estimate')).toContain('Turn and river: one bet size (100% pot), no raises.');
+		await page.click('#run');
+		await page.waitForSelector('#results:not([hidden])', { timeout: 120_000 });
+		await page.waitForSelector('#explore .step-into', { timeout: 20_000 });
+		const line = async (): Promise<string> => (await page.textContent('#explore .spot-line')) ?? '';
+		const legend = async (): Promise<string> => (await page.textContent('#explore .legend')) ?? '';
+		const settled = (street: string): Promise<unknown> =>
+			page.waitForFunction(
+				`!document.querySelector('#explore .resolving') && document.querySelector('#explore .spot-line').textContent.includes(${JSON.stringify(street)})`,
+				undefined,
+				{ timeout: 60_000 },
+			);
+		expect(await line()).toMatch(/^OOP to act · Flop/);
+		expect(await page.textContent('#explore .hint')).toContain('re-solves that street');
+		// OOP checks, IP checks: the turn comes and is re-solved at both sizes.
+		await page.click('#explore .step-into[data-action="0"]');
+		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.startsWith('IP')", undefined, { timeout: 20_000 });
+		await page.click('#explore .step-into[data-action="0"]');
+		await settled('Turn');
+		expect(await line()).toMatch(/^OOP to act · Turn/);
+		expect(await legend()).toContain('(33%)');
+		expect(await legend()).toContain('(100%)');
+		expect(await page.textContent('#explore')).toContain('Turn re-solved at your bet sizes');
+		// Another turn: re-solved again, on its own card.
+		const cards = async (): Promise<string> => (await page.textContent('#explore .spot-line .mono')) ?? '';
+		const before = await cards();
+		const options = await page.evaluate<string[]>("[...document.querySelectorAll('#runout option')].map((o) => o.value)");
+		const selected = await page.evaluate<string>("document.getElementById('runout').value");
+		await page.selectOption('#runout', options.find((v) => v !== selected)!);
+		await page.waitForFunction(`!document.querySelector('#explore .resolving') && document.querySelector('#explore .spot-line .mono').textContent !== ${JSON.stringify(before)}`, undefined, { timeout: 60_000 });
+		expect((await cards()).startsWith('Ks 9d 4c ')).toBe(true);
+		expect(await legend()).toContain('(33%)');
+		// Bet 33% on the turn: IP may raise 3×, which Lite's turn had not.
+		await page.click('#explore .step-into[data-action="1"]');
+		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.startsWith('IP')", undefined, { timeout: 20_000 });
+		expect(await legend()).toContain('Raise');
+		await page.click('#explore .crumb[data-trail="2"]');
+		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.startsWith('OOP')", undefined, { timeout: 20_000 });
+		// Check, check: the river comes, re-solved in full.
+		await page.click('#explore .step-into[data-action="0"]');
+		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.startsWith('IP')", undefined, { timeout: 20_000 });
+		await page.click('#explore .step-into[data-action="0"]');
+		await settled('River');
+		expect(await legend()).toContain('(33%)');
+		expect(await legend()).toContain('(100%)');
+		expect(await page.textContent('#explore')).toContain('River re-solved at your bet sizes');
+		// Back up the line, and down it again: the turn re-solved is kept, the river with it.
+		await page.click('#explore .crumb[data-trail="1"]');
+		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.startsWith('IP')", undefined, { timeout: 20_000 });
+		await page.click('#explore .crumb[data-trail="0"]');
+		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.includes('Flop')", undefined, { timeout: 20_000 });
+		await page.click('#explore .step-into[data-action="0"]');
+		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.startsWith('IP')", undefined, { timeout: 20_000 });
+		await page.click('#explore .step-into[data-action="0"]');
+		await settled('Turn');
+		expect(await legend()).toContain('(33%)');
+		expect(errors).toEqual([]);
+	});
+
 	it('makes room for Lite\'s sampling when the tree alone fits the limit', async (context) => {
 		if (!browser) return context.skip();
 		const page = await browser.newPage();

@@ -114,7 +114,7 @@ describe('coarse start', () => {
 	it('refuses a coarse spot that does not fit beside the real one under maxBytes', () => {
 		const spot = defineSpot(flop);
 		const tight = defineSpot({ ...flop, maxBytes: spot.estimate.bytes + 1024 });
-		expect(() => createRun(tight, { ...ONE, approximations: { coarseStart: { iterations: 5 } } })).toThrow(/maxBytes/);
+		expect(() => createRun(tight, { ...ONE, precision: 'f32', approximations: { coarseStart: { iterations: 5 } } })).toThrow(/maxBytes/);
 		// Room for both at 16 bits: the coarse spot drops to it rather than refuse.
 		const coarse = defineSpot({ ...flop, runoutBuckets: 3 });
 		const roomy = defineSpot({ ...flop, maxBytes: spot.estimate.bytes + coarse.estimate.compressedBytes + 1024 });
@@ -124,6 +124,78 @@ describe('coarse start', () => {
 		} finally {
 			run.close();
 		}
+	});
+
+	it('counts both runs\' sampling baselines in the coarse budget (issue #141)', () => {
+		const chanceSampling = { p: 0.5 };
+		const baselines = (config: SpotConfig): number => {
+			const probe = createRun(defineSpot(config), { ...ONE, precision: 'f32', approximations: { chanceSampling } });
+			const bytes = probe.solver.ctx.sampling!.bytes;
+			probe.close();
+			return bytes;
+		};
+		const spot = defineSpot(flop);
+		const coarse = defineSpot({ ...flop, runoutBuckets: 3 });
+		const main = baselines(flop);
+		const own = baselines({ ...flop, runoutBuckets: 3 });
+		expect(main).toBeGreaterThan(0);
+		expect(own).toBeGreaterThan(0);
+		const start = (maxBytes: number, precision?: 'f32' | 'i16') => () => {
+			const run = createRun(defineSpot({ ...flop, maxBytes }), {
+				...ONE, precision, approximations: { chanceSampling, coarseStart: { iterations: 2 } },
+			});
+			run.close();
+		};
+		// The coarse storage fits beside the real storage, but not beside its baselines too.
+		expect(start(spot.estimate.compressedBytes + main + coarse.estimate.compressedBytes + 16, 'i16')).toThrow(/coarseStart/);
+		expect(start(spot.estimate.compressedBytes + main + coarse.estimate.compressedBytes + own + 16, 'i16')).not.toThrow();
+		expect(start(spot.estimate.bytes + coarse.estimate.bytes + own + 16, 'f32')).toThrow(/coarseStart/);
+		expect(start(spot.estimate.bytes + main + coarse.estimate.bytes + 16, 'f32')).toThrow(/coarseStart/);
+		// Room for everything at 32 bits.
+		expect(start(spot.estimate.bytes + main + coarse.estimate.bytes + own + 16, 'f32')).not.toThrow();
+		// Room for the coarse run only at 16 bits: the default drops to it.
+		expect(start(spot.estimate.bytes + main + coarse.estimate.compressedBytes + own + 16)).not.toThrow();
+		// Room for both only with the real run at 16 bits too (issue #148), baselines counted on each side.
+		expect(start(spot.estimate.compressedBytes + main + coarse.estimate.compressedBytes + own + 16)).not.toThrow();
+		expect(start(spot.estimate.compressedBytes + main + coarse.estimate.compressedBytes + 16)).toThrow(/coarseStart/);
+	});
+
+	it('drops a default real run to 16 bits where only that leaves room for the coarse run (issue #148)', () => {
+		const spot = defineSpot(flop);
+		const coarse = defineSpot({ ...flop, runoutBuckets: 3 });
+		// 32 bits fits the real run alone, but not with the coarse run beside it;
+		// the real run at 16 bits beside the coarse one at 16 bits does fit.
+		const maxBytes = spot.estimate.bytes + 1024;
+		expect(spot.estimate.compressedBytes + coarse.estimate.compressedBytes).toBeLessThanOrEqual(maxBytes);
+		expect(spot.estimate.bytes + coarse.estimate.compressedBytes).toBeGreaterThan(maxBytes);
+		const tight = defineSpot({ ...flop, maxBytes });
+		const coarseStart = { iterations: 2 };
+		const run = createRun(tight, { ...ONE, approximations: { coarseStart } });
+		try {
+			expect(run.solver.ctx.regretScale).not.toBeNull();
+			expect(run.totalIterations).toBe(2);
+		} finally {
+			run.close();
+		}
+		// An explicit 32 bits is kept, and refused.
+		expect(() => createRun(tight, { ...ONE, precision: 'f32', approximations: { coarseStart } })).toThrow(/coarseStart/);
+		// Where the real run fits at 32 bits beside its baselines but the coarse
+		// run does not fit even with both at 16 bits, the default is still refused.
+		const chanceSampling = { p: 0.5 };
+		const baselines = (config: SpotConfig): number => {
+			const probe = createRun(defineSpot(config), { ...ONE, precision: 'f32', approximations: { chanceSampling } });
+			const bytes = probe.solver.ctx.sampling!.bytes;
+			probe.close();
+			return bytes;
+		};
+		const near = defineSpot({ ...flop, runoutBuckets: 1 });
+		const main = baselines(flop);
+		const own = baselines({ ...flop, runoutBuckets: 1 });
+		const limit = spot.estimate.bytes + main + 16;
+		expect(spot.estimate.compressedBytes + main + near.estimate.compressedBytes + own).toBeGreaterThan(limit);
+		expect(() => createRun(defineSpot({ ...flop, maxBytes: limit }), {
+			...ONE, approximations: { chanceSampling, coarseStart: { iterations: 2, runoutBuckets: 1 } },
+		})).toThrow(/coarseStart/);
 	});
 
 	it('counts the coarse solve in solve()\'s elapsed time', () => {
