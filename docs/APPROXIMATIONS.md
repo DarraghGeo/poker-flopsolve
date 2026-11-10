@@ -541,6 +541,28 @@ subgame pot as `keepLines` gives them, plain sharing 3.05 / 2.15):
 - Keeping the top 3 lines but continuing from the picking solve
   rather than from cold: 1.66 / 0.89, against 1.10 / 0.83.
 
+## Other DCFR schedules under Lite (#133)
+
+Faster-converging update rules were tried for `solveLite` (issue #133): DCFR+ (Xu et al., IJCAI 2024: DCFR's discounts with regrets floored at zero, which they found fastest on large poker games), and α and γ other than 1.5 and 3. None is offered: none settles sooner, and the one that helps does not help speed. Rainbow As Kh 7d, `solveLite`'s blueprint on 4 threads in Node, scored by `bench/lite/measure.ts` against the unshared blueprint solved to 0.044% of pot. Root play loss is OOP's root mix / IP's after a check, in % of pot at the reference's per-action values; the default stop is `settle`'s 20 iterations, 1%, twice:
+
+| rule | settled at | root play loss there | at 400 it: loss, own-game exploitability |
+|---|---|---|---|
+| α 1.5, γ 3 (today) | 400 it | 0.0227 / 0.0140 | 0.0227 / 0.0140, 3.17% |
+| DCFR+ (floor), γ 3 | 480 | 0.0291 / 0.0208 | 0.0366 / 0.0235, 3.50% |
+| DCFR+, γ 4 | 480 | 0.0266 / 0.0197 | 0.0333 / 0.0220, 3.47% |
+| DCFR+, γ 2 | 480 | 0.0348 / 0.0237 | 0.0440 / 0.0276, 3.62% |
+| α 2 | 460 | 0.0293 / 0.0154 | 0.0348 / 0.0172, 3.45% |
+| α 1 (linear) | 540 | 0.0376 / 0.0260 | 0.0426 / 0.0363, 4.12% |
+| γ 2 | 420 | 0.0260 / 0.0154 | 0.0276 / 0.0160, 3.24% |
+| γ 4 | 400 | 0.0207 / 0.0134 | same, 3.15% |
+| γ 5 | 400 | 0.0196 / 0.0131 | same, 3.16% |
+| γ 6 | 400 | 0.0189 / 0.0130 | same, 3.17% |
+| γ 8 | 400 | 0.0180 / 0.0128 | same, 3.20% |
+
+Under chance sampling, floored regrets and a different α only slowed it down. Each of those settled 60–140 iterations later, and was worse at the same count. A larger γ weights recent iterations more, so the average sheds the noisy early ones sooner. Root play improves with it, per-hand root EVs too (γ 8: mean error 0.40 / 0.42% of pot, against 0.42 / 0.46). But the stop fires at the same 400 iterations, so nothing is faster. Stopping γ 8 earlier, where its root play matches today's (350 iterations, 0.0211 / 0.0134), would cost own-game exploitability: 3.37% against 3.17%. So a larger γ is a quality option at equal time, not a speed-up. Predictive variants (PCFR+, PDCFR+) were not built: they keep a prediction beside every regret, a third more storage, and DCFR+ was the best of Xu et al.'s rules on large poker.
+
+The plumbing is in this repository's history at commit `f801432`: `setDcfrRule` in src/cfr.ts, a `setRule` export in the engine (the sampling catch-up and every regret floor included), and `measure.ts` variants `alpha=`, `gamma=` and `floor`. `bench/rule/` keeps the logs.
+
 ## Removed before 0.5.0 (#125)
 
 Three options shipped on `staging` during 0.5.0's development, were deprecated by issue #115, and were removed before the release, so no published version has them. The implementations are in this repository's history at commit `3c98470`.
