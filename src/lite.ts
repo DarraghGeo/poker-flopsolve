@@ -22,6 +22,7 @@ import { presetChanges, samplingNote } from './presets.ts';
 import type { ResolvedSubgame, ResolveOptions } from './resolve.ts';
 import { resolveSubgame } from './resolve.ts';
 import type { SettleOptions } from './settle.ts';
+import { settlePlan } from './settle.ts';
 import type { BetSize, PerPlayer, RaiseSizes } from './tree.ts';
 import { mapPlayers, perRound, raisesPerRound } from './tree.ts';
 
@@ -71,7 +72,7 @@ export interface SolveLiteOptions
 		Pick<SolveOptions, 'workers' | 'precision' | 'wasmStorage' | 'algorithm' | 'onProgress' | 'targetPercent'> {
 	/** Iteration cap. Default 2000; the solve normally settles well before. */
 	readonly iterations?: number;
-	/** The stop on the root play (`SolveOptions.settle`); false to run to `iterations`. Default {}, its own defaults; with `keepBudget`, tolerance 0.005 unless given. */
+	/** The stop on the root play (`SolveOptions.settle`); false to run to `iterations`. Default {}, its own defaults; tolerance 0.005 unless given when `keepBudget` keeps lines. */
 	readonly settle?: SettleOptions | false;
 	/**
 	 * `Approximations.chanceSampling` for the blueprint, or false for none.
@@ -86,8 +87,8 @@ export interface SolveLiteOptions
 	 * turn re-solves: on issue #47's flops it cut their gain by a third to a
 	 * half at the settle point, more when run longer, root play unchanged.
 	 * 150 MiB with `precision: 'i16'` and `wasmStorage` kept 3–19 lines and
-	 * peaked at 317–534 MiB in Chromium, re-solve included. With it, `settle`
-	 * stops later: its tolerance defaults to 0.005, not 0.01, as the kept
+	 * peaked at 317–534 MiB in Chromium, re-solve included. When it keeps a
+	 * line, `settle` stops later: its tolerance defaults to 0.005, not 0.01, as the kept
 	 * lines' turn ranges go on improving after the root play settles (issue
 	 * #123); give `settle.tolerance` to choose. Throws if the shared
 	 * blueprint alone is over the budget, or if it shares nothing. Unset,
@@ -300,11 +301,12 @@ function nearest(row: readonly BetSize[], target: number): BetSize[] {
  *
  * At the old stop, on 1 / 2 / 4 threads in Chromium, As Kh 7d took 123 / 61
  * / 35 s and peaked at 489 / 509 / 534 MiB, Ts 9s 4h 69 / 37 / 22 s and 437
- * / 463 / 469, Ks 9s 4s 32 / 19 / 11 s and 290 / 301 / 317; the later stop
- * adds a quarter to a third to the time, the same peak.
+ * / 463 / 469, Ks 9s 4s 32 / 19 / 11 s and 290 / 301 / 317; on 4 threads
+ * the later stop adds 16–32% to the time in Chromium (25–31% in Node), the
+ * same peak.
  *
  * Root play is as without it; the re-solve gain falls by a third to a half
- * at the old stop, and the later one takes off 15–34% more for out of
+ * at the old stop, and the later one takes off 15–28% more for out of
  * position, 3–34% for in position, still over the unshared blueprint's
  * 0.4–0.7. The rest is still the stop: the root play settles before the
  * ranges it brings to the turn do. A stop that also waited for the kept
@@ -372,12 +374,13 @@ const KEEP_TOLERANCE = 0.005;
 /**
  * What {@link solveLite} solves, without solving it: `liteConfig`'s
  * blueprint, the solve's settings (`iterations` 2000, `settle` at its
- * defaults, `chanceSampling` at p 0.35, and the solve options given), and a
+ * defaults, or tolerance 0.005 when `keepBudget` keeps lines, `chanceSampling`
+ * at p 0.35, and the solve options given), and a
  * report of everything changed against `config`. With `keepBudget` it
  * does solve: the short picking solve `keepWithin` ranks lines on, whose
  * kept lines are in the blueprint and the report. For a page that steps its
  * own run: `createRun(defineSpot(preset.config), preset.options)`, with
- * `trackSettle` for the stop, and `resolveSubgame` with `bettingFrom(config,
+ * `trackSettle(preset.options.settle)` for the stop, and `resolveSubgame` with `bettingFrom(config,
  * round)` for the re-solves `LiteSolution.resolve` would make.
  */
 export function litePreset(config: SpotConfig, options: SolveLiteOptions = {}): LitePreset {
@@ -386,9 +389,11 @@ export function litePreset(config: SpotConfig, options: SolveLiteOptions = {}): 
 	const asked = options.settle === undefined ? {} : options.settle;
 	// Kept lines bring better turn ranges, but only once the solve runs past
 	// the root play's settling (issue #123): a later stop unless asked otherwise.
-	const settle = asked && options.keepBudget !== undefined && asked.tolerance === undefined
-		? { ...asked, tolerance: KEEP_TOLERANCE }
-		: asked;
+	const share = blueprint.shareHistories;
+	const keeps = options.keepBudget !== undefined && typeof share === 'object' && (share.keepLines?.length ?? 0) > 0;
+	const settle = asked && keeps && asked.tolerance === undefined ? { ...asked, tolerance: KEEP_TOLERANCE } : asked;
+	// Validated before the report reads it.
+	const tolerance = settle ? settlePlan(settle).tolerance : 0;
 	const solveOptions: SolveOptions = {
 		iterations: options.iterations ?? 2000,
 		...(settle ? { settle } : {}),
@@ -434,7 +439,6 @@ export function litePreset(config: SpotConfig, options: SolveLiteOptions = {}): 
 	}
 	if (sampling) change('approximations.chanceSampling', undefined, sampling, samplingNote(sampling));
 	if (settle) {
-		const tolerance = settle.tolerance ?? 0.01;
 		change('settle', undefined, settle, `stops once the root play moves under ${+(100 * tolerance).toFixed(2)}% of the range between checks, not at an exploitability target${settle === asked ? '' : ' (later than its default, for the kept lines\' turn ranges)'}`);
 	}
 	return { config: blueprint, options: solveOptions, changes: presetChanges(config, blueprint, settings, notes) };

@@ -766,7 +766,7 @@ const turn = lite.resolve(node, board, { player: 0, iterations: 300 });
 `lite.changes` says what the blueprint cut from your betting and what it switched on (see
 [The presets](#the-presets)). `litePreset(spot)` returns the blueprint spot, the solve settings and
 that report without solving, for a page that steps its own run; `liteConfig(spot)` returns the spot
-alone. `trackSettle()` gives the same stop for such a loop. Lite is a shared blueprint, so it
+alone. `trackSettle(preset.options.settle)` gives the same stop for such a loop. Lite is a shared blueprint, so it
 never reaches an exploitability target: it plateaus a few percent of the pot from
 equilibrium while its first decisions go on settling (issue #85). `SolveOptions.settle`
 is the stop. Every 20 iterations it reads the average strategy at the root and at in
@@ -826,7 +826,7 @@ Measured the same way on 4 threads, the ranking included in the time:
 | Ks 9s 4s | all 19 | 460 it, 13 s | 315 MiB | 0.056 / 0.031 | 1.8 / 1.2 | 11 s; 2.5 / 1.9 |
 
 The root play is unchanged, and keeping lines cuts the re-solve gain by a third to a half; the
-later stop takes off 15–34% more for a quarter to a third more time. What is left is still the
+later stop takes off 15–28% more for out of position (3–34% in position) for 16–32% more time. What is left is still the
 stop: the root settles before the ranges reaching the turn do. A stop that also watched the kept
 lines' turn ranges did no better than a tighter root tolerance; `settle: { tolerance: 0.0035 }`
 re-solves at 1.6 / 1.3, 1.4 / 1.2 and 1.5 / 1.0 for 39–51% more time than 0.01. Run longer with

@@ -20,9 +20,10 @@
  * - `root e:t:p`: `settle` as it is, every `e`, tolerance `t`, patience `p`;
  * - `turn e:t:p/max|mean`: the turn ranges' movement over `e` iterations,
  *   per line and player the total variation of the normalised range; the
- *   largest over lines and players (`max`), or the mean over lines weighted
- *   by how often each is reached, the larger player (`mean`). The root rule
- *   at its defaults must also hold.
+ *   largest over lines reached at least 5% of the time and players (`max`),
+ *   or the mean over lines weighted by how often each is reached, the larger
+ *   player (`mean`). It stops at the first such still check, `p` running,
+ *   at or after the root rule at its defaults stops.
  *
  * Writes `bench/lite/out/turn-stop/<board>-<workers>t.json`.
  */
@@ -182,13 +183,14 @@ interface Hit {
 const at = (i: number): number => (i + 1) * STEP;
 const gainAt = (iterations: number): [number, number] | null => checkpoints.find((c) => c.iterations >= iterations)?.gain ?? null;
 /** First check index where `moved(i)` held `patience` times running on checks `every` apart. */
-function stopOf(every: number, patience: number, still: (i: number, lag: number) => boolean): number {
+function stopOf(every: number, patience: number, still: (i: number, lag: number) => boolean, from = 0): number {
 	let count = 0;
 	const lag = every / STEP;
 	for (let i = lag; i < plays.length; i++) {
 		if (at(i) % every !== 0 || at(i) < 2 * every) continue;
 		count = still(i, lag) ? count + 1 : 0;
-		if (count >= patience) return i;
+		// Still checks before `from` count toward patience, as `settle` would have seen them.
+		if (count >= patience && i >= from) return i;
 	}
 	return -1;
 }
@@ -197,25 +199,25 @@ const hit = (rule: string, i: number): Hit =>
 const rootStill = (tol: number) => (i: number, lag: number): boolean => rootPlayMovement(plays[i - lag], plays[i]) <= tol;
 const rules: Hit[] = [];
 for (const tol of [0.01, 0.005, 0.0035, 0.0025]) for (const patience of [2, 3]) rules.push(hit(`root 20:${tol}:${patience}`, stopOf(20, patience, rootStill(tol))));
-for (const min of [500, 600, 800]) {
+for (const min of [500, 600]) {
 	const i = stopOf(20, 2, (j, lag) => at(j) >= min && rootStill(0.01)(j, lag));
 	rules.push(hit(`root 20:0.01:2 min ${min}`, i));
 }
-const turnMax = (i: number, lag: number): number => Math.max(0, ...turnMovement(turns[i - lag], turns[i]).flat());
+// Lines reached under 5% of the time move mostly by sampling noise, so `max` leaves them out.
+const turnMax = (i: number, lag: number): number =>
+	Math.max(0, ...turnMovement(turns[i - lag], turns[i]).flatMap((pair, l) => (turns[i].shares[l] >= 0.05 ? pair : [])));
 const turnMean = (i: number, lag: number): number => {
 	const moved = turnMovement(turns[i - lag], turns[i]);
 	const shares = turns[i].shares;
 	const mass = shares.reduce((s, x) => s + x, 0);
 	return moved.reduce((s, pair, l) => s + shares[l] * Math.max(...pair), 0) / (mass || 1);
 };
+// The root rule at its defaults stops first; from there the turn ranges must stay still too.
+const rootStop = stopOf(20, 2, rootStill(0.01));
 for (const every of [20, 40]) {
 	for (const tol of [0.02, 0.015, 0.01, 0.0075, 0.005]) {
 		for (const [name, measure] of [['max', turnMax], ['mean', turnMean]] as const) {
-			const i = stopOf(every, 2, (j, lag) => {
-				// The root rule at its defaults, over its own 20 iterations, must hold too.
-				const rootLag = 20 / STEP;
-				return j >= rootLag && rootStill(0.01)(j, rootLag) && measure(j, lag) <= tol;
-			});
+			const i = rootStop < 0 ? -1 : stopOf(every, 2, (j, lag) => measure(j, lag) <= tol, rootStop);
 			rules.push(hit(`turn ${every}:${tol}:2/${name}`, i));
 		}
 	}

@@ -23,7 +23,7 @@ The first beta of 0.5.0, published under npm's `beta` tag (`npm install poker-fl
   bits cut a turn re-solve's best-response gain by a third to a half, root play unchanged.
   With a budget, `settle`'s tolerance defaults to 0.005, not 0.01 (#123): the kept lines' turn
   ranges go on improving after the root play settles, and stopping later cut the re-solve gain by
-  15–34% more for a quarter to a third more time.
+  15–28% more for out of position (3–34% in position) for 16–32% more time on 4 threads.
 
 ### New opt-ins since 0.4.1
 
