@@ -124,8 +124,8 @@ describe('currentProfileEv', () => {
 				// The pre-#35 computation, which `ev` used to call directly.
 				const reference = plain.run.solver.expectedValue();
 				for (const player of [0, 1] as const) {
-					expect(plain.solution.ev(player)).toBe(reference[player]);
-					expect(off.solution.ev(player)).toBe(reference[player]);
+					expect(plain.solution.evChips(player)).toBe(reference[player]);
+					expect(off.solution.evChips(player)).toBe(reference[player]);
 				}
 			} finally {
 				plain.run.close();

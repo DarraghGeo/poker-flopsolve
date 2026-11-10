@@ -20,7 +20,9 @@ import { createRun, defineSpot } from '../src/index.ts';
 import { SPOTS } from './regression-spots.ts';
 
 /**
- * [ev OOP, ev IP, exploitability % of pot]. Re-recorded when DCFR's schedule
+ * [evChips OOP, evChips IP, exploitability % of pot]: chip EVs on the
+ * half-pot baseline, which `ev`'s share of the pot (issue #130) is computed
+ * from. Re-recorded when DCFR's schedule
  * changed (positive regret counted from the second iteration, γ 3): a
  * deliberate change of algorithm, not of arithmetic. Re-recorded again when
  * vectors moved to hand space: the same arithmetic summed in another order.
@@ -55,7 +57,7 @@ describe('regression', () => {
 			try {
 				run.step(iterations);
 				const solution = run.snapshot();
-				const got = [solution.ev(0), solution.ev(1), run.exploitabilityPercent()];
+				const got = [solution.evChips(0), solution.evChips(1), run.exploitabilityPercent()];
 				const want = GOLDEN[name];
 				for (let i = 0; i < 3; i++) {
 					const scale = Math.max(1, Math.abs(want[i]));

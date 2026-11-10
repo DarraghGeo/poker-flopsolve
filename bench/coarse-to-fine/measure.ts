@@ -35,7 +35,7 @@ export interface PlayerError {
  * `valuesAt` gives counterfactual values; dividing by the opponent's mass the
  * combination does not block (times the runouts each matchup is dealt over)
  * gives chips per hand. Weighted by that same mass these average back to
- * `Solution.ev` exactly.
+ * `Solution.evChips` exactly.
  */
 export function rootEvs(run: SolveRun): RootEvs {
 	const { spot, solver } = run;

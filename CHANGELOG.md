@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+Not in 0.5.0-beta.0, which was already published: this lands in the next beta or in 0.5.0.
+
+### Changed: EV is a percentage of the pot (issue #130) — breaking
+
+- `Solution.ev(player)` and `Solution.handEvs(player)` now report the player's **share of the
+  pot, in percent**, instead of chips against a half-pot baseline. Folding (or losing every
+  showdown) is 0%, winning the pot uncontested is 100%, and `ev(0) + ev(1)` is 100. On Ks 9d 4c
+  with a 60 pot, `12.5 / −12.5` chips now reads `70.8 / 29.2`%.
+- The pot is the spot's starting pot (`SpotConfig.pot`), exposed as `Solution.evPot`. Convert
+  back with **old chips = `pct / 100 × pot − pot / 2`**, or read `Solution.evChips(player)`
+  and `Solution.handEvsChips(player)`, which return the old numbers.
+- New `SpotConfig.evPot` (default `pot`). `Solution.subgameAt` sets it to the original spot's,
+  so `resolveSubgame` and `LiteSolution.resolve` (nested too) report in % of the **original
+  flop pot**: values read the same way down a hand, and folding at a subgame's root reads below
+  0 (the chips put in on earlier streets). For those, convert with the flop pot, `evPot`.
+- Applies to the presets' solutions (`solveLite`, `largeTree`), subgame solutions, the CLI and
+  the UI readout, which now show `%`.
+- Unchanged, still chips on the half-pot baseline: `Solver.valuesAt`, `pairValuesAt`,
+  `rootValues`, `handEvs` on the `Solver`, regrets, `ResolvedSubgame.alternative` / `entered`,
+  and `exploitability()` (`exploitabilityPercent()` stays % of the spot's own pot).
+- napkinpoker: `tools/bench/flopsolve/flop-vs-pfrs.mjs` reads `ev()` and needs `evChips()` to
+  keep its chip numbers, or a `%` label; `src/villain/flopsolve-villain.js` reads `valuesAt`,
+  which is unchanged.
+
 ## 0.5.0-beta.0
 
 The first beta of 0.5.0, published under npm's `beta` tag (`npm install poker-flopsolve@beta`); `latest` stays 0.4.1 until 0.5.0. A minor release. Every approximation below is opt-in and off by default. The README's

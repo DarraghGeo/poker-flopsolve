@@ -47,7 +47,7 @@ describe('the clairvoyance game', () => {
 
 		// Measured against the pot, the only unit comparable across bet sizes.
 		expect(sol.exploitabilityPercent()).toBeLessThan(0.01);
-		expect(sol.ev(0) + sol.ev(1)).toBeCloseTo(0, 9);
+		expect(sol.ev(0) + sol.ev(1)).toBeCloseTo(100, 9);
 
 		// The caller defends exactly often enough to make bluffing break even.
 		const facingBet = spot.tree.decisionNodes.find((n) => sol.path(n).startsWith('allin') || sol.path(n).startsWith('bet'));
@@ -81,12 +81,14 @@ describe('the clairvoyance game', () => {
 		const defence = 1 / (1 + fraction);
 
 		// Three nut combinations (one jack is on the board) against four air.
-		// Air is indifferent, so it is worth exactly the half-pot it forfeits.
-		const nuts = (1 - defence) * (pot / 2) + defence * (pot / 2 + bet);
-		const expected = (3 / 7) * nuts + (4 / 7) * -(pot / 2);
+		// Air is indifferent, so it is worth exactly what folding is: nothing.
+		const nuts = (1 - defence) * pot + defence * (pot + bet);
+		const expected = (3 / 7) * nuts + (4 / 7) * 0;
 
 		const sol = solve(clairvoyance(fraction), { iterations: 6000 });
-		expect(sol.ev(0)).toBeCloseTo(expected, 2);
+		// A share of the pot, in percent.
+		expect(sol.ev(0)).toBeCloseTo((100 * expected) / pot, 1);
+		expect(sol.evChips(0)).toBeCloseTo(expected - pot / 2, 2);
 	});
 
 	it.each(['dcfr', 'cfr+'] as const)('is solved with 16-bit storage under %s', (algorithm) => {
@@ -132,7 +134,8 @@ describe('solver invariants', () => {
 
 	it('is zero sum and converges', () => {
 		const sol = solve(spot(), { iterations: 400, exploitEvery: 100 });
-		expect(sol.ev(0) + sol.ev(1)).toBeCloseTo(0, 9);
+		expect(sol.ev(0) + sol.ev(1)).toBeCloseTo(100, 9);
+		expect(sol.evChips(0) + sol.evChips(1)).toBeCloseTo(0, 9);
 		expect(sol.exploitabilityPercent()).toBeLessThan(1);
 		expect(sol.exploitability()).toBeGreaterThanOrEqual(-1e-12);
 		// Exploitability must not climb as iterations accumulate.
@@ -262,8 +265,9 @@ describe('normalisation across entry points', () => {
 			maxRaises: 0,  // nobody can bet, so it is a pure showdown
 		});
 		const sol = solve(spot, { iterations: 20 });
-		expect(sol.ev(0)).toBeCloseTo(pot / 2, 6);
-		expect(sol.ev(1)).toBeCloseTo(-pot / 2, 6);
+		expect(sol.ev(0)).toBeCloseTo(100, 6);
+		expect(sol.ev(1)).toBeCloseTo(0, 6);
+		expect(sol.evChips(0)).toBeCloseTo(pot / 2, 6);
 	});
 
 	it('keeps the expected value inside what can actually be won', () => {
@@ -281,9 +285,11 @@ describe('normalisation across entry points', () => {
 			{ iterations: 60 },
 		);
 		// The most anyone can win is the dead pot plus a full stack.
-		expect(Math.abs(sol.ev(0))).toBeLessThanOrEqual(pot / 2 + stack);
+		expect(Math.abs(sol.evChips(0))).toBeLessThanOrEqual(pot / 2 + stack);
 		// And on a board like this, with similar ranges, it should be small.
-		expect(Math.abs(sol.ev(0))).toBeLessThan(pot / 2);
+		expect(Math.abs(sol.evChips(0))).toBeLessThan(pot / 2);
+		expect(sol.ev(0)).toBeGreaterThan(0);
+		expect(sol.ev(0)).toBeLessThan(100);
 	});
 });
 

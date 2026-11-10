@@ -85,7 +85,7 @@ for (;;) {
 	next = t < 12 ? t + 1 : Math.ceil(t * 1.08);
 }
 const snap = run.snapshot();
-console.log(`check: exploit ${snap.exploitabilityPercent().toFixed(4)}% ev0 ${snap.ev(0).toFixed(3)} ev1 ${snap.ev(1).toFixed(3)}`);
+console.log(`check: exploit ${snap.exploitabilityPercent().toFixed(4)}% ev0 ${snap.ev(0).toFixed(3)}% ev1 ${snap.ev(1).toFixed(3)}% of pot`);
 run.close();
 
 writeFileSync(

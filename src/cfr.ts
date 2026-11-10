@@ -1797,21 +1797,29 @@ export interface Solver {
 	 * One root pass per player under the average profile (`Mode.Average`) or
 	 * the current one (`Mode.Current`): each player's chips per hand, as
 	 * `expectedValue` gives them for the average, and a copy of their root
-	 * counterfactual values, one per hand of their root active list.
+	 * counterfactual values, one per hand of their root active list. In chips
+	 * against a baseline where each player owns half the pot, unlike
+	 * `Solution.ev`'s share of the pot.
 	 */
 	rootValues(mode: typeof Mode.Average | typeof Mode.Current): RootValues;
 	/**
 	 * Root EV in chips for each combination, indexed like `COMBO_CARDS`, from
 	 * root counterfactual values `rootValues` returned for `player`: each
 	 * hand's value over the opponent mass it can be dealt against. Zero for a
-	 * combination off the root list or with no opponent hand to face.
+	 * combination off the root list or with no opponent hand to face. Chips
+	 * are on the traversal's baseline, each player owning half the pot;
+	 * `unit` converts each hand that has an EV (as `Solution.handEvs` does to
+	 * a share of the pot), and the zeros stay zero.
 	 */
-	handEvs(player: 0 | 1, values: Float64Array): Float64Array;
+	handEvs(player: 0 | 1, values: Float64Array, unit?: (chips: number) => number): Float64Array;
 	exploitability(): number;
 	averageStrategyAt(node: number, board: number): { actions: number; probs: Float64Array };
 	/**
 	 * Counterfactual values under the average strategy from any node, for
-	 * reach vectors the caller supplies. Returns a fresh copy.
+	 * reach vectors the caller supplies. Returns a fresh copy. In chips,
+	 * against a baseline where each player owns half the pot (folding is
+	 * −pot/2), as the traversal and its regrets are; not `Solution.ev`'s
+	 * share of the pot.
 	 */
 	valuesAt(
 		node: number,
@@ -1831,7 +1839,8 @@ export interface Solver {
 	 * Counterfactual values under the average strategy from any node against
 	 * each of `hands` alone, at the reach given for it: the same as `valuesAt`
 	 * with a one-hot opponent reach, for many opposing hands in one walk.
-	 * Returns `hands.length * COMBOS` values, one row per opposing hand.
+	 * Returns `hands.length * COMBOS` values, one row per opposing hand. In
+	 * chips on `valuesAt`'s half-pot baseline.
 	 */
 	pairValuesAt(
 		node: number,
@@ -1939,7 +1948,7 @@ export function makeSolver(ctx: Context): Solver {
 			const [total1, values1] = one(1);
 			return { totals: [total0, total1], values: [values0, values1] };
 		},
-		handEvs(player, values) {
+		handEvs(player, values, unit = (chips) => chips) {
 			const opponent = ctx.players[1 - player];
 			const evs = new Float64Array(COMBOS);
 			const [from, count] = listOf(0, 0, player);
@@ -1964,7 +1973,7 @@ export function makeSolver(ctx: Context): Solver {
 						const d = COMBO_CARDS[other * 2 + 1];
 						if (c !== a && c !== b && d !== a && d !== b) mass += opponent.weights[other];
 					}
-					evs[combo] = mass > 0 ? values[i] / (mass * scale) : 0;
+					evs[combo] = mass > 0 ? unit(values[i] / (mass * scale)) : 0;
 				}
 			}
 			return evs;
