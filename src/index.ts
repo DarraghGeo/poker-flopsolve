@@ -32,7 +32,7 @@ import { betRows, DEFAULT_CHIP_SCALE, treeConfig } from './betting.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
 import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit } from './platform/node.ts';
-import type { CompactPlan, Context, PlayerIndex, RegretStore, RootValues, SamplingOptions, Solver, SumStore } from './cfr.ts';
+import type { CompactPlan, Context, Layout, PlayerIndex, RegretStore, RootValues, SamplingOptions, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
@@ -757,7 +757,8 @@ export interface SolveOptions {
 	readonly onProgress?: (info: Progress) => void;
 	/**
 	 * Accumulator storage. Unset, 'f32' — what the WebAssembly engine runs —
-	 * or 'i16' for a spot too big for it under `maxBytes`. 'f64' is there on
+	 * or 'i16' for a spot too big for it under `maxBytes` (beside chance
+	 * sampling's baselines, when `approximations.chanceSampling` is on). 'f64' is there on
 	 * request and runs the JavaScript engine; measured, it buys no accuracy
 	 * an exploitability target can see.
 	 *
@@ -1215,16 +1216,13 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		if (clash) throw new Error(`compactStorage does not combine with ${clash}`);
 	}
 	// With compact storage, `precision` is that of the rounds before `compactStorage.from`.
-	const precision: Precision = compact
+	const defaulted = !compact && !options.analysisOnly && options.precision === undefined;
+	let precision: Precision = compact
 		? options.precision ?? 'f32'
 		: options.analysisOnly
 		? 'f32'
 		: options.precision ??
 			(bytes <= maxBytes ? 'f32' : 'i16');
-
-	// Planned before anything is allocated, so a bad option or a coarse spot
-	// that does not fit fails here; solved only once the real run exists.
-	const coarsePlan = planCoarseStart(spot, options, precision, maxBytes);
 
 	// Hands neither player holds never carry reach, so they need no ranking.
 	const relevant = new Uint8Array(COMBOS);
@@ -1232,10 +1230,40 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 	const showdown = buildShowdownTable(spot.runouts, relevant);
-	const layout = buildLayout(
-		spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], spot.historyAlias, compact ?? undefined,
+	const layoutAt = (at: Precision): Layout => buildLayout(
+		spot.tree, spot.runouts, spot.players, PRECISION_BYTES[at], spot.historyAlias, compact ?? undefined,
 	);
+	let layout = layoutAt(precision);
 	const weights = runoutWeights(spot.runouts);
+	const active = buildActiveLists(spot.runouts, spot.players, showdown);
+	const hands = buildHandSpace(spot.runouts, spot.players, active);
+	const samplingOptions = options.approximations?.chanceSampling;
+	// The plan reads only the layout's blocks, which do not depend on precision.
+	const samplingPlan = samplingOptions ? planSampling(spot.tree, spot.runouts, active, layout, samplingOptions) : undefined;
+	// Measured as the precision choice measures storage: by the estimate at
+	// the precision chosen (16-bit storage by its own); with compact storage,
+	// which that estimate does not know, by the layout.
+	const storageAt = (at: Precision, of: Layout): number => compact
+		? of.bytes
+		: Math.max(at === 'i16' ? spot.estimate.compressedBytes : bytes, of.bytes);
+	const baselineBytes = samplingPlan ? samplingBytes(samplingPlan) : 0;
+	// A default 32-bit choice that fits alone but not beside the baselines
+	// falls back to 16 bits, as a spot too big for 32 bits does.
+	if (defaulted && precision === 'f32' && samplingPlan && storageAt('f32', layout) + baselineBytes > maxBytes) {
+		precision = 'i16';
+		layout = layoutAt(precision);
+	}
+	const storageBytes = storageAt(precision, layout);
+	if (samplingPlan && storageBytes + baselineBytes > maxBytes) {
+		throw new Error(
+			`chanceSampling needs ${Math.ceil(baselineBytes / 2 ** 20)} MiB of baselines beside ` +
+				`${Math.ceil(storageBytes / 2 ** 20)} MiB of storage, over maxBytes; sample fewer rounds or raise maxBytes`,
+		);
+	}
+
+	// Planned before anything is allocated, so a bad option or a coarse spot
+	// that does not fit fails here; solved only once the real run exists.
+	const coarsePlan = planCoarseStart(spot, options, precision, maxBytes);
 
 	// The WebAssembly engine, where it applies: 32-bit storage, or 16-bit and
 	// compact storage with `wasmStorage`, and a platform with WebAssembly
@@ -1245,7 +1273,6 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const wantsEngine =
 		options.engine !== 'js' && !options.analysisOnly && options.simd !== false &&
 		((precision === 'f32' && !compact) || storageEngine);
-	const samplingOptions = options.approximations?.chanceSampling;
 	const requested = resolveWorkers(options, wantsEngine);
 	const shards = requested > 1 ? planShards(spot.tree, spot.runouts, requested) : null;
 	// Threads sample the deals of their own runouts, below the split. A
@@ -1264,21 +1291,6 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	const width = PRECISION_BYTES[precision];
 	const quantised = precision === 'i16';
 
-	const active = buildActiveLists(spot.runouts, spot.players, showdown);
-	const hands = buildHandSpace(spot.runouts, spot.players, active);
-	const samplingPlan = samplingOptions ? planSampling(spot.tree, spot.runouts, active, layout, samplingOptions) : undefined;
-	// Measured as the precision choice above measures storage: by the estimate
-	// at the precision chosen (16-bit storage by its own); with compact
-	// storage, which that estimate does not know, by the layout.
-	const storageBytes = compact
-		? layout.bytes
-		: Math.max(quantised ? spot.estimate.compressedBytes : bytes, layout.bytes);
-	if (samplingPlan && storageBytes + samplingBytes(samplingPlan) > maxBytes) {
-		throw new Error(
-			`chanceSampling needs ${Math.ceil(samplingBytes(samplingPlan) / 2 ** 20)} MiB of baselines beside ` +
-				`${Math.ceil(storageBytes / 2 ** 20)} MiB of storage, over maxBytes; sample fewer rounds or raise maxBytes`,
-		);
-	}
 	// The engine owns the storage; the context sees it through views.
 	const engine = wantsEngine
 		? createEngine(

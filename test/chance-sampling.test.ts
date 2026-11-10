@@ -163,6 +163,28 @@ describe('chance sampling', () => {
 			}
 		});
 
+		it('falls back to 16 bits by default when 32-bit storage fits but not beside the baselines (issue #139)', () => {
+			const spot = defineSpot(flop);
+			const probe = createRun(spot, { workers: 1, precision: 'i16', ...sampling({ p: 0.5 }) });
+			const baselines = probe.solver.ctx.sampling!.bytes;
+			probe.close();
+			// 32-bit storage fits on its own; beside the baselines only 16 bits does.
+			const maxBytes = spot.estimate.bytes + 16;
+			expect(spot.estimate.bytes + baselines).toBeGreaterThan(maxBytes);
+			expect(spot.estimate.compressedBytes + baselines).toBeLessThanOrEqual(maxBytes);
+			const tight = defineSpot({ ...flop, maxBytes });
+			for (const options of [{}, { wasmStorage }, { engine: 'js' as const }]) {
+				const run = createRun(tight, { workers: 1, ...options, ...sampling({ p: 0.5 }) });
+				expect(run.solver.ctx.regretScale).toBeTruthy();
+				run.step(2);
+				run.close();
+			}
+			// Without sampling the same spot keeps 32 bits.
+			const plain = createRun(tight, { workers: 1 });
+			expect(plain.solver.ctx.regretScale ?? null).toBeNull();
+			plain.close();
+		});
+
 		it('picks the same deals on the JavaScript engine as on the WebAssembly one', () => {
 			const options: SolveOptions = { precision: 'i16', ...sampling({ p: 0.4, rounds: [1, 2] }) };
 			const js = solveWith(flop, 3, { ...options, engine: 'js' });
