@@ -51,6 +51,7 @@
     "bench:kernels": "node --import tsx bin/kernels.ts",
     "bench:browser": "node --import tsx bin/bench-browser.ts",
     "bench:browser:threads": "node --import tsx bin/bench-browser-threads.ts",
+    "bench:lite": "node --import tsx bin/bench-lite-browser.ts",
     "bench:gpu": "node --import tsx bin/bench-gpu.ts",
     "build:wasm": "node --import tsx scripts/build-wasm.ts",
     "prepublishOnly": "npm run build",
