@@ -143,6 +143,41 @@ export interface Engine {
 	close(): void;
 	/** Threads doing the work, this one included. */
 	readonly threads: number;
+	/** With threads, where each traversal's time went (see `PROFILE`); null on one thread. */
+	readonly profile: Float64Array | null;
+}
+
+/**
+ * Slots of `Engine.profile`, milliseconds summed over every threaded
+ * traversal (issue #133): the main thread's walk above the split before
+ * the threads start (`collect`) and after they finish (`override`), its
+ * wait for the others, adding their partial values, and from `busy` on
+ * the time each thread spent walking boards, the main thread's first;
+ * `run` is the whole threaded traversal. A few clock reads a thread a
+ * traversal, so it is always on.
+ */
+export const PROFILE = { traversals: 0, collect: 1, override: 2, wait: 3, reduce: 4, run: 5, busy: 6 } as const;
+
+/** Each threaded run's profile, by the solver it runs for: read by benches, not part of the API. */
+export const threadProfiles = new WeakMap<object, Float64Array>();
+
+/** The split round's boards in the order threads take them, and each board's last walk time, per traverser. */
+export interface ScheduleViews {
+	readonly order: Int32Array;
+	readonly cost: Float64Array;
+}
+
+/** Bytes of a schedule for `boards` boards. */
+export function scheduleBytes(boards: number): number {
+	return Math.ceil(boards / 2) * 8 + 2 * boards * 8;
+}
+
+/** A schedule's views onto its buffer. */
+export function scheduleViews(buffer: SharedArrayBuffer, boards: number): ScheduleViews {
+	return {
+		order: new Int32Array(buffer, 0, boards),
+		cost: new Float64Array(buffer, Math.ceil(boards / 2) * 8, 2 * boards),
+	};
 }
 
 /** What an engine worker needs; see src/engine-worker.ts. */
@@ -152,11 +187,15 @@ export interface EngineWorkerSetup {
 	readonly header: number;
 	readonly maxActions: number;
 	readonly exchange: readonly [number, number, number, number];
-	readonly shard: readonly [number, number, number];
+	/** The split round and its number of boards. */
+	readonly shard: readonly [number, number];
 	readonly entryNodes: Int32Array;
 	readonly rootMe: number;
 	readonly rootOpp: number;
-	readonly partial: number;
+	/** Where each board's values for each entry go: `boards × entries` rows, board-major. */
+	readonly boardValues: number;
+	/** The boards' walking order and their last costs; see `scheduleViews`. */
+	readonly schedule: SharedArrayBuffer;
 	readonly stride: number;
 	readonly control: SharedArrayBuffer;
 	readonly settings: SharedArrayBuffer;
@@ -170,6 +209,8 @@ export interface EngineWorkerSetup {
 	 * and marks only its own runouts' deals.
 	 */
 	readonly sampling?: SamplingArgs;
+	/** `Engine.profile`'s buffer and this thread's slot in it. */
+	readonly profile: readonly [SharedArrayBuffer, number];
 }
 
 /** `EngineExports.setSampling`'s arguments, in order. */
@@ -186,7 +227,7 @@ const MAX_MEMORY = 0xffff0000;
  * once any thread's part of a step threw: the main thread waits in
  * `Atomics.wait` and so never sees a worker's error event while a step runs.
  */
-export const ENGINE_CONTROL = { generation: 0, done: 1, command: 2, mode: 3, traverser: 4, ready: 5, failed: 6, size: 8 } as const;
+export const ENGINE_CONTROL = { generation: 0, done: 1, command: 2, mode: 3, traverser: 4, ready: 5, failed: 6, next: 7, size: 8 } as const;
 
 /**
  * Lay a spot out in a fresh memory and instantiate the engine over it, or
@@ -275,7 +316,8 @@ export function createEngine(
 	const entryIndexOf = pool ? add(pool.plan.entryIndexOf) : -1;
 	const reach = pool ? add(null, entries * 2 * rowBytes) : -1;
 	const values = pool ? add(null, entries * rowBytes) : -1;
-	const partials = pool ? add(null, (threads - 1) * entries * rowBytes) : -1;
+	// Each board's values, apart, so their sum does not depend on which thread walked which.
+	const boardValues = pool ? add(null, pool.plan.boards * entries * rowBytes) : -1;
 	// Chance sampling, only when asked for.
 	const plan = input.sampling;
 	const sample = plan
@@ -427,6 +469,8 @@ export function createEngine(
 	// Threads: workers over the same memory, each with its own header.
 	let control: Int32Array | null = null;
 	let settings: Float64Array | null = null;
+	let profile: Float64Array | null = null;
+	let schedule: ScheduleViews | null = null;
 	const workers: { terminate(): void }[] = [];
 	let failure: Error | null = null;
 	if (pool) {
@@ -435,19 +479,25 @@ export function createEngine(
 		const settingsBuffer = new SharedArrayBuffer(8 * 8);
 		control = new Int32Array(controlBuffer);
 		settings = new Float64Array(settingsBuffer);
+		const profileBuffer = new SharedArrayBuffer(8 * (PROFILE.busy + threads));
+		profile = new Float64Array(profileBuffer);
+		const scheduleBuffer = new SharedArrayBuffer(scheduleBytes(plan.boards));
+		schedule = scheduleViews(scheduleBuffer, plan.boards);
+		for (let i = 0; i < plan.boards; i++) schedule.order[i] = i;
 		exports.setExchange(offsets[entryIndexOf], offsets[reach], offsets[values], stride);
 		for (let w = 1; w < threads; w++) {
 			const setup: EngineWorkerSetup = {
 				memory, module: compiledModule, header: offsets[own[w].header], maxActions,
 				exchange: [offsets[entryIndexOf], offsets[reach], offsets[values], stride],
-				shard: [plan.round, plan.bounds[w], plan.bounds[w + 1]],
+				shard: [plan.round, plan.boards],
 				entryNodes: plan.entryNodes,
 				rootMe: offsets[own[w].rootMe], rootOpp: offsets[own[w].rootOpp],
-				partial: offsets[partials] + (w - 1) * entries * rowBytes,
+				boardValues: offsets[boardValues], schedule: scheduleBuffer,
 				stride, control: controlBuffer, settings: settingsBuffer,
 				...(share ? { shared: [offsets[share.marks], offsets[share.blockOffset], weightedAt] as const } : {}),
 				...(stored ? { storage: true } : {}),
 				...(samplingArgs ? { sampling: samplingArgs } : {}),
+				profile: [profileBuffer, PROFILE.busy + w],
 			};
 			workers.push(pool.spawn(setup, (error) => {
 				failure ??= error;
@@ -530,27 +580,44 @@ export function createEngine(
 		positive: number, negative: number, sum: number, weight: number, clamp: number,
 	): number => {
 		const plan = pool!.plan;
+		const { order, cost } = schedule!;
+		const clock = performance.now();
 		// Collect: walk above the split, recording what the workers need.
 		exports.setShard(plan.round, 0, 0);
 		exports.setPhase(1, 0);
 		exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp);
-		// Every thread walks its slice of the split round.
+		const collected = performance.now();
+		// Costliest boards first, by what they took last time for this
+		// traverser, so the last boards anyone takes are the cheap ones.
+		const costs = cost.subarray(traverser * plan.boards, (traverser + 1) * plan.boards);
+		order.sort((a, b) => costs[b] - costs[a] || a - b);
+		// Every thread takes boards off the order until none are left.
 		settings!.set([positive, negative, sum, weight, clamp, apply, iteration, dcfrRule]);
 		Atomics.store(control!, ENGINE_CONTROL.done, 0);
+		Atomics.store(control!, ENGINE_CONTROL.next, 0);
 		Atomics.store(control!, ENGINE_CONTROL.mode, mode);
 		Atomics.store(control!, ENGINE_CONTROL.traverser, traverser);
 		Atomics.store(control!, ENGINE_CONTROL.command, 0);
 		Atomics.add(control!, ENGINE_CONTROL.generation, 1);
 		Atomics.notify(control!, ENGINE_CONTROL.generation);
 		const dispatched = performance.now();
-		exports.setShard(plan.round, plan.bounds[0], plan.bounds[1]);
 		exports.setPhase(0, apply);
-		const valueView = new Float32Array(memory.buffer, offsets[values], entries * stride);
-		for (let entry = 0; entry < entries; entry++) {
-			const slot = offsets[reach] + entry * 2 * rowBytes;
-			const out = exports.runChance(mode, traverser, plan.entryNodes[entry], slot, slot + rowBytes, positive, negative, sum, weight, clamp) >>> 0;
-			valueView.set(new Float32Array(memory.buffer, out, stride), entry * stride);
+		const heap = new Float32Array(memory.buffer);
+		const into = offsets[boardValues] >>> 2;
+		for (;;) {
+			const taken = Atomics.add(control!, ENGINE_CONTROL.next, 1);
+			if (taken >= plan.boards) break;
+			const board = order[taken];
+			exports.setShard(plan.round, board, board + 1);
+			const started = performance.now();
+			for (let entry = 0; entry < entries; entry++) {
+				const slot = offsets[reach] + entry * 2 * rowBytes;
+				const out = exports.runChance(mode, traverser, plan.entryNodes[entry], slot, slot + rowBytes, positive, negative, sum, weight, clamp) >>> 2;
+				heap.copyWithin(into + (board * entries + entry) * stride, out, out + stride);
+			}
+			costs[board] = performance.now() - started;
 		}
+		const walked = performance.now();
 		// A thread whose walk throws says so in `failed` and counts itself
 		// done, as its error event cannot reach this thread while it waits.
 		// One killed without unwinding does neither, hence the backstop.
@@ -559,10 +626,15 @@ export function createEngine(
 		);
 		const dead = failed();
 		if (dead) throw dead;
-		const partialView = new Float32Array(memory.buffer, offsets[partials], (threads - 1) * entries * stride);
-		for (let w = 0; w < threads - 1; w++) {
-			for (let i = 0; i < entries * stride; i++) valueView[i] += partialView[w * entries * stride + i];
+		const waited = performance.now();
+		// The boards' values summed in board order, whoever walked them.
+		const valueView = new Float32Array(memory.buffer, offsets[values], entries * stride);
+		valueView.fill(0);
+		for (let board = 0; board < plan.boards; board++) {
+			const rows = into + board * entries * stride;
+			for (let i = 0; i < entries * stride; i++) valueView[i] += heap[rows + i];
 		}
+		const reduced = performance.now();
 		// Finish above the split from the totals, now applying updates
 		// unless this is a current-profile read.
 		exports.setShard(plan.round, 0, 0);
@@ -570,6 +642,15 @@ export function createEngine(
 		const at = exports.run(mode, traverser, offsets[own[0].rootMe], offsets[own[0].rootOpp], positive, negative, sum, weight, clamp) >>> 0;
 		exports.setPhase(0, 1);
 		exports.setShard(-1, 0, 0);
+		const p = profile!;
+		const finished = performance.now();
+		p[PROFILE.traversals]++;
+		p[PROFILE.collect] += collected - clock;
+		p[PROFILE.busy] += walked - dispatched;
+		p[PROFILE.wait] += waited - walked;
+		p[PROFILE.reduce] += reduced - waited;
+		p[PROFILE.override] += finished - reduced;
+		p[PROFILE.run] += finished - clock;
 		return at;
 	};
 
@@ -582,6 +663,7 @@ export function createEngine(
 		sampling: samplingViews,
 		discounted,
 		threads,
+		profile,
 		root(dcfr) {
 			return (mode, traverser, iterWeight) => run(mode, traverser, iterWeight, dcfr);
 		},
