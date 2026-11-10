@@ -28,8 +28,24 @@ import {
 	TOTAL_COMBOS,
 } from './lib/hands.ts';
 import { RANGE_PRESETS } from './lib/ranges.ts';
-import type { Settings, SizeKey } from './lib/settings.ts';
-import { configOf, ITERATION_CAP, readSettings, SIZE_PRESETS, TARGETS, writeSettings } from './lib/settings.ts';
+import type { Settings } from './lib/settings.ts';
+import { LITE_LIMITS } from './lib/lite.ts';
+import type { Mode } from './lib/settings.ts';
+import {
+	autoMemory,
+	BET_SIZES,
+	bettingLabel,
+	configOf,
+	ITERATION_CAP,
+	MAX_RAISES,
+	MAX_SIZES,
+	MEMORY_CAPS,
+	RAISE_SIZES,
+	readSettings,
+	TARGETS,
+	writeSettings,
+} from './lib/settings.ts';
+import type { NodeView } from './lib/explore.ts';
 import type { Inbound, Outbound, Phase, Report, Setup, SpotSummary } from './protocol.ts';
 
 // ---------------------------------------------------------------- helpers
@@ -105,6 +121,14 @@ const weights: [Float64Array, Float64Array] = [weightsOf(settings.oop), weightsO
 const grids: [Float64Array, Float64Array] = [cellsFromCombos(weights[0], COMBO_CARDS), cellsFromCombos(weights[1], COMBO_CARDS)];
 const cores = Math.max(1, navigator.hardwareConcurrency || 1);
 const isolated = window.crossOriginIsolated === true;
+const agent = navigator.userAgent;
+const deviceMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+/** iPads report a Mac; a touch screen gives them away. */
+const mobile = /Mobi|Android|iPhone|iPad/.test(agent) || (/Macintosh/.test(agent) && navigator.maxTouchPoints > 1);
+const autoMb = autoMemory({ deviceMemory, mobile });
+const mb = (n: number): string => formatBytes(n * 2 ** 20);
+// A shared link may ask for more memory than a phone can give.
+if (mobile && settings.memory > autoMb) settings = { ...settings, memory: 0 };
 // A shared link may ask for more threads than this machine has.
 if (settings.threads > cores) settings = { ...settings, threads: 0 };
 
@@ -384,7 +408,6 @@ $('clear-board').addEventListener('click', () => setBoard([]));
 
 const potInput = $<HTMLInputElement>('pot');
 const stackInput = $<HTMLInputElement>('stack');
-const raiseInput = $<HTMLInputElement>('raise');
 const allInInput = $<HTMLInputElement>('allin');
 
 function segmented<T>(id: string, options: readonly { value: T; label: string; disabled?: boolean }[], current: () => T, set: (value: T) => void): () => void {
@@ -412,11 +435,86 @@ function segmented<T>(id: string, options: readonly { value: T; label: string; d
 	return render;
 }
 
-segmented<SizeKey>(
-	'sizes',
-	(Object.keys(SIZE_PRESETS) as SizeKey[]).map((key) => ({ value: key, label: SIZE_PRESETS[key].label })),
-	() => settings.sizes,
-	(sizes) => update({ sizes }),
+/**
+ * Toggle buttons for a set of sizes, any mix of up to `MAX_SIZES`; `min` is
+ * how many must stay picked. A size past the limit is disabled until another
+ * is dropped.
+ */
+function sizePicker(id: string, offered: readonly number[], label: (size: number) => string, min: number, current: () => readonly number[], set: (sizes: number[]) => void): () => void {
+	const el = $(id);
+	el.setAttribute('role', 'group');
+	el.innerHTML = '';
+	const buttons = offered.map((size) => {
+		const button = document.createElement('button');
+		button.textContent = label(size);
+		button.addEventListener('click', () => {
+			const picked = current();
+			const next = picked.includes(size) ? picked.filter((s) => s !== size) : [...picked, size].sort((a, b) => a - b);
+			if (next.length < min || next.length > MAX_SIZES) return;
+			set(next);
+			render();
+		});
+		el.append(button);
+		return button;
+	});
+	const render = (): void => {
+		const picked = current();
+		buttons.forEach((button, i) => {
+			const on = picked.includes(offered[i]);
+			button.setAttribute('aria-pressed', String(on));
+			button.disabled = !on && picked.length >= MAX_SIZES;
+		});
+	};
+	render();
+	return render;
+}
+
+sizePicker('bets', BET_SIZES, (size) => `${Math.round(size * 100)}%`, 1, () => settings.bets, (bets) => update({ bets }));
+const renderRaises = (): void => {
+	$('raise-sizes-field').hidden = settings.raises === 0;
+	$('raise-note').textContent =
+		settings.raiseSizes.length === 0 ? 'None picked: raises use the bet sizes, as fractions of the pot.' : 'Multiples of the bet being raised.';
+};
+segmented<number>(
+	'raises',
+	Array.from({ length: MAX_RAISES + 1 }, (_, n) => ({ value: n, label: n === 0 ? 'None' : String(n) })),
+	() => settings.raises,
+	(raises) => {
+		update({ raises });
+		renderRaises();
+	},
+);
+sizePicker('raise-sizes', RAISE_SIZES, (times) => `${times}×`, 0, () => settings.raiseSizes, (raiseSizes) => {
+	update({ raiseSizes });
+	renderRaises();
+});
+renderRaises();
+const MODE_NOTES: Record<Mode, string> = {
+	exact: 'Solves the whole game until it is within your target of perfect play.',
+	lite: 'Faster on big flops: simplifies the turn and river and stops when the first decisions settle.',
+};
+const renderMode = (): void => {
+	$('mode-note').textContent = MODE_NOTES[settings.mode];
+	$('target-field').hidden = settings.mode === 'lite';
+};
+segmented<Mode>(
+	'mode',
+	[
+		{ value: 'exact', label: 'Exact' },
+		{ value: 'lite', label: 'Lite' },
+	],
+	() => settings.mode,
+	(mode) => {
+		update({ mode });
+		renderMode();
+	},
+);
+renderMode();
+segmented<number>(
+	'memory',
+	MEMORY_CAPS.map((n) => ({ value: n, label: n === 0 ? `Auto (${mb(autoMb)})` : mb(n) })),
+	() => settings.memory,
+	(memory) => update({ memory }),
 );
 segmented<number>(
 	'target',
@@ -424,7 +522,7 @@ segmented<number>(
 	() => settings.target,
 	(target) => update({ target }),
 );
-const threadOptions = [{ value: 0, label: `Auto (${isolated ? cores : 1})` }];
+const threadOptions = [{ value: 0, label: `Max (${isolated ? cores : 1})` }];
 for (const n of [1, 2, 4, 8, 16, 32]) if (n <= cores) threadOptions.push({ value: n, label: String(n) });
 segmented<number>(
 	'threads',
@@ -440,7 +538,6 @@ if (!isolated) {
 
 potInput.value = String(settings.pot);
 stackInput.value = String(settings.stack);
-raiseInput.checked = settings.raise;
 allInInput.checked = settings.allIn;
 
 const positive = (input: HTMLInputElement, fallback: number): number => {
@@ -451,7 +548,6 @@ const positive = (input: HTMLInputElement, fallback: number): number => {
 };
 potInput.addEventListener('input', () => update({ pot: positive(potInput, settings.pot) }));
 stackInput.addEventListener('input', () => update({ stack: positive(stackInput, settings.stack) }));
-raiseInput.addEventListener('change', () => update({ raise: raiseInput.checked }));
 allInInput.addEventListener('change', () => update({ allIn: allInInput.checked }));
 
 // ---------------------------------------------------------------- estimate
@@ -476,6 +572,8 @@ function blocker(): string | null {
 
 function scheduleEstimate(): void {
 	clearTimeout(estimateTimer);
+	// The results no longer match the form: free the solve they came from.
+	releaseExplorer();
 	// Any reply in flight now describes other settings.
 	estimateId++;
 	fits = false;
@@ -489,7 +587,7 @@ function scheduleEstimate(): void {
 	estimateEl.classList.add('pending');
 	estimateTimer = window.setTimeout(() => {
 		estimator ??= startEstimator();
-		const message: Inbound = { type: 'estimate', id: estimateId, config: configOf(settings) };
+		const message: Inbound = { type: 'estimate', id: estimateId, config: configOf(settings, autoMb), mode: settings.mode };
 		estimator.postMessage(message);
 	}, 180);
 }
@@ -501,13 +599,21 @@ function startEstimator(): Worker {
 		estimateEl.className = 'estimate';
 		if (data.ok) {
 			fits = true;
-			estimateEl.innerHTML = describeSpot(data.spot);
+			estimateEl.innerHTML =
+				describeSpot(data.spot) + (data.lite ? `<ul class="plain">${data.lite.map((line) => `<li>${esc(line)}</li>`).join('')}</ul>` : '');
 		} else {
 			estimateEl.classList.add('error');
 			estimateEl.innerHTML =
-				`<b>${esc(data.message)}</b>` +
-				(data.spot ? ` It needs ${formatBytes(data.spot.compressedBytes)} at 16 bits; a tab gets ${formatBytes(data.spot.maxBytes)}.` : '') +
-				(data.suggestions.length ? `<ul>${data.suggestions.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>` : '');
+				(data.tooLarge && data.spot
+					? `<b>Too big for the ${mb(data.spot.maxBytes / 2 ** 20)} memory limit</b> (needs ${formatBytes(data.spot.compressedBytes)}). ` +
+						`Try ${[
+							settings.mode === 'exact' ? 'Lite' : '',
+							data.spot.maxBytes < 2048 * 2 ** 20 ? 'a higher limit' : '',
+							'fewer bet sizes or narrower ranges',
+						]
+							.filter(Boolean)
+							.join(', ')}.`
+					: `<b>${esc(data.message)}</b>`);
 		}
 		renderRunButton();
 	};
@@ -523,8 +629,8 @@ function describeSpot(spot: SpotSummary): string {
 	const storage = spot.storageBytes;
 	return (
 		`<b>${number(spot.combos[0])}</b> vs <b>${number(spot.combos[1])}</b> combos · ` +
-		`<b>${number(spot.decisionNodes)}</b> decisions · ${streets(spot.rounds)} · ` +
-		`<b>${formatBytes(storage)}</b>${sixteen ? ' at 16-bit' : ''}`
+		`${streets(spot.rounds)} · ` +
+		`<b>${formatBytes(storage)}</b> of memory${sixteen ? ' (compressed to fit)' : ''}`
 	);
 }
 
@@ -553,6 +659,8 @@ const resultsEl = $('results');
 const stopButton = $<HTMLButtonElement>('stop');
 
 let solver: Worker | null = null;
+/** The last solve's worker, kept after it finishes so its solution can be walked through. */
+let explorer: Worker | null = null;
 let checks: Check[] = [];
 let setup: Setup | null = null;
 let live = { iterations: 0, solveMs: 0, measureMs: 0, wallMs: 0 };
@@ -579,25 +687,35 @@ function enterPhase(phase: Phase): void {
 	renderSteps();
 }
 
+/** Where the run stops on its measure; the worker sends it once the solve starts (Lite's is the solver's own). */
+let runGoal: number | null = null;
+/** The furthest the progress bar has been this run: Lite's measure jumps about, the bar should not. */
+let bestProgress = 0;
+/** What the run's measure is called: exploitability for Exact, change in the first decisions for Lite. */
+const measureName = (mode: Mode): string => (mode === 'lite' ? 'Change' : 'Exploitability');
+
 function renderLive(): void {
 	liveFrame = 0;
 	const last = checks[checks.length - 1];
 	const speed = live.solveMs > 0 ? (live.iterations / live.solveMs) * 1000 : 0;
+	const goal = runGoal;
 	let eta = '—';
-	if (last) {
-		const at = estimateIterationsTo(checks, runSettings.target);
+	if (last && goal !== null) {
+		// Lite's measure jumps about too much to extrapolate.
+		const at = runSettings.mode === 'exact' ? estimateIterationsTo(checks, goal) : null;
 		if (at !== null && live.iterations > 0) {
 			const perIteration = (live.solveMs + live.measureMs) / live.iterations;
-			eta = last.exploitability <= runSettings.target ? 'done' : `~${formatMs(Math.max(0, at - live.iterations) * perIteration)}`;
+			eta = last.exploitability <= goal ? 'done' : `~${formatMs(Math.max(0, at - live.iterations) * perIteration)}`;
 		}
 		progressEl.classList.remove('waiting');
-		progressFill.style.width = `${(progressToward(checks[0].exploitability, last.exploitability, runSettings.target) * 100).toFixed(1)}%`;
+		bestProgress = Math.max(bestProgress, progressToward(checks[0].exploitability, last.exploitability, goal));
+		progressFill.style.width = `${(bestProgress * 100).toFixed(1)}%`;
 	}
 	const metric = (label: string, value: string): string => `<div class="metric"><span>${label}</span><b>${value}</b></div>`;
 	liveEl.innerHTML =
 		metric('Iterations', number(live.iterations)) +
 		metric('Elapsed', formatMs(live.wallMs)) +
-		metric('Exploitability', last ? `${last.exploitability.toFixed(2)}%` : '—') +
+		metric(measureName(runSettings.mode), last ? `${last.exploitability.toFixed(2)}%` : '—') +
 		metric('Speed', speed > 0 ? `${speed >= 100 ? number(speed) : speed.toFixed(1)} it/s` : '—') +
 		metric('Time left', eta);
 }
@@ -620,20 +738,28 @@ function startRun(): void {
 	stopButton.hidden = false;
 	stopButton.disabled = false;
 	$('run-title').textContent = 'Solving';
-	$('run-sub').textContent = `${formatCards(board)} · ${SIZE_PRESETS[settings.sizes].label} · to ${settings.target}% of pot`;
+	$('run-sub').textContent =
+		`${formatCards(board)} · ${bettingLabel(settings)} · ` +
+		(settings.mode === 'lite' ? 'Lite, until the first decisions settle' : `to ${settings.target}% of pot`);
 	progressEl.className = 'progress waiting';
 	progressFill.style.width = '0';
 	renderLive();
-	renderChart(chartEl, [], runSettings.target);
+	runGoal = settings.mode === 'exact' ? settings.target : null;
+	bestProgress = 0;
+	renderChart(chartEl, [], runGoal, runSettings.mode);
 	enterPhase('threads');
 	runPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
+	// The last solve's memory goes before this one's is taken.
+	releaseExplorer();
+	explore = null;
 	solver = new Worker(workerUrl, { type: 'module' });
 	solver.onmessage = ({ data }: MessageEvent<Outbound>) => onSolverMessage(data);
 	solver.onerror = (event) => fail(event.message || 'The solver failed to load.');
 	const message: Inbound = {
 		type: 'solve',
-		config: configOf(settings),
+		config: configOf(settings, autoMb),
+		mode: settings.mode,
 		target: settings.target,
 		threads: isolated ? Math.min(settings.threads, cores) : 1,
 		cap: ITERATION_CAP,
@@ -646,7 +772,8 @@ function onSolverMessage(data: Outbound): void {
 		case 'phase':
 			if (data.setup) {
 				setup = data.setup;
-				$('run-sub').textContent += ` · ${setup.threads} thread${setup.threads === 1 ? '' : 's'} · ${formatBytes(setup.storageBytes)}`;
+				runGoal = data.goal ?? runGoal;
+				$('run-sub').textContent += ` · ${setup.threads} thread${setup.threads === 1 ? '' : 's'} · ${formatBytes(setup.storageBytes)}${setup.precision === 'i16' ? ' (compressed)' : ''}`;
 			}
 			enterPhase(data.phase);
 			return;
@@ -656,7 +783,7 @@ function onSolverMessage(data: Outbound): void {
 			return;
 		case 'check':
 			checks.push(data.check);
-			renderChart(chartEl, checks, runSettings.target);
+			renderChart(chartEl, checks, runGoal, runSettings.mode);
 			if (!liveFrame) liveFrame = requestAnimationFrame(renderLive);
 			return;
 		case 'done':
@@ -669,8 +796,16 @@ function onSolverMessage(data: Outbound): void {
 	}
 }
 
-function endRun(): void {
-	solver?.terminate();
+/** End the run; `keep` hands a finished solve's worker to the walk-through instead of ending it. */
+function endRun(keep = false): void {
+	if (keep && solver) {
+		explorer = solver;
+		explorer.onmessage = ({ data }: MessageEvent<Outbound>) => {
+			if (data.type === 'view') onView(data);
+		};
+		// The results stand; only the walk-through stops.
+		explorer.onerror = () => releaseExplorer();
+	} else solver?.terminate();
 	solver = null;
 	running = false;
 	document.body.classList.remove('running');
@@ -679,7 +814,7 @@ function endRun(): void {
 }
 
 function finish(report: Report): void {
-	endRun();
+	endRun(true);
 	phaseMs.set('threads', report.ms.threads);
 	phaseMs.set('build', report.ms.build);
 	phaseMs.set('alloc', report.ms.alloc);
@@ -690,11 +825,13 @@ function finish(report: Report): void {
 	live = { iterations: report.iterations, solveMs: report.ms.solve, measureMs: report.ms.measure, wallMs: report.ms.total };
 	renderLive();
 	progressEl.className = 'progress complete';
-	progressFill.style.width = report.stoppedBy === 'target' ? '100%' : progressFill.style.width;
-	const reached = report.stoppedBy === 'target';
-	$('run-title').textContent = reached
+	const reached = report.stoppedBy === 'target' || report.stoppedBy === 'settled';
+	if (reached) progressFill.style.width = '100%';
+	$('run-title').textContent = report.stoppedBy === 'target'
 		? `Reached ${report.target}% in ${formatMs(report.ms.total)}`
-		: report.stoppedBy === 'stopped'
+		: report.stoppedBy === 'settled'
+			? `Settled in ${formatMs(report.ms.total)}`
+			: report.stoppedBy === 'stopped'
 			? `Stopped after ${formatMs(report.ms.total)}`
 			: `Hit the ${number(report.iterations)}-iteration cap`;
 	renderResults(report);
@@ -731,7 +868,9 @@ function niceTicks(min: number, max: number, count: number): number[] {
 	return ticks;
 }
 
-function renderChart(el: HTMLElement, data: readonly Check[], target: number): void {
+function renderChart(el: HTMLElement, data: readonly Check[], goal: number | null, mode: Mode): void {
+	// Until Lite's worker says where it settles, scale as if at 1% and draw no line.
+	const target = goal ?? 1;
 	const W = 760;
 	const H = 220;
 	const pad = { left: 44, right: 14, top: 12, bottom: 26 };
@@ -767,9 +906,9 @@ function renderChart(el: HTMLElement, data: readonly Check[], target: number): v
 	const xTicks = ticks
 		.map((s) => `<text x="${x(s)}" y="${H - 6}" text-anchor="middle">${number(s, s === 0 ? 0 : decimals)}s</text>`)
 		.join('');
-	const targetLine =
+	const targetLine = goal === null ? '' :
 		`<line x1="${pad.left}" x2="${W - pad.right}" y1="${y(target)}" y2="${y(target)}" stroke="#4f46e5" stroke-dasharray="4 4" stroke-opacity="0.55"/>` +
-		`<text x="${W - pad.right}" y="${y(target) - 6}" text-anchor="end" style="fill:#4f46e5">target ${target}%</text>`;
+		`<text x="${W - pad.right}" y="${y(target) - 6}" text-anchor="end" style="fill:#4f46e5">${mode === 'lite' ? 'settled' : 'target'} ${target}%</text>`;
 
 	let series = '';
 	if (data.length > 0) {
@@ -782,10 +921,10 @@ function renderChart(el: HTMLElement, data: readonly Check[], target: number): v
 			`<path d="${line}" fill="none" stroke="#4f46e5" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>` +
 			`<circle cx="${x(seconds[seconds.length - 1])}" cy="${y(last.exploitability)}" r="4" fill="#fff" stroke="#4f46e5" stroke-width="2"/>`;
 	} else {
-		series = `<text x="${pad.left + iw / 2}" y="${pad.top + ih / 2}" text-anchor="middle">Exploitability appears after the first iteration</text>`;
+		series = `<text x="${pad.left + iw / 2}" y="${pad.top + ih / 2}" text-anchor="middle">${mode === 'lite' ? 'The first decisions are read every 20 iterations' : 'Exploitability appears after the first iteration'}</text>`;
 	}
 	el.innerHTML =
-		`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Exploitability over solving time">` +
+		`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${measureName(mode)} over solving time">` +
 		`<defs><linearGradient id="fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4f46e5" stop-opacity="0.16"/><stop offset="1" stop-color="#4f46e5" stop-opacity="0"/></linearGradient></defs>` +
 		`${grid}${targetLine}${series}${xTicks}</svg>`;
 }
@@ -837,6 +976,7 @@ function renderResults(report: Report): void {
 	const r = report;
 	const perSecond = r.ms.solve > 0 ? (r.iterations / r.ms.solve) * 1000 : 0;
 	const perIteration = r.iterations > 0 ? r.ms.solve / r.iterations : 0;
+	const lite = r.mode === 'lite';
 	const reached = r.stoppedBy === 'target';
 	const e = r.exploitability;
 
@@ -844,14 +984,20 @@ function renderResults(report: Report): void {
 		`<div class="tile${lead ? ' lead' : ''}"><span>${label}</span><b>${value}</b><small>${note}</small></div>`;
 	const headline =
 		`<div class="headline">` +
-		tile(reached ? `Time to ${r.target}% of pot` : 'Total time', formatMs(r.ms.total), 'wall clock, setup included', true) +
+		tile(reached ? `Time to ${r.target}% of pot` : r.stoppedBy === 'settled' ? 'Time to settle' : 'Total time', formatMs(r.ms.total), 'wall clock, setup included', true) +
 		tile('Iterations per second', perSecond >= 100 ? number(perSecond) : perSecond.toFixed(1), `${number(r.iterations)} iterations`) +
 		tile('Time per iteration', formatMs(perIteration), `${r.setup.threads} thread${r.setup.threads === 1 ? '' : 's'} · ${r.setup.engine === 'wasm' ? 'WebAssembly' : 'JavaScript'}`) +
-		tile('Exploitability', e === null ? '—' : `${e.toFixed(2)}%`, `of the pot · target ${r.target}%`) +
+		(lite
+			? tile('Accuracy', 'Not measured', 'Lite cannot measure it')
+			: tile('Exploitability', e === null ? '—' : `${e.toFixed(2)}%`, `of the pot · target ${r.target}%`)) +
 		`</div>`;
 
 	const levels = [10, 5, 2, 1, 0.5, 0.3].filter((level) => level >= r.target);
-	const convergence =
+	const convergence = lite
+		? `<section class="card"><div class="card-head"><h2>Settling</h2><span class="muted">${number(r.checks.length)} readings</span></div>` +
+			`<div class="chart" id="result-chart"></div>` +
+			`<p class="muted" style="margin:12px 0 0;font-size:14px">How much the first decisions changed between readings. Lite stops once that stays under ${r.target}% twice in a row.</p></section>`
+		:
 		`<section class="card"><div class="card-head"><h2>Convergence</h2><span class="muted">${number(r.checks.length)} measures</span></div>` +
 		`<div class="chart" id="result-chart"></div>` +
 		`<table><thead><tr><th>Exploitability</th><th>Iterations</th><th>Solving time</th></tr></thead><tbody>` +
@@ -869,7 +1015,7 @@ function renderResults(report: Report): void {
 		['Build tree', r.ms.build, '#a5b4fc'],
 		['Allocate', r.ms.alloc, '#818cf8'],
 		['Iterations', r.ms.solve, '#4f46e5'],
-		['Exploitability checks', r.ms.measure, '#312e81'],
+		[lite ? 'Settle checks' : 'Exploitability checks', r.ms.measure, '#312e81'],
 		['Read result', r.ms.finish, '#e5e7eb'],
 	];
 	const accounted = parts.reduce((sum, [, ms]) => sum + ms, 0) || 1;
@@ -888,11 +1034,12 @@ function renderResults(report: Report): void {
 			['Board', cards.map((c) => `<span class="${formatCard(c)[1]}">${formatCard(c)[0]}${SUIT_GLYPHS[formatCard(c)[1]]}</span>`).join(' ')],
 			['Streets', streets(spot.rounds)],
 			['Pot · stack', `${r.config.pot}bb · ${r.config.stack}bb`],
-			['Betting', `${SIZE_PRESETS[runSettings.sizes].label}${runSettings.raise ? ', one raise' : ''}${runSettings.allIn ? ', all-in' : ''}`],
+			['Betting', bettingLabel(runSettings)],
 			['Combos', `${number(spot.combos[0])} OOP · ${number(spot.combos[1])} IP`],
 			['Decision nodes', number(spot.decisionNodes)],
 			['Runouts stored', number(spot.runouts)],
-			['Storage', `${formatBytes(r.setup.storageBytes)} · ${r.setup.precision === 'i16' ? '16-bit' : '32-bit'}`],
+			['Solver', lite ? 'Lite (simplified)' : 'Exact'],
+			['Memory', `${formatBytes(r.setup.storageBytes)}${r.setup.precision === 'i16' ? ', compressed' : ''} of ${formatBytes(r.setup.spot.maxBytes)} allowed`],
 		]) +
 		`</section>`;
 
@@ -910,10 +1057,126 @@ function renderResults(report: Report): void {
 		]) +
 		`</section>`;
 
-	const root = r.root;
-	const colours = actionColours(root.actions);
-	const who = root.player === 0 ? 'OOP' : 'IP';
-	const mini = root.cells
+	const solution =
+		`<section class="card" id="solution"><div class="card-head"><h2>Solution</h2></div>` +
+		`<div class="ev">${(['OOP', 'IP'] as const)
+			.map((name, p) => `<div class="ev-row"><span>${name}</span><div class="ev-bar"><i style="width:${r.ev[p].toFixed(1)}%"></i></div><b>${r.ev[p].toFixed(1)}%</b></div>`)
+			.join('')}</div>` +
+		`<div id="explore"></div>` +
+		`</section>`;
+
+	const liteCard = lite
+		? `<section class="card"><div class="card-head"><h2>What Lite simplified</h2></div>` +
+			`<ul class="list">${(r.lite ?? []).map((line) => `<li>${esc(line)}</li>`).join('')}</ul>` +
+			`<p class="subhead">Limitations</p>` +
+			`<ul class="list warn">${LITE_LIMITS.map((line) => `<li>${esc(line)}</li>`).join('')}</ul></section>`
+		: '';
+
+	resultsEl.innerHTML =
+		headline +
+		`<div class="result-grid">${liteCard}${convergence}${time}${spotCard}${machine}${solution}` +
+		`<section class="card"><div class="card-head"><h2>Share</h2></div>` +
+		`<p class="muted" style="margin:0 0 14px;font-size:14px">The report holds every number above, the settings and the full trace.</p>` +
+		`<div class="actions"><button class="secondary" id="copy-report">Copy report (JSON)</button><button class="secondary" id="copy-link">Copy link to this spot</button><button class="secondary" id="run-again">Run again</button></div>` +
+		`</section></div>`;
+	resultsEl.hidden = false;
+	explore = { trail: [{ node: 0, board: 0, round: 0, via: '' }], firstStreet: STREETS.indexOf(streetOf(r.config.board)), view: r.root, failed: null };
+	renderExplore();
+	renderChart($('result-chart'), r.checks, r.target, r.mode);
+	$('copy-report').addEventListener('click', () => void copy(JSON.stringify(report, null, 2), 'Report copied'));
+	$('copy-link').addEventListener('click', () => void copy(`${location.origin}${location.pathname}#${writeSettings(runSettings)}`, 'Link copied'));
+	$('run-again').addEventListener('click', startRun);
+}
+
+// ---------------------------------------------------------------- walk-through
+
+/** One step of the line being looked at: a decision, its board, and the action that led there. */
+interface TrailStep {
+	readonly node: number;
+	readonly board: number;
+	readonly round: number;
+	/** The action taken to get here, as the page names it; empty at the start. */
+	readonly via: string;
+}
+
+/** The line being looked at, and its last decision as drawn. */
+let explore: {
+	/** The line as drawn; a step asked for joins it once the worker answers. */
+	trail: TrailStep[];
+	view: NodeView;
+	firstStreet: number;
+	/** Why the last step asked for could not be drawn. */
+	failed: string | null;
+} | null = null;
+/** The line asked for and not yet drawn. */
+let pendingTrail: TrailStep[] | null = null;
+let viewId = 0;
+
+const STREETS = ['Flop', 'Turn', 'River'];
+const streetOf = (cards: string): string => STREETS[cards.split(' ').length - 3] ?? '';
+
+/**
+ * End the kept worker and free the last solve's memory: before a new solve,
+ * or once the form changes and the results no longer match it. The results
+ * stay, without the walk-through.
+ */
+function releaseExplorer(): void {
+	if (!explorer) return;
+	explorer.terminate();
+	explorer = null;
+	pendingTrail = null;
+	if (explore) renderExplore();
+}
+
+/** Ask the kept worker to draw `trail`'s last decision; the line moves there once it answers. */
+function goTo(trail: TrailStep[]): void {
+	if (!explorer || !explore) return;
+	const at = trail[trail.length - 1];
+	pendingTrail = trail;
+	const message: Inbound = { type: 'view', id: ++viewId, node: at.node, board: at.board };
+	explorer.postMessage(message);
+	$('explore').classList.add('loading');
+}
+
+function onView(data: Extract<Outbound, { type: 'view' }>): void {
+	if (data.id !== viewId || !explore || !pendingTrail) return;
+	if (data.view) {
+		explore.trail = pendingTrail;
+		explore.view = data.view;
+		explore.failed = null;
+	} else explore.failed = data.message ?? 'That decision could not be read.';
+	pendingTrail = null;
+	renderExplore();
+}
+
+function renderExplore(): void {
+	if (!explore) return;
+	const { view, trail } = explore;
+	const el = $('explore');
+	const colours = actionColours(view.actions);
+	const who = view.player === 0 ? 'OOP' : 'IP';
+	const walkable = explorer !== null;
+
+	const crumbs = trail
+		.map((step, i) => {
+			const label = i === 0 ? 'Start' : esc(step.via);
+			const street = i > 0 && step.round !== trail[i - 1].round ? `<span class="street">${STREETS[explore!.firstStreet + step.round] ?? ''}</span>` : '';
+			const crumb =
+				i === trail.length - 1 ? `<span class="here">${label}</span>`
+				: walkable ? `<button class="crumb" data-trail="${i}">${label}</button>`
+				: `<span>${label}</span>`;
+			// The street marker follows the action that dealt its card.
+			return crumb + street;
+		})
+		.join('<span class="sep">›</span>');
+	const runouts =
+		view.runouts.length > 1
+			? `<label class="runout"><span>${streetOf(view.cards)} card</span><select id="runout" class="input"${walkable ? '' : ' disabled'}>${view.runouts
+					.map((r) => `<option value="${r.board}"${r.board === view.board ? ' selected' : ''}>${esc([r.card, ...r.also].join(' / '))}</option>`)
+					.join('')}</select></label>`
+			: '';
+	const nobody = view.frequencies.every((p) => p === 0);
+	const mini = view.cells
 		.map((mix, cell) => {
 			if (!mix) return `<div class="empty">${cellLabel(cell)}</div>`;
 			let at = 0;
@@ -924,33 +1187,46 @@ function renderResults(report: Report): void {
 					return `${colours[a]} ${from.toFixed(1)}% ${at.toFixed(1)}%`;
 				})
 				.join(',');
-			return `<div style="background:linear-gradient(90deg,${stops})" title="${cellLabel(cell)}: ${mix.map((p, a) => `${actionName(root.actions[a], r.config.pot)} ${(p * 100).toFixed(0)}%`).join(', ')}">${cellLabel(cell)}</div>`;
+			return `<div style="background:linear-gradient(90deg,${stops})" title="${cellLabel(cell)}: ${mix.map((p, a) => `${actionName(view.actions[a], view.pot)} ${(p * 100).toFixed(0)}%`).join(', ')}">${cellLabel(cell)}</div>`;
 		})
 		.join('');
-	const solution =
-		`<section class="card"><div class="card-head"><h2>Solution</h2><span class="muted">${who} first to act</span></div>` +
-		`<div class="ev">${(['OOP', 'IP'] as const)
-			.map((name, p) => `<div class="ev-row"><span>${name}</span><div class="ev-bar"><i style="width:${r.ev[p].toFixed(1)}%"></i></div><b>${r.ev[p].toFixed(1)}%</b></div>`)
-			.join('')}</div>` +
-		`<div class="stack">${root.frequencies.map((p, a) => `<i style="width:${p * 100}%;background:${colours[a]}"></i>`).join('')}</div>` +
-		`<ul class="legend">${root.actions
-			.map((action, a) => `<li><span class="swatch" style="background:${colours[a]}"></span>${esc(actionName(action, r.config.pot))}<b>${(root.frequencies[a] * 100).toFixed(1)}%</b></li>`)
+
+	el.classList.remove('loading');
+	el.innerHTML =
+		(explore.failed ? `<div class="error-box">${esc(explore.failed)}</div>` : '') +
+		`<nav class="line" aria-label="Line">${crumbs}</nav>` +
+		`<p class="spot-line"><b>${who}</b> to act · ${streetOf(view.cards)} <span class="mono">${esc(view.cards)}</span> · pot ${number(view.pot, view.pot % 1 ? 1 : 0)}bb</p>` +
+		runouts +
+		(nobody ? `<p class="muted">Neither range reaches this decision: its strategy is never played.</p>` : '') +
+		`<div class="stack">${view.frequencies.map((p, a) => `<i style="width:${p * 100}%;background:${colours[a]}"></i>`).join('')}</div>` +
+		`<ul class="legend">${view.actions
+			.map((action, a) => {
+				const inner = `<span class="swatch" style="background:${colours[a]}"></span>${esc(actionName(action, view.pot))}<b>${(view.frequencies[a] * 100).toFixed(1)}%</b>`;
+				const next = view.next[a];
+				return next && walkable
+					? `<li class="walk"><button class="step-into" data-action="${a}">${inner}<em aria-hidden="true">›</em></button></li>`
+					: `<li>${inner}<em>${walkable ? 'ends' : ''}</em></li>`;
+			})
 			.join('')}</ul>` +
 		`<div class="mini-grid">${mini}</div>` +
-		`</section>`;
+		`<p class="hint">${walkable ? 'Tap an action to follow it.' : 'Run the spot again to walk through its solution.'}</p>`;
 
-	resultsEl.innerHTML =
-		headline +
-		`<div class="result-grid">${convergence}${time}${spotCard}${machine}${solution}` +
-		`<section class="card"><div class="card-head"><h2>Share</h2></div>` +
-		`<p class="muted" style="margin:0 0 14px;font-size:14px">The report holds every number above, the settings and the full exploitability trace.</p>` +
-		`<div class="actions"><button class="secondary" id="copy-report">Copy report (JSON)</button><button class="secondary" id="copy-link">Copy link to this spot</button><button class="secondary" id="run-again">Run again</button></div>` +
-		`</section></div>`;
-	resultsEl.hidden = false;
-	renderChart($('result-chart'), r.checks, r.target);
-	$('copy-report').addEventListener('click', () => void copy(JSON.stringify(report, null, 2), 'Report copied'));
-	$('copy-link').addEventListener('click', () => void copy(`${location.origin}${location.pathname}#${writeSettings(runSettings)}`, 'Link copied'));
-	$('run-again').addEventListener('click', startRun);
+	el.querySelectorAll<HTMLButtonElement>('.step-into').forEach((button) => {
+		button.addEventListener('click', () => {
+			const a = Number(button.dataset.action);
+			const next = view.next[a];
+			if (!next) return;
+			goTo([...trail, { node: next.node, board: next.board, round: next.round, via: actionName(view.actions[a], view.pot) }]);
+		});
+	});
+	el.querySelectorAll<HTMLButtonElement>('.crumb').forEach((button) => {
+		button.addEventListener('click', () => goTo(trail.slice(0, Number(button.dataset.trail) + 1)));
+	});
+	el.querySelector<HTMLSelectElement>('#runout')?.addEventListener('change', (event) => {
+		// Another card at this street: the same line on it, from where it was dealt.
+		const board = Number((event.target as HTMLSelectElement).value);
+		goTo(trail.map((step) => (step.round === view.round ? { ...step, board } : step)));
+	});
 }
 
 // ---------------------------------------------------------------- start

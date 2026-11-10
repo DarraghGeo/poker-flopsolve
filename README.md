@@ -80,7 +80,13 @@ npm run site:build    # build only
 Settings → Pages → Source to "GitHub Actions" once). Pages cannot send the cross-origin
 isolation headers threads need, so the page registers its own service worker
 (`site/coi-sw.js`) that adds them and reloads once; where that is not possible it solves on
-one thread and says so. A tree over the tab's 512 MiB at 32 bits is solved at 16 bits.
+one thread and says so.
+
+The page offers **Exact** (`solve` to an exploitability target) and **Lite** (`solveLite`'s
+recipe, stopped when the root play settles), and says in plain words what Lite simplified and
+what it cannot tell you. Its memory limit defaults to 2 GiB on desktops reporting 8 GB or
+more, 512 MiB on phones and 1 GiB otherwise (the solver's own browser default is 512 MiB);
+a tree over the limit at 32 bits is solved at 16. Threads default to every core.
 
 ## Ranges
 
@@ -1080,7 +1086,10 @@ the WebAssembly engine in Node and the browser, the JavaScript engine in Node). 
 samples the deals of its own runouts, and whether a deal is walked on an iteration is a hash
 of its chance node, the deal and the iteration, so every thread count walks the same deals
 and a fixed count is bitwise repeatable. On 4 Chromium threads it ran 3.1–3.2× faster than on
-one (`bench/blueprint-share/README.md`). The baselines count against `maxBytes`. With `p: 1` it is the exact solve, bit for bit. `rounds: [2]` samples
+one (`bench/blueprint-share/README.md`). The baselines count against `maxBytes`: with `precision` unset, a spot whose 32-bit
+storage fits but not beside its baselines is solved at 16 bits (issue #139; on the JavaScript
+engine unless the solve passes `wasmStorage`), and an explicit `precision` that does not fit
+throws. With `p: 1` it is the exact solve, bit for bit. `rounds: [2]` samples
 river deals only. It works over any storage: 32 or 16 bits (since issue #102) or compact.
 
 ### Storage: 16-bit and compact

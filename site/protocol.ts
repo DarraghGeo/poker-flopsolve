@@ -5,6 +5,8 @@
 
 import type { SpotConfig } from '../src/index.ts';
 import type { Check } from './lib/bench.ts';
+import type { NodeView } from './lib/explore.ts';
+import type { Mode } from './lib/settings.ts';
 
 /** A spot's size, from the solver's estimate. */
 export interface SpotSummary {
@@ -36,10 +38,19 @@ export interface Setup {
 /** Everything one benchmark measured. */
 export interface Report {
 	readonly config: SpotConfig;
+	readonly mode: Mode;
+	/**
+	 * Exact: the exploitability stopped at, % of the pot. Lite: the movement
+	 * of the first decisions it settles under, % of the range.
+	 */
 	readonly target: number;
-	readonly stoppedBy: 'target' | 'iterations' | 'stopped';
+	/** Lite: what it simplified, in plain words; null for Exact. */
+	readonly lite: readonly string[] | null;
+	readonly stoppedBy: 'target' | 'settled' | 'iterations' | 'stopped';
 	readonly iterations: number;
+	/** Exact: the last exploitability, % of pot. Lite: the last movement, % of the range. */
 	readonly exploitability: number | null;
+	/** Readings of that measure as the solve went. */
 	readonly checks: readonly Check[];
 	readonly ms: {
 		readonly threads: number;
@@ -64,21 +75,18 @@ export interface Report {
 	};
 	/** Each player's share of the pot, %. */
 	readonly ev: readonly [number, number];
-	/** The first decision's strategy: overall, and per grid cell (null where no hand is held). */
-	readonly root: {
-		readonly player: 0 | 1;
-		readonly actions: readonly string[];
-		readonly frequencies: readonly number[];
-		readonly cells: readonly (readonly number[] | null)[];
-	};
+	/** The first decision, as the walk-through draws it. */
+	readonly root: NodeView;
 }
 
 export type Phase = 'threads' | 'build' | 'alloc' | 'solve' | 'finish';
 
 export type Inbound =
-	| { type: 'estimate'; id: number; config: SpotConfig }
-	| { type: 'solve'; config: SpotConfig; target: number; threads: number; cap: number }
-	| { type: 'stop' };
+	| { type: 'estimate'; id: number; config: SpotConfig; mode: Mode }
+	| { type: 'solve'; config: SpotConfig; mode: Mode; target: number; threads: number; cap: number }
+	| { type: 'stop' }
+	/** After `done`: a decision of the solved spot to draw. */
+	| { type: 'view'; id: number; node: number; board: number };
 
 /** A spot the solver will not build, and why. */
 export interface EstimateRefused {
@@ -92,10 +100,12 @@ export interface EstimateRefused {
 }
 
 export type Outbound =
-	| { type: 'estimate'; id: number; ok: true; spot: SpotSummary }
+	| { type: 'estimate'; id: number; ok: true; spot: SpotSummary; lite: string[] | null }
 	| EstimateRefused
-	| { type: 'phase'; phase: Phase; setup?: Setup }
+	/** `goal`: where the solve stops on its measure, sent as it starts. */
+	| { type: 'phase'; phase: Phase; setup?: Setup; goal?: number }
 	| { type: 'progress'; iterations: number; solveMs: number; measureMs: number; wallMs: number }
 	| { type: 'check'; check: Check }
 	| { type: 'done'; report: Report }
-	| { type: 'error'; message: string };
+	| { type: 'error'; message: string }
+	| { type: 'view'; id: number; view: NodeView | null; message?: string };

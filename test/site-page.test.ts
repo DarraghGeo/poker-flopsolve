@@ -21,6 +21,7 @@ interface Page {
 	waitForFunction(fn: string, arg?: unknown, options?: { timeout: number }): Promise<unknown>;
 	evaluate<T>(fn: string): Promise<T>;
 	click(selector: string): Promise<void>;
+	selectOption(selector: string, value: string): Promise<unknown>;
 	inputValue(selector: string): Promise<string>;
 	$(selector: string): Promise<{ boundingBox(): Promise<{ x: number; y: number; width: number; height: number }> } | null>;
 	mouse: { move(x: number, y: number, options?: { steps: number }): Promise<void>; down(): Promise<void>; up(): Promise<void> };
@@ -28,7 +29,7 @@ interface Page {
 	on(event: 'pageerror', handler: (error: Error) => void): void;
 }
 interface Browser {
-	newPage(): Promise<Page>;
+	newPage(options?: { viewport: { width: number; height: number }; isMobile?: boolean; hasTouch?: boolean }): Promise<Page>;
 	close(): Promise<void>;
 }
 
@@ -127,5 +128,107 @@ describe('site page in a browser', () => {
 		await page.mouse.move(box.x + cell * 6.5, box.y + cell * 1.5, { steps: 1 });
 		await page.mouse.up();
 		expect(await page.inputValue('#range-text')).toBe('KK+,K8s+,AsKs');
+	});
+
+	it('offers every betting choice and Lite at phone width', async (context) => {
+		if (!browser) return context.skip();
+		const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+		const errors: string[] = [];
+		page.on('pageerror', (error) => errors.push(error.message));
+		await page.goto(`${url}#board=Ks+9d+4c+2h+7s`);
+		await page.waitForFunction("!document.getElementById('run').disabled", undefined, { timeout: 20_000 });
+		// Nothing on the form runs off the side of a phone.
+		const overflow = await page.evaluate<string[]>(
+			"[...document.querySelectorAll('#mode button, #bets button, #raises button, #raise-sizes button, #allin + .track')]" +
+				".filter((b) => { const r = b.getBoundingClientRect(); return r.left < 0 || r.right > document.documentElement.clientWidth; }).map((b) => b.textContent)",
+		);
+		expect(overflow).toEqual([]);
+		expect(await page.evaluate<boolean>("document.getElementById('raise-sizes-field').hidden")).toBe(true);
+		await page.click('#bets button:nth-child(2)'); // 33%
+		await page.click('#bets button:nth-child(6)'); // 100%
+		await page.click('#raises button:nth-child(3)'); // 2 raises
+		expect(await page.evaluate<boolean>("document.getElementById('raise-sizes-field').hidden")).toBe(false);
+		await page.click('#raise-sizes button:nth-child(3)'); // 3x
+		await page.click('#mode button:nth-child(2)'); // Lite
+		const hash = new URLSearchParams(await page.evaluate<string>('location.hash.slice(1)'));
+		expect(hash.get('bets')).toBe('0.33,0.66,1');
+		expect(hash.get('raises')).toBe('2');
+		expect(hash.get('rx')).toBe('3');
+		expect(hash.get('mode')).toBe('lite');
+		await page.waitForFunction("!document.getElementById('run').disabled", undefined, { timeout: 20_000 });
+		await page.click('#run');
+		await page.waitForSelector('#results:not([hidden])', { timeout: 120_000 });
+		expect(await page.textContent('#results')).toContain('33% + 66% + 100% pot, 2 raises of 3×');
+		expect(errors).toEqual([]);
+	});
+
+	it('walks through the solution, street by street', async (context) => {
+		if (!browser) return context.skip();
+		const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+		const errors: string[] = [];
+		page.on('pageerror', (error) => errors.push(error.message));
+		await page.goto(`${url}#board=As+Kh+7d+2c&target=2&oop=AA,KK,77,AKs,65s&ip=QQ,JJ,AJs,KJs,T9s`);
+		await page.waitForFunction("!document.getElementById('run').disabled", undefined, { timeout: 20_000 });
+		await page.click('#run');
+		await page.waitForSelector('#results:not([hidden])', { timeout: 60_000 });
+		await page.waitForSelector('#explore .step-into', { timeout: 20_000 });
+		const line = (): Promise<string | null> => page.textContent('#explore .spot-line');
+		expect(await line()).toMatch(/^OOP to act · Turn/);
+		// OOP checks, IP checks: the river is dealt and OOP acts again.
+		await page.click('#explore .step-into[data-action="0"]');
+		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.startsWith('IP')", undefined, { timeout: 20_000 });
+		await page.click('#explore .step-into[data-action="0"]');
+		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.includes('River')", undefined, { timeout: 20_000 });
+		expect(await line()).toMatch(/^OOP to act · River/);
+		const cards = async (): Promise<string> => (await page.textContent('#explore .spot-line .mono')) ?? '';
+		const before = await cards();
+		const options = await page.evaluate<string[]>("[...document.querySelectorAll('#runout option')].map((o) => o.value)");
+		expect(options.length).toBeGreaterThan(30);
+		const selected = await page.evaluate<string>("document.getElementById('runout').value");
+		await page.selectOption('#runout', options.find((v) => v !== selected)!);
+		await page.waitForFunction(`document.querySelector('#explore .spot-line .mono').textContent !== ${JSON.stringify(before)}`, undefined, { timeout: 20_000 });
+		expect((await cards()).startsWith('As Kh 7d 2c ')).toBe(true);
+		expect(await page.textContent('#explore .line')).toContain('River');
+		// Back to the start from the line.
+		await page.click('#explore .crumb[data-trail="0"]');
+		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.includes('Turn')", undefined, { timeout: 20_000 });
+		expect(await page.evaluate<number>("document.querySelectorAll('#explore .crumb').length")).toBe(0);
+		// Changing the form frees the solve: the results stay, the walk-through stops.
+		await page.click('#bets button:nth-child(3)');
+		await page.waitForFunction("document.querySelectorAll('#explore .step-into').length === 0", undefined, { timeout: 20_000 });
+		expect(await page.textContent('#explore .hint')).toContain('Run the spot again');
+		expect(await page.textContent('#explore .legend')).toContain('Check');
+		expect(errors).toEqual([]);
+	});
+
+	it('runs Lite and reports what it simplified', async (context) => {
+		if (!browser) return context.skip();
+		const page = await browser.newPage();
+		await page.goto(`${url}#board=As+Kh+7d+2c&mode=lite&sizes=two&raise=1&oop=AA,KK,77,AKs,AQs,KQs,65s&ip=QQ,JJ,AJs,KJs,QJs,JTs,T9s`);
+		await page.waitForFunction("!document.getElementById('run').disabled", undefined, { timeout: 20_000 });
+		expect(await page.textContent('#estimate')).toContain('River: one bet size (75% pot), no raises.');
+		await page.click('#run');
+		await page.waitForSelector('#results:not([hidden])', { timeout: 120_000 });
+		expect(await page.textContent('#run-title')).toMatch(/^Settled in/);
+		const results = (await page.textContent('#results')) ?? '';
+		expect(results).toContain('What Lite simplified');
+		expect(results).toContain('Limitations');
+		expect(results).toContain('Not measured');
+	});
+
+	it('makes room for Lite\'s sampling when the tree alone fits the limit', async (context) => {
+		if (!browser) return context.skip();
+		const page = await browser.newPage();
+		const anyTwo = encodeURIComponent(RANGE_PRESETS.find((p) => p.name === 'Any two')!.range);
+		// 441 MB at 32 bits fits 512 MB, but sampling needs ~195 MB more.
+		await page.goto(`${url}#mode=lite&raise=1&memory=512&ip=${anyTwo}`);
+		await page.waitForFunction("!document.getElementById('run').disabled", undefined, { timeout: 20_000 });
+		await page.click('#run');
+		await page.waitForFunction("document.querySelectorAll('.step.done').length >= 3 || !document.getElementById('results').hidden", undefined, { timeout: 60_000 });
+		expect(await page.textContent('#run-title')).toBe('Solving');
+		expect(await page.textContent('#run-sub')).toContain('compressed');
+		await page.click('#stop');
+		await page.waitForSelector('#results:not([hidden])', { timeout: 120_000 });
+		expect(await page.textContent('#run-title')).toMatch(/^Stopped/);
 	});
 });
