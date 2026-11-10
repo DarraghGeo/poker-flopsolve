@@ -1,39 +1,38 @@
-two-tone: kept 6 line(s) in 4.2 s: check check / | bet 18.15 call / | bet 41.25 call / | check bet 18.15 call / | bet 18.15 raise 86.63 call / | check bet 41.25 call /
-  280 it, 20.3 s: re-solve gain 1.94 / 1.40, 7.3 s each
-  360 it, 24.6 s: re-solve gain 1.67 / 1.18, 7.1 s each
-  440 it, 28.7 s: re-solve gain 1.51 / 1.20, 7.3 s each
-  520 it, 33.2 s: re-solve gain 1.35 / 1.20, 7.3 s each
-  600 it, 37.6 s: re-solve gain 1.23 / 1.11, 7.3 s each
-  700 it, 43.2 s: re-solve gain 1.16 / 1.05, 7.0 s each
-  800 it, 48.7 s: re-solve gain 1.12 / 0.94, 7.1 s each
-  root 20:0.01:2: 320 it, 22.6 s, gain 1.67 / 1.18
-  root 20:0.01:3: 340 it, 23.6 s, gain 1.67 / 1.18
-  root 20:0.005:2: 440 it, 28.7 s, gain 1.51 / 1.20
-  root 20:0.005:3: 460 it, 29.9 s, gain 1.35 / 1.20
-  root 20:0.0035:2: 540 it, 34.3 s, gain 1.23 / 1.11
-  root 20:0.0035:3: 560 it, 35.4 s, gain 1.23 / 1.11
-  root 20:0.0025:2: 600 it, 37.6 s, gain 1.23 / 1.11
-  root 20:0.0025:3: 680 it, 42.2 s, gain 1.16 / 1.05
-  root 20:0.01:2 min 500: 520 it, 33.2 s, gain 1.35 / 1.20
-  root 20:0.01:2 min 600: 620 it, 38.8 s, gain 1.16 / 1.05
-  root 20:0.01:2 min 800: never
-  turn 20:0.02:2/max: 320 it, 22.6 s, gain 1.67 / 1.18
-  turn 20:0.02:2/mean: 320 it, 22.6 s, gain 1.67 / 1.18
-  turn 20:0.015:2/max: 360 it, 24.6 s, gain 1.67 / 1.18
-  turn 20:0.015:2/mean: 320 it, 22.6 s, gain 1.67 / 1.18
-  turn 20:0.01:2/max: 440 it, 28.7 s, gain 1.51 / 1.20
-  turn 20:0.01:2/mean: 320 it, 22.6 s, gain 1.67 / 1.18
-  turn 20:0.0075:2/max: 500 it, 32.2 s, gain 1.35 / 1.20
-  turn 20:0.0075:2/mean: 320 it, 22.6 s, gain 1.67 / 1.18
-  turn 20:0.005:2/max: never
-  turn 20:0.005:2/mean: 380 it, 25.8 s, gain 1.51 / 1.20
-  turn 40:0.02:2/max: 480 it, 31.0 s, gain 1.35 / 1.20
-  turn 40:0.02:2/mean: 360 it, 24.6 s, gain 1.67 / 1.18
-  turn 40:0.015:2/max: 520 it, 33.2 s, gain 1.35 / 1.20
-  turn 40:0.015:2/mean: 360 it, 24.6 s, gain 1.67 / 1.18
-  turn 40:0.01:2/max: never
-  turn 40:0.01:2/mean: 400 it, 26.8 s, gain 1.51 / 1.20
-  turn 40:0.0075:2/max: never
-  turn 40:0.0075:2/mean: 480 it, 31.0 s, gain 1.35 / 1.20
-  turn 40:0.005:2/max: never
-  turn 40:0.005:2/mean: 520 it, 33.2 s, gain 1.35 / 1.20
+two-tone: kept 6 line(s) in 4.1 s: check check / | bet 18.15 call / | bet 41.25 call / | check bet 18.15 call / | bet 18.15 raise 86.63 call / | check bet 41.25 call /
+  280 it, 20.0 s: re-solve gain 1.94 / 1.40, 6.9 s each
+  360 it, 24.3 s: re-solve gain 1.67 / 1.18, 6.9 s each
+  440 it, 28.6 s: re-solve gain 1.51 / 1.20, 6.7 s each
+  520 it, 32.9 s: re-solve gain 1.35 / 1.20, 7.4 s each
+  600 it, 37.0 s: re-solve gain 1.23 / 1.11, 6.6 s each
+  700 it, 42.2 s: re-solve gain 1.16 / 1.05, 6.4 s each
+  800 it, 47.3 s: re-solve gain 1.12 / 0.94, 6.4 s each
+  root 20:0.01:2: 320 it, 22.1 s, gain 1.67 / 1.18
+  root 20:0.01:3: 340 it, 23.2 s, gain 1.67 / 1.18
+  root 20:0.005:2: 440 it, 28.6 s, gain 1.51 / 1.20
+  root 20:0.005:3: 460 it, 29.7 s, gain 1.35 / 1.20
+  root 20:0.0035:2: 540 it, 33.9 s, gain 1.23 / 1.11
+  root 20:0.0035:3: 560 it, 35.0 s, gain 1.23 / 1.11
+  root 20:0.0025:2: 600 it, 37.0 s, gain 1.23 / 1.11
+  root 20:0.0025:3: 680 it, 41.2 s, gain 1.16 / 1.05
+  root 20:0.01:2 min 500: 520 it, 32.9 s, gain 1.35 / 1.20
+  root 20:0.01:2 min 600: 620 it, 38.0 s, gain 1.16 / 1.05
+  turn 20:0.02:2/max: 320 it, 22.1 s, gain 1.67 / 1.18
+  turn 20:0.02:2/mean: 320 it, 22.1 s, gain 1.67 / 1.18
+  turn 20:0.015:2/max: 320 it, 22.1 s, gain 1.67 / 1.18
+  turn 20:0.015:2/mean: 320 it, 22.1 s, gain 1.67 / 1.18
+  turn 20:0.01:2/max: 320 it, 22.1 s, gain 1.67 / 1.18
+  turn 20:0.01:2/mean: 320 it, 22.1 s, gain 1.67 / 1.18
+  turn 20:0.0075:2/max: 360 it, 24.3 s, gain 1.67 / 1.18
+  turn 20:0.0075:2/mean: 320 it, 22.1 s, gain 1.67 / 1.18
+  turn 20:0.005:2/max: 480 it, 30.8 s, gain 1.35 / 1.20
+  turn 20:0.005:2/mean: 380 it, 25.4 s, gain 1.51 / 1.20
+  turn 40:0.02:2/max: 360 it, 24.3 s, gain 1.67 / 1.18
+  turn 40:0.02:2/mean: 320 it, 22.1 s, gain 1.67 / 1.18
+  turn 40:0.015:2/max: 400 it, 26.4 s, gain 1.51 / 1.20
+  turn 40:0.015:2/mean: 360 it, 24.3 s, gain 1.67 / 1.18
+  turn 40:0.01:2/max: 520 it, 32.9 s, gain 1.35 / 1.20
+  turn 40:0.01:2/mean: 400 it, 26.4 s, gain 1.51 / 1.20
+  turn 40:0.0075:2/max: 600 it, 37.0 s, gain 1.23 / 1.11
+  turn 40:0.0075:2/mean: 480 it, 30.8 s, gain 1.35 / 1.20
+  turn 40:0.005:2/max: 800 it, 47.3 s, gain 1.12 / 0.94
+  turn 40:0.005:2/mean: 520 it, 32.9 s, gain 1.35 / 1.20
