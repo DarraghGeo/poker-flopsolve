@@ -51,7 +51,8 @@ function prepare(threads: number, shared: boolean) {
 
 /**
  * A stand-in for the engine module whose exports do nothing, except that
- * `setPhase` traps (`unreachable`) from its second call on. The first call
+ * `setPhase` traps (`unreachable`) from its second call on, and `runChance`
+ * always does, as a backstop. The first call
  * is in the thread's start-up, so the thread gets ready as usual; the next is
  * the first thing its part of each step does, inside the walk's `try`.
  *
@@ -78,7 +79,9 @@ function trappingEngine(): unknown {
 		0x0b,
 	];
 	// Every function is () -> (); calls from JavaScript may pass arguments all the same.
-	const bodies = names.flatMap((name) => (name === 'setPhase' ? [trapAfterFirst.length, ...trapAfterFirst] : [2, 0, 0x0b]));
+	const trap = [0x00, 0x00, 0x0b];
+	const body = (name: string) => (name === 'setPhase' ? trapAfterFirst : name === 'runChance' ? trap : [0x00, 0x0b]);
+	const bodies = names.flatMap((name) => [body(name).length, ...body(name)]);
 	const bytes = Uint8Array.from([
 		0x00, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
 		...section(1, [1, 0x60, 0, 0]),
@@ -100,6 +103,8 @@ function trappingEngine(): unknown {
  */
 export function brokenEngine(spawn: SpawnEngineWorker, threads = 2): Engine {
 	const { spot, plan, ctx } = prepare(threads, false);
+	// Compiled once; each thread instantiates it, so each has its own count.
+	const module = trappingEngine();
 	const engine = createEngine(
 		{
 			tree: spot.tree, runouts: spot.runouts, players: spot.players, layout: ctx.layout, active: ctx.active,
@@ -107,7 +112,7 @@ export function brokenEngine(spawn: SpawnEngineWorker, threads = 2): Engine {
 		},
 		{
 			plan, threads,
-			spawn: (setup, onError) => spawn({ ...setup, module: trappingEngine() }, onError),
+			spawn: (setup, onError) => spawn({ ...setup, module }, onError),
 		},
 	);
 	if (!engine) throw new Error('The WebAssembly engine is not available here');
