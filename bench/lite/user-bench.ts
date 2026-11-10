@@ -23,7 +23,8 @@ import { settlePlan } from '../../src/settle.ts';
 import { enableThreads, threadsUnavailable } from '../../src/threads.ts';
 import { NodeKind } from '../../src/tree.ts';
 import { wasmStorage } from '../../src/wasm-storage.ts';
-import type { BenchCheck, BenchEnvironment, BenchMode, BenchVariant, CaseResult } from './user-bench-summary.ts';
+import { PROFILE, threadProfiles } from '../../src/engine.ts';
+import type { BenchCheck, BenchEnvironment, BenchMode, BenchVariant, CaseResult, ThreadProfile } from './user-bench-summary.ts';
 
 /** What the page asks a worker to run. */
 export interface BenchCase {
@@ -130,6 +131,7 @@ export async function runCase(c: BenchCase, progress: (p: BenchProgress) => void
 	}
 	const solution = run.snapshot();
 	const workers = run.workers;
+	const threadProfile = profileOf(threadProfiles.get(run.solver), workers);
 	const engine = run.engine;
 	t = now();
 	run.close();
@@ -184,6 +186,20 @@ export async function runCase(c: BenchCase, progress: (p: BenchProgress) => void
 		},
 		checks,
 		resolve,
+		threadProfile,
+	};
+}
+
+/** The engine's profile, per traversal; null on one thread. */
+function profileOf(profile: Float64Array | undefined, workers: number): ThreadProfile | null {
+	if (!profile || profile[PROFILE.traversals] === 0) return null;
+	const n = profile[PROFILE.traversals];
+	return {
+		traversals: n,
+		mainAlone: (profile[PROFILE.collect] + profile[PROFILE.override] + profile[PROFILE.reduce]) / n,
+		wait: profile[PROFILE.wait] / n,
+		busy: Array.from({ length: workers }, (_, w) => profile[PROFILE.busy + w] / n),
+		traversal: profile[PROFILE.run] / n,
 	};
 }
 

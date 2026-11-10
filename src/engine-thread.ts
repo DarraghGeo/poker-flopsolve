@@ -33,6 +33,7 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 	const TRAVERSER = 4;
 	const READY = 5;
 	const FAILED = 6;
+	const NEXT = 7;
 	const EXIT = 1;
 
 	const api = (globalThis as unknown as {
@@ -68,7 +69,8 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 	engine.init(setup.header);
 	engine.setMaxActions(setup.maxActions);
 	engine.setExchange(setup.exchange[0], setup.exchange[1], setup.exchange[2], setup.exchange[3]);
-	engine.setShard(setup.shard[0], setup.shard[1], setup.shard[2]);
+	const [round, boards] = setup.shard;
+	engine.setShard(round, 0, 0);
 	engine.setPhase(0, 1);
 	const shared = setup.shared;
 	if (shared) engine.setShared(shared[0], shared[1], shared[2]);
@@ -83,8 +85,14 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 	const settings = new Float64Array(setup.settings);
 	const entries = setup.entryNodes.length;
 	const rowBytes = setup.stride * 4;
-	const partials = new Float32Array(memory.buffer, setup.partial, entries * setup.stride);
+	const stride = setup.stride;
 	const reach = setup.exchange[1];
+	// `scheduleViews` in src/engine.ts, inlined.
+	const order = new Int32Array(setup.schedule, 0, boards);
+	const cost = new Float64Array(setup.schedule, Math.ceil(boards / 2) * 8, 2 * boards);
+	const into = setup.boardValues >>> 2;
+	const profile = new Float64Array(setup.profile[0]);
+	const busy = setup.profile[1];
 
 	// Latch the generation before announcing readiness, so no dispatch is missed.
 	let generation = Atomics.load(control, GENERATION);
@@ -108,13 +116,27 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 			// Off for a current-profile read, which updates nothing.
 			engine.setPhase(0, settings[5]);
 			if (needsIteration) engine.setIteration(settings[6], settings[7]);
-			for (let entry = 0; entry < entries; entry++) {
-				const slot = reach + entry * 2 * rowBytes;
-				const out = engine.runChance(
-					mode, traverser, setup.entryNodes[entry], slot, slot + rowBytes, positive, negative, sum, weight, clamp,
-				) >>> 0; // a usize, signed on its way out; see `EngineExports`
-				partials.set(new Float32Array(memory.buffer, out, setup.stride), entry * setup.stride);
+			const heap = new Float32Array(memory.buffer);
+			const started = performance.now();
+			// Boards off the shared order until none are left; each board's
+			// values in its own rows, so whoever walks it gives the same sum.
+			for (;;) {
+				const taken = Atomics.add(control, NEXT, 1);
+				if (taken >= boards) break;
+				const board = order[taken];
+				engine.setShard(round, board, board + 1);
+				const boardStarted = performance.now();
+				for (let entry = 0; entry < entries; entry++) {
+					const slot = reach + entry * 2 * rowBytes;
+					const out = engine.runChance(
+						mode, traverser, setup.entryNodes[entry], slot, slot + rowBytes, positive, negative, sum, weight, clamp,
+					) >>> 2; // a usize, signed on its way out; see `EngineExports`
+					heap.copyWithin(into + (board * entries + entry) * stride, out, out + stride);
+				}
+				// Training walks only, as `runThreaded` in src/engine.ts.
+				if (mode === 0 && settings[5] === 1) cost[traverser * boards + board] = performance.now() - boardStarted;
 			}
+			profile[busy] += performance.now() - started;
 		} catch (error) {
 			// The main thread is blocked in Atomics.wait and cannot see this
 			// thread's error event, so say so in shared memory (and count as

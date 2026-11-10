@@ -4,6 +4,18 @@
 
 Not in 0.5.0-beta.0, which was already published: this lands in the next beta or in 0.5.0.
 
+### Faster: engine threads share out boards (issue #133)
+
+- On the WebAssembly engine, threads take the split round's boards off a shared queue,
+  costliest first, instead of fixed slices. `solveLite` on As Kh 7d settled about 15% sooner
+  on 2 and 4 threads in headless Chromium (57.9 → 49.3 s, 33.7 → 28.1 s), turn re-solves
+  12–19% sooner; the slowest thread now walks within 1% of the mean, from about 13%.
+- A threaded solve on the WebAssembly engine is now bitwise the same at every thread count
+  from two up, not only at a fixed count. One thread still agrees with it only to floating
+  point, as before.
+- `npm run bench:lite` (issue #133) times `solveLite` phase by phase in any browser, at each
+  thread count, and reports each thread's walking time.
+
 ### Changed: EV is a percentage of the pot (issue #130) — breaking
 
 - `Solution.ev(player)` and `Solution.handEvs(player)` now report the player's **share of the

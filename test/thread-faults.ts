@@ -132,6 +132,7 @@ function vanish(control: SharedArrayBuffer, ready: number): { terminate(): void 
  */
 export function vanishingEngine(spawn: SpawnEngineWorker, threads: number, backstopFloorMs: number): Engine {
 	const { spot, plan, ctx } = prepare(threads, false);
+	let spawned = 0;
 	const engine = createEngine(
 		{
 			tree: spot.tree, runouts: spot.runouts, players: spot.players, layout: ctx.layout, active: ctx.active,
@@ -139,8 +140,7 @@ export function vanishingEngine(spawn: SpawnEngineWorker, threads: number, backs
 		},
 		{
 			plan, threads, backstopFloorMs,
-			spawn: (setup, onError) =>
-				setup.shard[2] === plan.bounds[threads] ? vanish(setup.control, ENGINE_CONTROL.ready) : spawn(setup, onError),
+			spawn: (setup, onError) => (++spawned === threads - 1 ? vanish(setup.control, ENGINE_CONTROL.ready) : spawn(setup, onError)),
 		},
 	);
 	if (!engine) throw new Error('The WebAssembly engine is not available here');

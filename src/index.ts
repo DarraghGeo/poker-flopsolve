@@ -21,7 +21,7 @@ import { suitSymmetries } from './abstraction.ts';
 import { activeCombos, parseRange } from './range.ts';
 import { buildShowdownTable } from './showdown.ts';
 import { buildHandSpace } from './hands.ts';
-import { createEngine } from './engine.ts';
+import { createEngine, threadProfiles } from './engine.ts';
 import type { WasmStorage } from './engine.ts';
 import type { WarmStartReport } from './warm.ts';
 import { warmStart } from './warm.ts';
@@ -1387,6 +1387,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		if (warm) ctx.sampling?.lastUpdate.fill(offset);
 
 		solver = makeSolver(ctx);
+		if (engine?.profile) threadProfiles.set(solver, engine.profile);
 		if (warm && coarsePlan) coarseMs.set(solver, coarsePlan.elapsed);
 		// The engine runs its own threads; the JavaScript pool is for the rest.
 		pool = plan && !engine

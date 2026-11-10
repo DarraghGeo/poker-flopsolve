@@ -72,6 +72,31 @@ export interface CaseResult {
 	readonly checks: readonly BenchCheck[];
 	/** The turn re-solve, if asked for. */
 	readonly resolve: { readonly turn: string; readonly iterations: number; readonly workers: number } | null;
+	/**
+	 * The blueprint's threaded traversals, from the engine's profile (`PROFILE` in
+	 * src/engine.ts), ms per traversal; null on one thread. Absent from reports
+	 * made before it was added.
+	 */
+	readonly threadProfile?: ThreadProfile | null;
+}
+
+/** Where a threaded traversal's time went, ms per traversal. */
+export interface ThreadProfile {
+	readonly traversals: number;
+	/** The main thread's walks above the split, before and after the threads, and adding their values. */
+	readonly mainAlone: number;
+	/** The main thread's wait for the others once it had no board left. */
+	readonly wait: number;
+	/** Each thread's time walking boards, the main thread's first. */
+	readonly busy: readonly number[];
+	/** The whole traversal. */
+	readonly traversal: number;
+}
+
+/** The slowest thread's walking time over the mean; 1 is even. */
+export function imbalance(profile: ThreadProfile): number {
+	const mean = profile.busy.reduce((a, b) => a + b, 0) / profile.busy.length;
+	return Math.max(...profile.busy) / mean;
 }
 
 /** Where the cases ran. */
@@ -120,6 +145,8 @@ export interface SummaryRow {
 	/** Karp–Flatt serial fraction against that baseline; null at the baseline itself. */
 	readonly serialFraction: number | null;
 	readonly resolveSeconds: number | null;
+	/** `imbalance` of the thread profile; null on one thread or without one. */
+	readonly imbalance: number | null;
 }
 
 /** A label for a case. */
@@ -169,6 +196,7 @@ export function summarise(cases: readonly CaseResult[]): SummaryRow[] {
 				efficiency: speedup / p,
 				serialFraction: p > 1 ? (1 / speedup - 1 / p) / (1 - 1 / p) : null,
 				resolveSeconds: c.resolve ? c.ms.resolve / 1000 : null,
+				imbalance: c.threadProfile ? imbalance(c.threadProfile) : null,
 			});
 		}
 	}
@@ -182,13 +210,14 @@ function perIteration(c: CaseResult): number {
 
 /** The summary as a plain-text table. */
 export function formatSummary(rows: readonly SummaryRow[]): string {
-	const head = ['spot', 'variant', 'mode', 'threads', 'iters', 'stop', 'total s', 'ms/iter', 'fixed', 'speed-up', 'efficiency', 'serial', 're-solve s'];
+	const head = ['spot', 'variant', 'mode', 'threads', 'iters', 'stop', 'total s', 'ms/iter', 'fixed', 'speed-up', 'efficiency', 'serial', 'imbalance', 're-solve s'];
 	const fixed = (v: number, digits: number): string => (Number.isFinite(v) ? v.toFixed(digits) : '-');
 	const percent = (v: number): string => (Number.isFinite(v) ? `${(100 * v).toFixed(0)}%` : '-');
 	const body = rows.map((r) => [
 		r.name, r.variant, r.mode, String(r.threads), String(r.iterations), r.stoppedAt,
 		fixed(r.seconds, 1), fixed(r.msPerIteration, 0), percent(r.fixedShare), `${fixed(r.speedup, 2)}x`, percent(r.efficiency),
-		r.serialFraction === null ? '-' : percent(r.serialFraction), r.resolveSeconds === null ? '-' : fixed(r.resolveSeconds, 1),
+		r.serialFraction === null ? '-' : percent(r.serialFraction), r.imbalance === null ? '-' : fixed(r.imbalance, 3),
+		r.resolveSeconds === null ? '-' : fixed(r.resolveSeconds, 1),
 	]);
 	const all = [head, ...body];
 	const widths = head.map((_, i) => Math.max(...all.map((row) => row[i].length)));
