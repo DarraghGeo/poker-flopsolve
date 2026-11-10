@@ -115,7 +115,7 @@ function capped(createRun, defineSpot, COMBO_CARDS, config, workers, capMs) {
 		return {
 			iterations: run.completed,
 			exploitability: run.exploitabilityPercent(),
-			ev: [solution.ev(0), solution.ev(1)],
+			ev: [solution.evChips(0), solution.evChips(1)],
 			combos: [p0.ev, p1.ev],
 			reach: [p0.reach, p1.reach],
 		};
@@ -130,7 +130,7 @@ function fixed(createRun, defineSpot, config, workers, iterations) {
 		run.step(iterations);
 		const solution = run.snapshot();
 		return {
-			ev: [solution.ev(0), solution.ev(1)],
+			ev: [solution.evChips(0), solution.evChips(1)],
 			root: Array.from(solution.strategyAt(solution.spot.tree.decisionNodes[0], 0).probs),
 		};
 	} finally {
@@ -230,7 +230,7 @@ for (const [name, config] of Object.entries(spots)) {
 		console.error(`Reference for ${name} (Node, 4 threads, to 0.1%)...`);
 		const solution = solve(defineSpot(config), { workers: 4, targetPercent: 0.1, iterations: 20_000 });
 		reference = [0, 1].map((p) => measure.comboEvs(solution, p as 0 | 1, COMBO_CARDS, config));
-		referenceEv = [solution.ev(0), solution.ev(1)];
+		referenceEv = [solution.evChips(0), solution.evChips(1)];
 		console.log(`\nReference: ${solution.iterations} iterations, ${solution.exploitabilityPercent().toFixed(3)}% of pot.`);
 	}
 

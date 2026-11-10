@@ -29,7 +29,7 @@ function solveWith(config: SpotConfig, iterations: number, options: SolveOptions
 			regret: Float64Array.from(run.solver.ctx.regret),
 			sums: Float64Array.from(run.solver.ctx.strategySum),
 			exploitability: run.exploitabilityPercent(),
-			ev: run.snapshot().ev(0),
+			ev: run.snapshot().evChips(0),
 			bytes: run.solver.ctx.sampling?.bytes ?? 0,
 		};
 	} finally {

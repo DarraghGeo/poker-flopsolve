@@ -1,0 +1,25 @@
+kept 19 line(s) in 2.1 s: check check / | bet 18.15 call / | bet 41.25 call / | check bet 41.25 call / | check bet 82.5 call / | bet 18.15 raise 86.63 call / | check bet 18.15 call / | bet 82.5 call / | bet 41.25 raise 144.38 call / | check bet 18.15 raise 86.63 call / | check bet 41.25 raise 144.38 call / | bet 18.15 raise 86.63 raise 257.83 call / | check bet 82.5 raise 247.5 call / | check bet 18.15 raise 86.63 raise 257.83 call / | bet 41.25 raise 144.38 raise 402.2 call / | check bet 41.25 raise 144.38 raise 402.2 call / | check bet 82.5 raise 247.5 raise 660 call / | bet 82.5 raise 247.5 call / | bet 82.5 raise 247.5 raise 660 call /
+monotone-keep=150+i16-4t-20_0.0035_2: 306 nodes, 478 runouts, 187 MiB f32, 97 MiB i16
+  50 it, 3.8 s, 27.602%, loss 0.8949 / 1.2282
+  100 it, 4.9 s, 8.295%, loss 0.2125 / 0.3108
+  150 it, 6.1 s, 3.542%, loss 0.1186 / 0.1602
+  200 it, 7.3 s, 1.937%, loss 0.0861 / 0.1016
+  250 it, 8.4 s, 1.281%, loss 0.0706 / 0.0652
+  300 it, 9.6 s, 0.952%, loss 0.0636 / 0.0465
+  350 it, 10.7 s, 0.738%, loss 0.0599 / 0.0384
+  400 it, 12.0 s, 0.575%, loss 0.0575 / 0.0338
+  450 it, 13.2 s, 0.462%, loss 0.0559 / 0.0311
+  500 it, 14.3 s, 0.380%, loss 0.0546 / 0.0295
+blueprint: settled at 540 it, 15.2 s solving (28 ms/it), 0.328%, engine wasm, 4 thread(s), peak RSS 383 MiB
+root EV error, % pot: OOP mean 0.348 max 0.981; IP mean 0.450 max 2.751
+root play loss at reference values, % pot: 0.0537 / 0.0285 (reference's own 0.0489 / 0.0250)
+  re-solve bet_18.15_call_-2h (reached 13.7%), 300 it: opponent gains 3.408 / 0.618% of its pot, 5.6 / 5.7 s
+  re-solve bet_18.15_call_-As (reached 13.7%), 300 it: opponent gains 2.595 / 0.782% of its pot, 2.8 / 2.7 s
+  re-solve bet_18.15_call_-Qd (reached 13.7%), 300 it: opponent gains 3.323 / 0.840% of its pot, 5.2 / 5.4 s
+  re-solve check_bet_41.25_call_-2h (reached 7.7%), 300 it: opponent gains 0.811 / 0.995% of its pot, 3.3 / 3.6 s
+  re-solve check_bet_41.25_call_-As (reached 7.7%), 300 it: opponent gains 2.036 / 0.853% of its pot, 1.6 / 1.8 s
+  re-solve check_bet_41.25_call_-Qd (reached 7.7%), 300 it: opponent gains 0.810 / 1.515% of its pot, 3.5 / 3.5 s
+  re-solve check_check_-2h (reached 61.0%), 300 it: opponent gains 0.795 / 1.074% of its pot, 6.9 / 7.2 s
+  re-solve check_check_-As (reached 61.0%), 300 it: opponent gains 1.763 / 0.963% of its pot, 3.4 / 3.2 s
+  re-solve check_check_-Qd (reached 61.0%), 300 it: opponent gains 0.953 / 1.069% of its pot, 6.5 / 7.0 s
+re-solve 300 it: gain weighted by line reach OOP 1.497% / IP 0.996%, mean 4.4 s each

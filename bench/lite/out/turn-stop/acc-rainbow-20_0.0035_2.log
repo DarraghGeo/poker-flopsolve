@@ -1,0 +1,28 @@
+kept 3 line(s) in 4.9 s: check check / | bet 18.15 call / | bet 82.5 call /
+rainbow-keep=150+i16-4t-20_0.0035_2: 306 nodes, 1396 runouts, 285 MiB f32, 150 MiB i16
+  50 it, 9.2 s, 23.359%, loss 0.6359 / 0.2793
+  100 it, 12.6 s, 9.610%, loss 0.2037 / 0.0875
+  150 it, 15.9 s, 5.662%, loss 0.1132 / 0.0409
+  200 it, 19.1 s, 4.068%, loss 0.0785 / 0.0250
+  250 it, 22.2 s, 3.198%, loss 0.0598 / 0.0179
+  300 it, 25.6 s, 2.656%, loss 0.0473 / 0.0138
+  350 it, 28.7 s, 2.323%, loss 0.0385 / 0.0115
+  400 it, 31.9 s, 2.127%, loss 0.0321 / 0.0101
+  450 it, 35.2 s, 2.026%, loss 0.0276 / 0.0091
+  500 it, 38.4 s, 1.979%, loss 0.0246 / 0.0084
+  550 it, 41.5 s, 1.985%, loss 0.0227 / 0.0079
+  600 it, 44.6 s, 1.971%, loss 0.0213 / 0.0076
+  650 it, 47.7 s, 1.935%, loss 0.0196 / 0.0073
+blueprint: settled at 680 it, 49.5 s solving (73 ms/it), 1.915%, engine wasm, 4 thread(s), peak RSS 570 MiB
+root EV error, % pot: OOP mean 0.340 max 1.614; IP mean 0.448 max 1.494
+root play loss at reference values, % pot: 0.0187 / 0.0072 (reference's own 0.0100 / 0.0060)
+  re-solve bet_82.5_call_-2c (reached 12.5%), 300 it: opponent gains 0.658 / 0.311% of its pot, 3.1 / 3.0 s
+  re-solve bet_82.5_call_-7c (reached 12.5%), 300 it: opponent gains 0.860 / 0.259% of its pot, 3.0 / 2.9 s
+  re-solve bet_82.5_call_-Qs (reached 12.5%), 300 it: opponent gains 0.744 / 0.391% of its pot, 2.9 / 2.8 s
+  re-solve check_bet_41.25_call_-2c (reached 5.4%), 300 it: opponent gains 3.481 / 4.316% of its pot, 3.8 / 4.1 s
+  re-solve check_bet_41.25_call_-7c (reached 5.4%), 300 it: opponent gains 0.944 / 2.669% of its pot, 4.1 / 4.1 s
+  re-solve check_bet_41.25_call_-Qs (reached 5.4%), 300 it: opponent gains 5.473 / 2.982% of its pot, 4.1 / 3.9 s
+  re-solve check_check_-2c (reached 47.5%), 300 it: opponent gains 1.344 / 1.434% of its pot, 10.0 / 10.0 s
+  re-solve check_check_-7c (reached 47.5%), 300 it: opponent gains 1.989 / 0.880% of its pot, 10.1 / 10.1 s
+  re-solve check_check_-Qs (reached 47.5%), 300 it: opponent gains 1.419 / 1.682% of its pot, 9.6 / 14.3 s
+re-solve 300 it: gain weighted by line reach OOP 1.567% / IP 1.304%, mean 5.9 s each

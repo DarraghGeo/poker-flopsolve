@@ -1,0 +1,38 @@
+rainbow: kept 3 line(s) in 5.2 s: check check / | bet 18.15 call / | bet 82.5 call /
+  280 it, 24.9 s: re-solve gain 4.25 / 2.36, 5.8 s each
+  360 it, 30.0 s: re-solve gain 3.21 / 2.00, 5.8 s each
+  440 it, 35.1 s: re-solve gain 2.46 / 1.70, 5.8 s each
+  520 it, 40.5 s: re-solve gain 2.00 / 1.50, 6.1 s each
+  600 it, 45.7 s: re-solve gain 1.76 / 1.40, 5.5 s each
+  700 it, 52.5 s: re-solve gain 1.57 / 1.24, 5.8 s each
+  800 it, 59.2 s: re-solve gain 1.41 / 1.13, 6.1 s each
+  root 20:0.01:2: 440 it, 35.1 s, gain 2.46 / 1.70
+  root 20:0.01:3: 460 it, 36.5 s, gain 2.00 / 1.50
+  root 20:0.005:2: 580 it, 44.5 s, gain 1.76 / 1.40
+  root 20:0.005:3: 600 it, 45.7 s, gain 1.76 / 1.40
+  root 20:0.0035:2: 680 it, 51.0 s, gain 1.57 / 1.24
+  root 20:0.0035:3: 700 it, 52.5 s, gain 1.57 / 1.24
+  root 20:0.0025:2: never
+  root 20:0.0025:3: never
+  root 20:0.01:2 min 500: 520 it, 40.5 s, gain 2.00 / 1.50
+  root 20:0.01:2 min 600: 620 it, 47.1 s, gain 1.57 / 1.24
+  turn 20:0.02:2/max: 440 it, 35.1 s, gain 2.46 / 1.70
+  turn 20:0.02:2/mean: 440 it, 35.1 s, gain 2.46 / 1.70
+  turn 20:0.015:2/max: 440 it, 35.1 s, gain 2.46 / 1.70
+  turn 20:0.015:2/mean: 440 it, 35.1 s, gain 2.46 / 1.70
+  turn 20:0.01:2/max: 440 it, 35.1 s, gain 2.46 / 1.70
+  turn 20:0.01:2/mean: 440 it, 35.1 s, gain 2.46 / 1.70
+  turn 20:0.0075:2/max: 440 it, 35.1 s, gain 2.46 / 1.70
+  turn 20:0.0075:2/mean: 440 it, 35.1 s, gain 2.46 / 1.70
+  turn 20:0.005:2/max: 480 it, 37.8 s, gain 2.00 / 1.50
+  turn 20:0.005:2/mean: 500 it, 39.2 s, gain 2.00 / 1.50
+  turn 40:0.02:2/max: 440 it, 35.1 s, gain 2.46 / 1.70
+  turn 40:0.02:2/mean: 440 it, 35.1 s, gain 2.46 / 1.70
+  turn 40:0.015:2/max: 440 it, 35.1 s, gain 2.46 / 1.70
+  turn 40:0.015:2/mean: 440 it, 35.1 s, gain 2.46 / 1.70
+  turn 40:0.01:2/max: 520 it, 40.5 s, gain 2.00 / 1.50
+  turn 40:0.01:2/mean: 520 it, 40.5 s, gain 2.00 / 1.50
+  turn 40:0.0075:2/max: 600 it, 45.7 s, gain 1.76 / 1.40
+  turn 40:0.0075:2/mean: 600 it, 45.7 s, gain 1.76 / 1.40
+  turn 40:0.005:2/max: 720 it, 53.8 s, gain 1.41 / 1.13
+  turn 40:0.005:2/mean: 680 it, 51.0 s, gain 1.57 / 1.24

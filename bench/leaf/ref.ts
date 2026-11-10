@@ -29,7 +29,7 @@ const sol = run.snapshot();
 const { tree, runouts } = spot;
 const reach0 = [Float64Array.from(spot.players[0].weights), Float64Array.from(spot.players[1].weights)] as const;
 const rootEv = [0, 1].map((p) => Array.from(comboEv(run, 0, 0, p as 0 | 1, reach0[p], reach0[1 - p], spot.board).ev, (v) => (Number.isNaN(v) ? null : v)));
-writeFileSync(`${outdir}/ref-${name}.json`, JSON.stringify({ name, combos: spot.estimate.combos, iterations: it, exploit: e, seconds, ev: [sol.ev(0), sol.ev(1)], rootEv, weights: reach0.map((r) => Array.from(r)) }));
+writeFileSync(`${outdir}/ref-${name}.json`, JSON.stringify({ name, combos: spot.estimate.combos, iterations: it, exploit: e, seconds, ev: [sol.evChips(0), sol.evChips(1)], rootEv, weights: reach0.map((r) => Array.from(r)) }));
 
 // Turn leaves: decisions at round 1 whose parent is a chance node.
 const parent = new Int32Array(tree.nodeCount).fill(-1);

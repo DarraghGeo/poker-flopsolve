@@ -154,7 +154,7 @@ function reference(): Reference | null {
 		iterations: run.completed,
 		seconds: (performance.now() - started) / 1000,
 		weights: [0, 1].map((p) => Array.from(spot.players[p].weights)),
-		evs: [0, 1].map((p) => Array.from(solution.handEvs(p as 0 | 1))),
+		evs: [0, 1].map((p) => Array.from(solution.handEvsChips(p as 0 | 1))),
 		actions: rootActions(run),
 	};
 	run.close();
@@ -204,7 +204,7 @@ for (const variant of (args.variants ?? 'river').split(',')) {
 		run.step(at - run.completed);
 		elapsed += performance.now() - started;
 		const solution = run.snapshot();
-		const error = evError(ref, [solution.handEvs(0), solution.handEvs(1)]);
+		const error = evError(ref, [solution.handEvsChips(0), solution.handEvsChips(1)]);
 		const gib = (bytes: number): string => `${(bytes / 2 ** 30).toFixed(2)} GiB`;
 		const actions = ref?.actions ? actionError(ref, run, rootActions(run)) : null;
 		const actionColumns = actions ? `${actions.mean.toFixed(3)} | ${actions.agree.toFixed(1)}%` : '– | –';

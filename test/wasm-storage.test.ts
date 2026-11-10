@@ -193,7 +193,7 @@ describe.runIf(engineAvailable())('16-bit and compact storage on the WebAssembly
 		const river = tree.decisionNodes.find((n) => tree.round[n] === 2)!;
 		const probs = solution.strategyAt(river, 0).probs;
 		expect(probs.every((p) => p >= 0 && p <= 1)).toBe(true);
-		expect(Math.abs(solution.ev(0) - js.snapshot().ev(0))).toBeLessThan(0.05);
+		expect(Math.abs(solution.evChips(0) - js.snapshot().evChips(0))).toBeLessThan(0.05);
 		// A turn re-solve, itself on the storage engine.
 		let turnNode = -1;
 		for (let node = 0; node < tree.nodeCount && turnNode < 0; node++) {
