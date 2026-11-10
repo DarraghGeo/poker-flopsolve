@@ -48,3 +48,4 @@
 {"url":"https://claude.ai/code/session_014RSNFiUt5CpwBR2XRN59v8","title":"Refactor and Code Clean","issue":125,"state":"archived","updated":"2026-11-09T13:27:23.553Z"}
 {"url":"https://claude.ai/code/session_014RSNFiZfZ7Fnnw8fQKT4Uy","title":"Report EV as a percentage of the flop pot won (fold = 0%), like other solvers","issue":130,"state":"active","updated":"2026-11-10T02:16:06.977Z"}
 {"url":"https://claude.ai/code/session_014RSNFgRU8RwFX6nCriCpAt","title":"Lite: a stop that waits for the turn ranges, not only the root play","issue":123,"state":"active","updated":"2026-11-10T02:16:06.977Z"}
+{"url":null,"title":"Investigate Options to Speed Up","issue":133,"state":"active","updated":"2026-11-10T18:08:19.852Z"}
