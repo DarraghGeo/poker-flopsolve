@@ -1086,7 +1086,10 @@ the WebAssembly engine in Node and the browser, the JavaScript engine in Node). 
 samples the deals of its own runouts, and whether a deal is walked on an iteration is a hash
 of its chance node, the deal and the iteration, so every thread count walks the same deals
 and a fixed count is bitwise repeatable. On 4 Chromium threads it ran 3.1–3.2× faster than on
-one (`bench/blueprint-share/README.md`). The baselines count against `maxBytes`. With `p: 1` it is the exact solve, bit for bit. `rounds: [2]` samples
+one (`bench/blueprint-share/README.md`). The baselines count against `maxBytes`: with `precision` unset, a spot whose 32-bit
+storage fits but not beside its baselines is solved at 16 bits (issue #139; on the JavaScript
+engine unless the solve passes `wasmStorage`), and an explicit `precision` that does not fit
+throws. With `p: 1` it is the exact solve, bit for bit. `rounds: [2]` samples
 river deals only. It works over any storage: 32 or 16 bits (since issue #102) or compact.
 
 ### Storage: 16-bit and compact
