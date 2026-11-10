@@ -193,6 +193,11 @@ describe('site page in a browser', () => {
 		await page.click('#explore .crumb[data-trail="0"]');
 		await page.waitForFunction("document.querySelector('#explore .spot-line').textContent.includes('Turn')", undefined, { timeout: 20_000 });
 		expect(await page.evaluate<number>("document.querySelectorAll('#explore .crumb').length")).toBe(0);
+		// Changing the form frees the solve: the results stay, the walk-through stops.
+		await page.click('#bets button:nth-child(3)');
+		await page.waitForFunction("document.querySelectorAll('#explore .step-into').length === 0", undefined, { timeout: 20_000 });
+		expect(await page.textContent('#explore .hint')).toContain('Run the spot again');
+		expect(await page.textContent('#explore .legend')).toContain('Check');
 		expect(errors).toEqual([]);
 	});
 

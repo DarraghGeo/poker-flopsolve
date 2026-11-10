@@ -114,7 +114,7 @@ export function configOf(settings: Settings, auto = 512): SpotConfig {
 		oop: settings.oop,
 		ip: settings.ip,
 		betSizes: [[...settings.bets]],
-		raiseSizes: settings.raiseSizes.length > 0 ? settings.raiseSizes.map((times) => ({ times })) : undefined,
+		raiseSizes: settings.raises > 0 && settings.raiseSizes.length > 0 ? settings.raiseSizes.map((times) => ({ times })) : undefined,
 		maxRaises: 1 + settings.raises,
 		allowAllIn: settings.allIn,
 	};

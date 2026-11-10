@@ -7,7 +7,7 @@
  * step with a `NodeView`, plain data the page can draw.
  */
 
-import { COMBO_CARDS, formatCards, NodeKind } from '../../src/index.ts';
+import { ACTION_LABELS, ActionKind, COMBO_CARDS, formatCards, NodeKind } from '../../src/index.ts';
 import type { Solution, Spot } from '../../src/index.ts';
 import { cellOfCards, CELLS } from './hands.ts';
 
@@ -17,6 +17,8 @@ export interface Step {
 	readonly board: number;
 	/** A card is dealt on the way. */
 	readonly dealt: boolean;
+	/** The street of that decision, 0 at the spot's first. */
+	readonly round: number;
 }
 
 /** One decision on one board, ready to draw. */
@@ -30,6 +32,10 @@ export interface NodeView {
 	readonly cards: string;
 	/** Pot at the decision, chips. */
 	readonly pot: number;
+	/**
+	 * `check`, `call`, `fold`, or the kind and the chips the actor has in on
+	 * this street after it: `bet 10`, `raise 30`, `allin 45`.
+	 */
 	readonly actions: readonly string[];
 	/** Each action's share over the range that gets here; zeros when nobody does. */
 	readonly frequencies: readonly number[];
@@ -37,8 +43,12 @@ export interface NodeView {
 	readonly cells: readonly (readonly number[] | null)[];
 	/** Where each action leads. */
 	readonly next: readonly (Step | null)[];
-	/** The other cards that could have come at this street, to switch to; empty at the first street. */
-	readonly runouts: readonly { readonly board: number; readonly card: string }[];
+	/**
+	 * The cards that could have come at this street, to switch to; empty at
+	 * the first street. A stored runout stands for its suit mirrors too
+	 * (`also`), which play the same with the suits swapped.
+	 */
+	readonly runouts: readonly { readonly board: number; readonly card: string; readonly also: readonly string[] }[];
 }
 
 /** The decision an action leads to, through any card dealt, or null where the hand ends. */
@@ -55,7 +65,42 @@ export function stepOf(spot: Spot, node: number, board: number, action: number):
 		dealt = true;
 		child = tree.edgeChild[tree.firstEdge[child]];
 	}
-	return tree.kind[child] === NodeKind.Decision ? { node: child, board: at, dealt } : null;
+	return tree.kind[child] === NodeKind.Decision ? { node: child, board: at, dealt, round: tree.round[child] } : null;
+}
+
+const streetStarts = new WeakMap<Spot, Int32Array>();
+
+/** Each decision's pot when its street began, in units; the tree keeps only the pot at the node. */
+function streetStartPots(spot: Spot): Int32Array {
+	const cached = streetStarts.get(spot);
+	if (cached) return cached;
+	const { tree } = spot;
+	const out = new Int32Array(tree.nodeCount);
+	const stack: [number, number][] = [[0, tree.pot[0]]];
+	while (stack.length > 0) {
+		const [node, start] = stack.pop()!;
+		const kind = tree.kind[node];
+		if (kind === NodeKind.Chance) {
+			const child = tree.edgeChild[tree.firstEdge[node]];
+			stack.push([child, tree.pot[child]]);
+			continue;
+		}
+		if (kind !== NodeKind.Decision) continue;
+		out[node] = start;
+		for (let e = 0; e < tree.numEdges[node]; e++) stack.push([tree.edgeChild[tree.firstEdge[node] + e], start]);
+	}
+	streetStarts.set(spot, out);
+	return out;
+}
+
+/** An action as `NodeView.actions` names it, counting this street's chips only. */
+function streetLabel(spot: Spot, node: number, edge: number): string {
+	const { tree } = spot;
+	const action = tree.edgeAction[edge];
+	if (action < ActionKind.Bet) return ACTION_LABELS[action];
+	// Both players have the same in when a street begins.
+	const before = (streetStartPots(spot)[node] - tree.pot[0]) / 2;
+	return `${ACTION_LABELS[action]} ${(tree.edgeTarget[edge] - before) / spot.chipScale}`;
 }
 
 /** The view of `node` on `board`. */
@@ -97,11 +142,14 @@ export function nodeView(spot: Spot, solution: Solution, node: number, board: nu
 		cells.push(w > 0 ? Array.from({ length: actions }, (_, k) => cellMix[cell * actions + k] / w) : null);
 	}
 
-	const siblings: { board: number; card: string }[] = [];
+	const siblings: { board: number; card: string; also: string[] }[] = [];
 	if (round > 0) {
 		const parent = runouts.parent[round][board];
+		const orbits = runouts.orbitStart[round];
 		for (let b = runouts.childStart[round][parent]; b < runouts.childStart[round][parent + 1]; b++) {
-			siblings.push({ board: b, card: formatCards([runouts.cards[round][b * width + width - 1]]) });
+			const also: string[] = [];
+			for (let m = orbits[b] + 1; m < orbits[b + 1]; m++) also.push(formatCards([runouts.orbitCard[round][m]]));
+			siblings.push({ board: b, card: formatCards([runouts.cards[round][b * width + width - 1]]), also });
 		}
 	}
 
@@ -112,7 +160,7 @@ export function nodeView(spot: Spot, solution: Solution, node: number, board: nu
 		round,
 		cards: formatCards(boardCards),
 		pot: tree.pot[node] / spot.chipScale,
-		actions: [...view.actions],
+		actions: view.actions.map((_, k) => streetLabel(spot, node, tree.firstEdge[node] + k)),
 		frequencies: Array.from(total, (p) => (mass > 0 ? p / mass : 0)),
 		cells,
 		next: view.actions.map((_, k) => stepOf(spot, node, board, k)),

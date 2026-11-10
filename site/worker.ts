@@ -228,8 +228,7 @@ async function solveSpot(config: SpotConfig, mode: Mode, target: number, threads
 		t = now();
 		const solution = run.snapshot();
 		const ev: [number, number] = [solution.ev(0), solution.ev(1)];
-		const first = nodeView(spot, solution, 0, 0);
-		const root: Report['root'] = { player: first.player, actions: first.actions, frequencies: first.frequencies, cells: first.cells };
+		const root = nodeView(spot, solution, 0, 0);
 		const finishMs = now() - t;
 
 		const g = scope;
@@ -270,9 +269,9 @@ async function solveSpot(config: SpotConfig, mode: Mode, target: number, threads
 			ev,
 			root,
 		};
+		post({ type: 'done', report });
 		// The run stays open, and its solution readable, until the page ends this worker.
 		solved = { spot, solution };
-		post({ type: 'done', report });
 	} catch (error) {
 		run.close();
 		throw error;

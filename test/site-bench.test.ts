@@ -90,6 +90,8 @@ describe('site settings', () => {
 		expect(config.maxRaises).toBe(4);
 		expect(config.raiseSizes).toEqual([{ times: 2.5 }, { times: 4 }]);
 		expect(defineSpot(configOf({ ...DEFAULT_SETTINGS, board: 'Ks 9d 4c 2h 7s', bets: [0.5, 1], raises: 2, raiseSizes: [3] })).estimate.rounds).toBe(1);
+		// Raise sizes picked while raises were on are not solved once they are off.
+		expect(configOf({ ...DEFAULT_SETTINGS, raises: 0, raiseSizes: [3] }).raiseSizes).toBeUndefined();
 	});
 
 	it('round-trips settings through a link, ignoring nonsense', () => {

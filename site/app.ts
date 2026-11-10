@@ -572,6 +572,8 @@ function blocker(): string | null {
 
 function scheduleEstimate(): void {
 	clearTimeout(estimateTimer);
+	// The results no longer match the form: free the solve they came from.
+	releaseExplorer();
 	// Any reply in flight now describes other settings.
 	estimateId++;
 	fits = false;
@@ -749,8 +751,7 @@ function startRun(): void {
 	runPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
 	// The last solve's memory goes before this one's is taken.
-	explorer?.terminate();
-	explorer = null;
+	releaseExplorer();
 	explore = null;
 	solver = new Worker(workerUrl, { type: 'module' });
 	solver.onmessage = ({ data }: MessageEvent<Outbound>) => onSolverMessage(data);
@@ -802,6 +803,8 @@ function endRun(keep = false): void {
 		explorer.onmessage = ({ data }: MessageEvent<Outbound>) => {
 			if (data.type === 'view') onView(data);
 		};
+		// The results stand; only the walk-through stops.
+		explorer.onerror = () => releaseExplorer();
 	} else solver?.terminate();
 	solver = null;
 	running = false;
@@ -1077,15 +1080,8 @@ function renderResults(report: Report): void {
 		`<div class="actions"><button class="secondary" id="copy-report">Copy report (JSON)</button><button class="secondary" id="copy-link">Copy link to this spot</button><button class="secondary" id="run-again">Run again</button></div>` +
 		`</section></div>`;
 	resultsEl.hidden = false;
-	// The first decision from the report, until the worker says where each action leads.
-	const first = r.root;
-	explore = {
-		trail: [{ node: 0, board: 0, round: 0, via: '' }],
-		firstStreet: STREETS.indexOf(streetOf(r.config.board)),
-		view: { ...first, node: 0, board: 0, round: 0, cards: r.config.board, pot: r.config.pot, next: first.actions.map(() => null), runouts: [] },
-	};
+	explore = { trail: [{ node: 0, board: 0, round: 0, via: '' }], firstStreet: STREETS.indexOf(streetOf(r.config.board)), view: r.root, failed: null };
 	renderExplore();
-	requestView();
 	renderChart($('result-chart'), r.checks, r.target, r.mode);
 	$('copy-report').addEventListener('click', () => void copy(JSON.stringify(report, null, 2), 'Report copied'));
 	$('copy-link').addEventListener('click', () => void copy(`${location.origin}${location.pathname}#${writeSettings(runSettings)}`, 'Link copied'));
@@ -1104,37 +1100,53 @@ interface TrailStep {
 }
 
 /** The line being looked at, and its last decision as drawn. */
-let explore: { trail: TrailStep[]; view: NodeView; firstStreet: number } | null = null;
+let explore: {
+	/** The line as drawn; a step asked for joins it once the worker answers. */
+	trail: TrailStep[];
+	view: NodeView;
+	firstStreet: number;
+	/** Why the last step asked for could not be drawn. */
+	failed: string | null;
+} | null = null;
+/** The line asked for and not yet drawn. */
+let pendingTrail: TrailStep[] | null = null;
 let viewId = 0;
 
 const STREETS = ['Flop', 'Turn', 'River'];
 const streetOf = (cards: string): string => STREETS[cards.split(' ').length - 3] ?? '';
 
-/** Ask the kept worker for the trail's last decision. */
-function requestView(): void {
+/**
+ * End the kept worker and free the last solve's memory: before a new solve,
+ * or once the form changes and the results no longer match it. The results
+ * stay, without the walk-through.
+ */
+function releaseExplorer(): void {
+	if (!explorer) return;
+	explorer.terminate();
+	explorer = null;
+	pendingTrail = null;
+	if (explore) renderExplore();
+}
+
+/** Ask the kept worker to draw `trail`'s last decision; the line moves there once it answers. */
+function goTo(trail: TrailStep[]): void {
 	if (!explorer || !explore) return;
-	const at = explore.trail[explore.trail.length - 1];
+	const at = trail[trail.length - 1];
+	pendingTrail = trail;
 	const message: Inbound = { type: 'view', id: ++viewId, node: at.node, board: at.board };
 	explorer.postMessage(message);
 	$('explore').classList.add('loading');
 }
 
 function onView(data: Extract<Outbound, { type: 'view' }>): void {
-	if (data.id !== viewId || !explore) return;
-	$('explore').classList.remove('loading');
-	if (!data.view) {
-		$('explore').insertAdjacentHTML('afterbegin', `<div class="error-box">${esc(data.message ?? 'That decision could not be read.')}</div>`);
-		return;
-	}
-	explore.view = data.view;
+	if (data.id !== viewId || !explore || !pendingTrail) return;
+	if (data.view) {
+		explore.trail = pendingTrail;
+		explore.view = data.view;
+		explore.failed = null;
+	} else explore.failed = data.message ?? 'That decision could not be read.';
+	pendingTrail = null;
 	renderExplore();
-}
-
-/** Go to the decision `step` of the trail, dropping what came after. */
-function goTo(trail: TrailStep[]): void {
-	if (!explore) return;
-	explore.trail = trail;
-	requestView();
 }
 
 function renderExplore(): void {
@@ -1149,15 +1161,18 @@ function renderExplore(): void {
 		.map((step, i) => {
 			const label = i === 0 ? 'Start' : esc(step.via);
 			const street = i > 0 && step.round !== trail[i - 1].round ? `<span class="street">${STREETS[explore!.firstStreet + step.round] ?? ''}</span>` : '';
-			const crumb = i === trail.length - 1 ? `<span class="here">${label}</span>` : `<button class="crumb" data-trail="${i}">${label}</button>`;
+			const crumb =
+				i === trail.length - 1 ? `<span class="here">${label}</span>`
+				: walkable ? `<button class="crumb" data-trail="${i}">${label}</button>`
+				: `<span>${label}</span>`;
 			// The street marker follows the action that dealt its card.
 			return crumb + street;
 		})
 		.join('<span class="sep">›</span>');
 	const runouts =
 		view.runouts.length > 1
-			? `<label class="runout"><span>${streetOf(view.cards)} card</span><select id="runout" class="input">${view.runouts
-					.map((r) => `<option value="${r.board}"${r.board === view.board ? ' selected' : ''}>${esc(r.card)}</option>`)
+			? `<label class="runout"><span>${streetOf(view.cards)} card</span><select id="runout" class="input"${walkable ? '' : ' disabled'}>${view.runouts
+					.map((r) => `<option value="${r.board}"${r.board === view.board ? ' selected' : ''}>${esc([r.card, ...r.also].join(' / '))}</option>`)
 					.join('')}</select></label>`
 			: '';
 	const nobody = view.frequencies.every((p) => p === 0);
@@ -1176,7 +1191,9 @@ function renderExplore(): void {
 		})
 		.join('');
 
+	el.classList.remove('loading');
 	el.innerHTML =
+		(explore.failed ? `<div class="error-box">${esc(explore.failed)}</div>` : '') +
 		`<nav class="line" aria-label="Line">${crumbs}</nav>` +
 		`<p class="spot-line"><b>${who}</b> to act · ${streetOf(view.cards)} <span class="mono">${esc(view.cards)}</span> · pot ${number(view.pot, view.pot % 1 ? 1 : 0)}bb</p>` +
 		runouts +
@@ -1192,15 +1209,14 @@ function renderExplore(): void {
 			})
 			.join('')}</ul>` +
 		`<div class="mini-grid">${mini}</div>` +
-		(walkable ? `<p class="hint">Tap an action to follow it.</p>` : '');
+		`<p class="hint">${walkable ? 'Tap an action to follow it.' : 'Run the spot again to walk through its solution.'}</p>`;
 
 	el.querySelectorAll<HTMLButtonElement>('.step-into').forEach((button) => {
 		button.addEventListener('click', () => {
 			const a = Number(button.dataset.action);
 			const next = view.next[a];
 			if (!next) return;
-			const round = next.dealt ? view.round + 1 : view.round;
-			goTo([...trail, { node: next.node, board: next.board, round, via: actionName(view.actions[a], view.pot) }]);
+			goTo([...trail, { node: next.node, board: next.board, round: next.round, via: actionName(view.actions[a], view.pot) }]);
 		});
 	});
 	el.querySelectorAll<HTMLButtonElement>('.crumb').forEach((button) => {

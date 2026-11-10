@@ -75,13 +75,8 @@ export interface Report {
 	};
 	/** Each player's share of the pot, %. */
 	readonly ev: readonly [number, number];
-	/** The first decision's strategy: overall, and per grid cell (null where no hand is held). */
-	readonly root: {
-		readonly player: 0 | 1;
-		readonly actions: readonly string[];
-		readonly frequencies: readonly number[];
-		readonly cells: readonly (readonly number[] | null)[];
-	};
+	/** The first decision, as the walk-through draws it. */
+	readonly root: NodeView;
 }
 
 export type Phase = 'threads' | 'build' | 'alloc' | 'solve' | 'finish';

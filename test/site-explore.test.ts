@@ -75,3 +75,39 @@ describe('site explore', () => {
 		expect(() => nodeView(spot, solution, 0, 1)).toThrow(/no board/);
 	});
 });
+
+describe('site explore on a flop', () => {
+	const flop = defineSpot({ board: 'Ks 9d 4c', pot: 10, stack: 50, oop: 'AA,KQs,98s', ip: 'KK,AKo,T9s', betSizes: [[0.5]], maxRaises: 2 });
+	const flopSolution = solve(flop, { iterations: 5 });
+
+	it('names bets by what goes in on this street', () => {
+		const root = nodeView(flop, flopSolution, 0, 0);
+		expect(root.actions).toEqual(['check', 'bet 5']);
+		const facing = nodeView(flop, flopSolution, root.next[1]!.node, 0);
+		// A raise to 15 on the flop: 15 in this street.
+		expect(facing.actions).toEqual(['fold', 'call', 'raise 15']);
+		const turn = facing.next[1]!;
+		expect(turn).toMatchObject({ dealt: true, round: 1 });
+		const view = nodeView(flop, flopSolution, turn.node, turn.board);
+		expect(view.pot).toBe(20);
+		// Half the 20 pot, not 15 counting the flop's 5.
+		expect(view.actions).toEqual(['check', 'bet 10']);
+		const facingTurn = nodeView(flop, flopSolution, view.next[1]!.node, turn.board);
+		expect(facingTurn.actions).toEqual(['fold', 'call', 'raise 30']);
+		expect(facingTurn.next[0]).toBeNull();
+	});
+
+	it('lists the cards each stored runout stands for', () => {
+		const mono = defineSpot({ board: 'Ks 9s 4s', pot: 10, stack: 20, oop: 'AA', ip: 'QQ', betSizes: [[1]] });
+		const monoSolution = solve(mono, { iterations: 2 });
+		const turn = stepOf(mono, 0, 0, 0)!; // OOP checks
+		const river = stepOf(mono, turn.node, 0, 0)!; // IP checks: the turn comes
+		const view = nodeView(mono, monoSolution, river.node, river.board);
+		const dealt = view.runouts.flatMap((r) => [r.card, ...r.also]);
+		// Every turn card that can come is offered, once.
+		expect(new Set(dealt).size).toBe(dealt.length);
+		expect(dealt.length).toBe(49);
+		const twos = view.runouts.find((r) => r.card.startsWith('2') && !r.card.endsWith('s'))!;
+		expect(twos.also.length).toBe(2);
+	});
+});
