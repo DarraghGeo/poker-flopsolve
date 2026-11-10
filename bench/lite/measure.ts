@@ -13,7 +13,9 @@
  * `compactStorage` on the WebAssembly engine), `keep=<MiB>` (issue #113:
  * `solveLite`'s `keepBudget` through `keepWithin`, `PICK` (default 80)
  * picking iterations, on the clock), `i16` (16-bit storage
- * with `wasmStorage`, the re-solves too, and the budget at 16 bits).
+ * with `wasmStorage`, the re-solves too, and the budget at 16 bits);
+ * issue #133's DCFR schedule: `alpha=<1|1.5|2>`, `gamma=<n>` and `floor`
+ * (DCFR+: regrets floored at zero).
  *
  * Environment:
  * - `RULE`: the stop rule, `every:tolerance:patience` (default `20:0.01:2`,
@@ -43,7 +45,7 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { COMBOS, createRun, defineSpot, keepWithin, liteConfig, rootPlay, rootPlayMovement, storageCost } from '../../src/index.ts';
 import type { Approximations, LiteOptions, RootPlay, Solution, SolveRun, SpotConfig } from '../../src/index.ts';
-import { Mode } from '../../src/cfr.ts';
+import { Mode, setDcfrRule } from '../../src/cfr.ts';
 import { wasmStorage } from '../../src/wasm-storage.ts';
 import { resolveSubgame } from '../../src/resolve.ts';
 import { configFromJson, fromJson, lineNode, nodeEvs, openMass, rootEvs, turnBoard } from '../nested/lib.ts';
@@ -67,6 +69,14 @@ const lite: LiteOptions = {
 	...(variants.includes('raise') ? { laterRaise: true } : {}),
 };
 const pArg = variants.find((v) => v.startsWith('p='));
+// Issue #133: the DCFR schedule, `alpha=<1|1.5|2>`, `gamma=<n>`, `floor` (DCFR+).
+const alphaArg = variants.find((v) => v.startsWith('alpha='));
+const gammaArg = variants.find((v) => v.startsWith('gamma='));
+setDcfrRule({
+	...(alphaArg ? { alpha: Number(alphaArg.slice(6)) } : {}),
+	...(gammaArg ? { gamma: Number(gammaArg.slice(6)) } : {}),
+	...(variants.includes('floor') ? { floor: true } : {}),
+});
 // 8-bit storage with sums, on the WebAssembly engine.
 const compact = variants.includes('compact');
 const approximations: Approximations = variants.includes('nosample')

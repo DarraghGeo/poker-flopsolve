@@ -906,6 +906,38 @@ const DCFR_BETA = 0;
 const DCFR_GAMMA = 3;
 
 /**
+ * DCFR's schedule, for benches that try others (issue #133); not part of the
+ * API. `alpha` and `gamma` replace α and γ, β stays 0, and `floor` floors
+ * regrets at zero as CFR+ does (DCFR+, Xu et al. 2024) while the strategy
+ * sums stay unweighted by own reach, as DCFR's are. The WebAssembly engine
+ * takes `alpha` 1, 1.5 or 2 and a whole `gamma`; the JavaScript engine
+ * takes the defaults only.
+ */
+export interface DcfrRule {
+	readonly alpha: number;
+	readonly gamma: number;
+	readonly floor: boolean;
+}
+
+/** The rule every solve uses unless a bench sets another. */
+export const DEFAULT_DCFR_RULE: DcfrRule = { alpha: DCFR_ALPHA, gamma: DCFR_GAMMA, floor: false };
+
+let dcfrRule: DcfrRule = DEFAULT_DCFR_RULE;
+
+/** Set the schedule for every solve that follows, or restore the default. Benches only. */
+export function setDcfrRule(rule: Partial<DcfrRule> = {}): void {
+	const next = { ...DEFAULT_DCFR_RULE, ...rule };
+	if (![1, 1.5, 2].includes(next.alpha)) throw new Error(`alpha must be 1, 1.5 or 2; got ${next.alpha}`);
+	if (!(Number.isInteger(next.gamma) && next.gamma >= 0)) throw new Error(`gamma must be a whole number; got ${next.gamma}`);
+	dcfrRule = next;
+}
+
+/** The schedule solves use now. */
+export function currentDcfrRule(): DcfrRule {
+	return dcfrRule;
+}
+
+/**
  * DCFR's three factors before iteration `t` (counted from 1) adds its own
  * values: what positive regret, negative regret and the strategy sum keep.
  *
@@ -919,12 +951,12 @@ const DCFR_GAMMA = 3;
  */
 export function dcfrFactors(t: number): { keepPositive: number; keepNegative: number; keepSum: number } {
 	const age = t > 2 ? t - 2 : 0;
-	const grown = age ** DCFR_ALPHA;
+	const grown = age ** dcfrRule.alpha;
 	const shrunk = age ** DCFR_BETA;
 	return {
 		keepPositive: grown / (grown + 1),
 		keepNegative: shrunk / (shrunk + 1),
-		keepSum: ((t - 1) / t) ** DCFR_GAMMA,
+		keepSum: ((t - 1) / t) ** dcfrRule.gamma,
 	};
 }
 
