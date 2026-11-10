@@ -28,10 +28,23 @@ import {
 	TOTAL_COMBOS,
 } from './lib/hands.ts';
 import { RANGE_PRESETS } from './lib/ranges.ts';
-import type { Settings, SizeKey } from './lib/settings.ts';
+import type { Settings } from './lib/settings.ts';
 import { LITE_LIMITS } from './lib/lite.ts';
 import type { Mode } from './lib/settings.ts';
-import { autoMemory, configOf, ITERATION_CAP, MEMORY_CAPS, readSettings, SIZE_PRESETS, TARGETS, writeSettings } from './lib/settings.ts';
+import {
+	autoMemory,
+	BET_SIZES,
+	bettingLabel,
+	configOf,
+	ITERATION_CAP,
+	MAX_RAISES,
+	MAX_SIZES,
+	MEMORY_CAPS,
+	RAISE_SIZES,
+	readSettings,
+	TARGETS,
+	writeSettings,
+} from './lib/settings.ts';
 import type { Inbound, Outbound, Phase, Report, Setup, SpotSummary } from './protocol.ts';
 
 // ---------------------------------------------------------------- helpers
@@ -394,7 +407,6 @@ $('clear-board').addEventListener('click', () => setBoard([]));
 
 const potInput = $<HTMLInputElement>('pot');
 const stackInput = $<HTMLInputElement>('stack');
-const raiseInput = $<HTMLInputElement>('raise');
 const allInInput = $<HTMLInputElement>('allin');
 
 function segmented<T>(id: string, options: readonly { value: T; label: string; disabled?: boolean }[], current: () => T, set: (value: T) => void): () => void {
@@ -422,12 +434,60 @@ function segmented<T>(id: string, options: readonly { value: T; label: string; d
 	return render;
 }
 
-segmented<SizeKey>(
-	'sizes',
-	(Object.keys(SIZE_PRESETS) as SizeKey[]).map((key) => ({ value: key, label: SIZE_PRESETS[key].label })),
-	() => settings.sizes,
-	(sizes) => update({ sizes }),
+/**
+ * Toggle buttons for a set of sizes, any mix of up to `MAX_SIZES`; `min` is
+ * how many must stay picked. A size past the limit is disabled until another
+ * is dropped.
+ */
+function sizePicker(id: string, offered: readonly number[], label: (size: number) => string, min: number, current: () => readonly number[], set: (sizes: number[]) => void): () => void {
+	const el = $(id);
+	el.setAttribute('role', 'group');
+	el.innerHTML = '';
+	const buttons = offered.map((size) => {
+		const button = document.createElement('button');
+		button.textContent = label(size);
+		button.addEventListener('click', () => {
+			const picked = current();
+			const next = picked.includes(size) ? picked.filter((s) => s !== size) : [...picked, size].sort((a, b) => a - b);
+			if (next.length < min || next.length > MAX_SIZES) return;
+			set(next);
+			render();
+		});
+		el.append(button);
+		return button;
+	});
+	const render = (): void => {
+		const picked = current();
+		buttons.forEach((button, i) => {
+			const on = picked.includes(offered[i]);
+			button.setAttribute('aria-pressed', String(on));
+			button.disabled = !on && picked.length >= MAX_SIZES;
+		});
+	};
+	render();
+	return render;
+}
+
+sizePicker('bets', BET_SIZES, (size) => `${Math.round(size * 100)}%`, 1, () => settings.bets, (bets) => update({ bets }));
+const renderRaises = (): void => {
+	$('raise-sizes-field').hidden = settings.raises === 0;
+	$('raise-note').textContent =
+		settings.raiseSizes.length === 0 ? 'None picked: raises use the bet sizes, as fractions of the pot.' : 'Multiples of the bet being raised.';
+};
+segmented<number>(
+	'raises',
+	Array.from({ length: MAX_RAISES + 1 }, (_, n) => ({ value: n, label: n === 0 ? 'None' : String(n) })),
+	() => settings.raises,
+	(raises) => {
+		update({ raises });
+		renderRaises();
+	},
 );
+sizePicker('raise-sizes', RAISE_SIZES, (times) => `${times}×`, 0, () => settings.raiseSizes, (raiseSizes) => {
+	update({ raiseSizes });
+	renderRaises();
+});
+renderRaises();
 const MODE_NOTES: Record<Mode, string> = {
 	exact: 'Solves the whole game until it is within your target of perfect play.',
 	lite: 'Faster on big flops: simplifies the turn and river and stops when the first decisions settle.',
@@ -477,7 +537,6 @@ if (!isolated) {
 
 potInput.value = String(settings.pot);
 stackInput.value = String(settings.stack);
-raiseInput.checked = settings.raise;
 allInInput.checked = settings.allIn;
 
 const positive = (input: HTMLInputElement, fallback: number): number => {
@@ -488,7 +547,6 @@ const positive = (input: HTMLInputElement, fallback: number): number => {
 };
 potInput.addEventListener('input', () => update({ pot: positive(potInput, settings.pot) }));
 stackInput.addEventListener('input', () => update({ stack: positive(stackInput, settings.stack) }));
-raiseInput.addEventListener('change', () => update({ raise: raiseInput.checked }));
 allInInput.addEventListener('change', () => update({ allIn: allInInput.checked }));
 
 // ---------------------------------------------------------------- estimate
@@ -676,7 +734,7 @@ function startRun(): void {
 	stopButton.disabled = false;
 	$('run-title').textContent = 'Solving';
 	$('run-sub').textContent =
-		`${formatCards(board)} · ${SIZE_PRESETS[settings.sizes].label} · ` +
+		`${formatCards(board)} · ${bettingLabel(settings)} · ` +
 		(settings.mode === 'lite' ? 'Lite, until the first decisions settle' : `to ${settings.target}% of pot`);
 	progressEl.className = 'progress waiting';
 	progressFill.style.width = '0';
@@ -960,7 +1018,7 @@ function renderResults(report: Report): void {
 			['Board', cards.map((c) => `<span class="${formatCard(c)[1]}">${formatCard(c)[0]}${SUIT_GLYPHS[formatCard(c)[1]]}</span>`).join(' ')],
 			['Streets', streets(spot.rounds)],
 			['Pot · stack', `${r.config.pot}bb · ${r.config.stack}bb`],
-			['Betting', `${SIZE_PRESETS[runSettings.sizes].label}${runSettings.raise ? ', one raise' : ''}${runSettings.allIn ? ', all-in' : ''}`],
+			['Betting', bettingLabel(runSettings)],
 			['Combos', `${number(spot.combos[0])} OOP · ${number(spot.combos[1])} IP`],
 			['Decision nodes', number(spot.decisionNodes)],
 			['Runouts stored', number(spot.runouts)],

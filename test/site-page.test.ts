@@ -28,7 +28,7 @@ interface Page {
 	on(event: 'pageerror', handler: (error: Error) => void): void;
 }
 interface Browser {
-	newPage(): Promise<Page>;
+	newPage(options?: { viewport: { width: number; height: number }; isMobile?: boolean; hasTouch?: boolean }): Promise<Page>;
 	close(): Promise<void>;
 }
 
@@ -127,6 +127,38 @@ describe('site page in a browser', () => {
 		await page.mouse.move(box.x + cell * 6.5, box.y + cell * 1.5, { steps: 1 });
 		await page.mouse.up();
 		expect(await page.inputValue('#range-text')).toBe('KK+,K8s+,AsKs');
+	});
+
+	it('offers every betting choice and Lite at phone width', async (context) => {
+		if (!browser) return context.skip();
+		const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+		const errors: string[] = [];
+		page.on('pageerror', (error) => errors.push(error.message));
+		await page.goto(`${url}#board=Ks+9d+4c+2h+7s`);
+		await page.waitForFunction("!document.getElementById('run').disabled", undefined, { timeout: 20_000 });
+		// Nothing on the form runs off the side of a phone.
+		const overflow = await page.evaluate<string[]>(
+			"[...document.querySelectorAll('#mode button, #bets button, #raises button, #raise-sizes button, #allin + .track')]" +
+				".filter((b) => { const r = b.getBoundingClientRect(); return r.left < 0 || r.right > document.documentElement.clientWidth; }).map((b) => b.textContent)",
+		);
+		expect(overflow).toEqual([]);
+		expect(await page.evaluate<boolean>("document.getElementById('raise-sizes-field').hidden")).toBe(true);
+		await page.click('#bets button:nth-child(2)'); // 33%
+		await page.click('#bets button:nth-child(6)'); // 100%
+		await page.click('#raises button:nth-child(3)'); // 2 raises
+		expect(await page.evaluate<boolean>("document.getElementById('raise-sizes-field').hidden")).toBe(false);
+		await page.click('#raise-sizes button:nth-child(3)'); // 3x
+		await page.click('#mode button:nth-child(2)'); // Lite
+		const hash = new URLSearchParams(await page.evaluate<string>('location.hash.slice(1)'));
+		expect(hash.get('bets')).toBe('0.33,0.66,1');
+		expect(hash.get('raises')).toBe('2');
+		expect(hash.get('rx')).toBe('3');
+		expect(hash.get('mode')).toBe('lite');
+		await page.waitForFunction("!document.getElementById('run').disabled", undefined, { timeout: 20_000 });
+		await page.click('#run');
+		await page.waitForSelector('#results:not([hidden])', { timeout: 120_000 });
+		expect(await page.textContent('#results')).toContain('33% + 66% + 100% pot, 2 raises of 3×');
+		expect(errors).toEqual([]);
 	});
 
 	it('runs Lite and reports what it simplified', async (context) => {

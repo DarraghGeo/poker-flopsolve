@@ -8,7 +8,7 @@ import {
 	progressToward,
 } from '../site/lib/bench.ts';
 import type { Check } from '../site/lib/bench.ts';
-import { autoMemory, configOf, DEFAULT_SETTINGS, memoryOf, normaliseBoard, readSettings, writeSettings } from '../site/lib/settings.ts';
+import { autoMemory, bettingLabel, configOf, DEFAULT_SETTINGS, memoryOf, normaliseBoard, readSettings, writeSettings } from '../site/lib/settings.ts';
 import { liteSummary } from '../site/lib/lite.ts';
 import { litePreset } from '../src/index.ts';
 import { defineSpot } from '../src/index.ts';
@@ -77,17 +77,49 @@ describe('site settings', () => {
 	});
 
 	it('adds a raise and all-in when asked', () => {
-		const config = configOf({ ...DEFAULT_SETTINGS, sizes: 'two', raise: true, allIn: true });
+		const config = configOf({ ...DEFAULT_SETTINGS, bets: [0.33, 0.75], raises: 1, allIn: true });
 		expect(config.betSizes).toEqual([[0.33, 0.75]]);
 		expect(config.maxRaises).toBe(2);
+		expect(config.raiseSizes).toBeUndefined();
 		expect(config.allowAllIn).toBe(true);
+	});
+
+	it('takes any mix of bet sizes, raise sizes and raise count', () => {
+		const config = configOf({ ...DEFAULT_SETTINGS, bets: [0.25, 0.5, 1, 2], raises: 3, raiseSizes: [2.5, 4] });
+		expect(config.betSizes).toEqual([[0.25, 0.5, 1, 2]]);
+		expect(config.maxRaises).toBe(4);
+		expect(config.raiseSizes).toEqual([{ times: 2.5 }, { times: 4 }]);
+		expect(defineSpot(configOf({ ...DEFAULT_SETTINGS, board: 'Ks 9d 4c 2h 7s', bets: [0.5, 1], raises: 2, raiseSizes: [3] })).estimate.rounds).toBe(1);
 	});
 
 	it('round-trips settings through a link, ignoring nonsense', () => {
 		const settings = { ...DEFAULT_SETTINGS, board: 'As Kh 7d 2c', oop: 'AA,KK:0.5', pot: 80, threads: 2, target: 0.3, mode: 'lite' as const, memory: 1024 };
 		expect(readSettings(writeSettings(settings))).toEqual(settings);
+		const betting = { ...DEFAULT_SETTINGS, bets: [0.25, 1.5], raises: 2, raiseSizes: [2, 3] };
+		expect(readSettings(writeSettings(betting))).toEqual(betting);
 		expect(readSettings('pot=-5&threads=abc&sizes=nope&target=7&board=zz&mode=fast&memory=3000')).toEqual(DEFAULT_SETTINGS);
+		expect(readSettings('bets=0.4,abc&raises=9&rx=7')).toEqual(DEFAULT_SETTINGS);
+		expect(readSettings('bets=&rx=')).toEqual(DEFAULT_SETTINGS);
 		expect(readSettings('')).toEqual(DEFAULT_SETTINGS);
+	});
+
+	it('sorts sizes and drops repeats from a link', () => {
+		expect(readSettings('bets=1,0.33,1').bets).toEqual([0.33, 1]);
+		expect(readSettings('rx=4,2.5,4').raiseSizes).toEqual([2.5, 4]);
+		expect(readSettings('bets=0.25,0.33,0.5,0.66,0.75').bets).toEqual(DEFAULT_SETTINGS.bets);
+	});
+
+	it('still reads links from before free sizes', () => {
+		expect(readSettings('sizes=two&raise=1')).toEqual({ ...DEFAULT_SETTINGS, bets: [0.33, 0.75], raises: 1 });
+		expect(readSettings('sizes=large').bets).toEqual([1]);
+		expect(readSettings('raise=0').raises).toBe(0);
+		expect(readSettings('sizes=small&bets=0.5').bets).toEqual([0.5]);
+	});
+
+	it('describes the betting in plain words', () => {
+		expect(bettingLabel(DEFAULT_SETTINGS)).toBe('66% pot');
+		expect(bettingLabel({ ...DEFAULT_SETTINGS, bets: [0.33, 0.75], raises: 1, allIn: true })).toBe('33% + 75% pot, 1 raise, all-in');
+		expect(bettingLabel({ ...DEFAULT_SETTINGS, bets: [0.5], raises: 2, raiseSizes: [2.5, 4] })).toBe('50% pot, 2 raises of 2.5× or 4×');
 	});
 
 	it('normalises boards and refuses bad ones', () => {
@@ -110,7 +142,7 @@ describe('site settings', () => {
 
 describe('site lite summary', () => {
 	it('says in plain words what Lite simplified', () => {
-		const config = configOf({ ...DEFAULT_SETTINGS, sizes: 'two', raise: true }, 2048);
+		const config = configOf({ ...DEFAULT_SETTINGS, bets: [0.33, 0.75], raises: 1 }, 2048);
 		const lines = liteSummary(config, litePreset(config).changes);
 		expect(lines[0]).toBe('Turn and river: one bet size (75% pot), no raises.');
 		expect(lines).toContain('Similar turn and river cards are solved together.');
