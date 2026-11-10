@@ -128,4 +128,35 @@ describe('site page in a browser', () => {
 		await page.mouse.up();
 		expect(await page.inputValue('#range-text')).toBe('KK+,K8s+,AsKs');
 	});
+
+	it('runs Lite and reports what it simplified', async (context) => {
+		if (!browser) return context.skip();
+		const page = await browser.newPage();
+		await page.goto(`${url}#board=As+Kh+7d+2c&mode=lite&sizes=two&raise=1&oop=AA,KK,77,AKs,AQs,KQs,65s&ip=QQ,JJ,AJs,KJs,QJs,JTs,T9s`);
+		await page.waitForFunction("!document.getElementById('run').disabled", undefined, { timeout: 20_000 });
+		expect(await page.textContent('#estimate')).toContain('River: one bet size (75% pot), no raises.');
+		await page.click('#run');
+		await page.waitForSelector('#results:not([hidden])', { timeout: 120_000 });
+		expect(await page.textContent('#run-title')).toMatch(/^Settled in/);
+		const results = (await page.textContent('#results')) ?? '';
+		expect(results).toContain('What Lite simplified');
+		expect(results).toContain('Limitations');
+		expect(results).toContain('Not measured');
+	});
+
+	it('makes room for Lite\'s sampling when the tree alone fits the limit', async (context) => {
+		if (!browser) return context.skip();
+		const page = await browser.newPage();
+		const anyTwo = encodeURIComponent(RANGE_PRESETS.find((p) => p.name === 'Any two')!.range);
+		// 441 MB at 32 bits fits 512 MB, but sampling needs ~195 MB more.
+		await page.goto(`${url}#mode=lite&raise=1&memory=512&ip=${anyTwo}`);
+		await page.waitForFunction("!document.getElementById('run').disabled", undefined, { timeout: 20_000 });
+		await page.click('#run');
+		await page.waitForFunction("document.querySelectorAll('.step.done').length >= 3 || !document.getElementById('results').hidden", undefined, { timeout: 60_000 });
+		expect(await page.textContent('#run-title')).toBe('Solving');
+		expect(await page.textContent('#run-sub')).toContain('compressed');
+		await page.click('#stop');
+		await page.waitForSelector('#results:not([hidden])', { timeout: 120_000 });
+		expect(await page.textContent('#run-title')).toMatch(/^Stopped/);
+	});
 });

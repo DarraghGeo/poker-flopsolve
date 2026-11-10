@@ -785,3 +785,14 @@ td.dim { color: var(--faint); }
 }
 
 .running .layout { pointer-events: none; opacity: 0.55; transition: opacity 0.3s; }
+
+.estimate ul.plain { list-style: none; padding: 0; margin: 8px 0 0; color: var(--muted); }
+.estimate ul.plain li { padding-left: 14px; position: relative; }
+.estimate ul.plain li::before { content: ''; position: absolute; left: 2px; top: 0.65em; width: 4px; height: 4px; border-radius: 50%; background: var(--faint); }
+
+.list { margin: 0; padding: 0; list-style: none; font-size: 14px; }
+.list li { padding: 8px 0 8px 18px; border-top: 1px solid var(--line); position: relative; }
+.list li:first-child { border-top: 0; }
+.list li::before { content: ''; position: absolute; left: 3px; top: 1.05em; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.list.warn li::before { background: #f59e0b; }
+.subhead { margin: 18px 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }

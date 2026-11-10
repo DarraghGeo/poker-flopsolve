@@ -59,6 +59,8 @@
 
 				<section class="card" aria-label="Spot">
 					<div class="card-head"><h2>Spot</h2></div>
+					<div class="field"><span>Solver</span><div class="segmented" id="mode"></div></div>
+					<p class="note" id="mode-note"></p>
 					<div class="fields">
 						<label class="field"><span>Pot</span><span class="affix"><input id="pot" class="input" type="number" min="0.5" step="0.5" inputmode="decimal"><i>bb</i></span></label>
 						<label class="field"><span>Stack</span><span class="affix"><input id="stack" class="input" type="number" min="0.5" step="0.5" inputmode="decimal"><i>bb</i></span></label>
@@ -68,9 +70,10 @@
 						<label class="switch"><input type="checkbox" id="raise"><span class="track"></span>Raises</label>
 						<label class="switch"><input type="checkbox" id="allin"><span class="track"></span>All-in</label>
 					</div>
-					<div class="field"><span>Stop at exploitability</span><div class="segmented" id="target"></div></div>
+					<div class="field" id="target-field"><span>Stop at exploitability</span><div class="segmented" id="target"></div></div>
 					<div class="field"><span>Threads</span><div class="segmented" id="threads"></div></div>
 					<p class="note" id="threads-note" hidden></p>
+					<div class="field"><span>Memory limit</span><div class="segmented" id="memory"></div></div>
 					<div class="estimate" id="estimate"></div>
 					<button class="primary" id="run">Run benchmark</button>
 				</section>
