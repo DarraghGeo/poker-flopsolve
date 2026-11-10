@@ -30,7 +30,7 @@ for (const name of names) {
 		`${name}: ${solution.iterations} iterations, ${seconds.toFixed(1)} s, ` +
 			`${solution.exploitabilityPercent().toFixed(4)}% of pot; range EV ` +
 			`${ranges.map((v) => v.toFixed(4)).join(' / ')} vs ev() ` +
-			`${[0, 1].map((p) => ((100 * solution.ev(p as 0 | 1)) / pot).toFixed(4)).join(' / ')} (% of pot)`,
+			`${[0, 1].map((p) => ((100 * solution.evChips(p as 0 | 1)) / pot).toFixed(4)).join(' / ')} (% of pot)`,
 	);
 	writeFileSync(
 		new URL(`${name}.json`, OUT),

@@ -109,8 +109,8 @@ describe('compact storage', () => {
 		// About as exploitable as the full solve; rounding the sums leaves a
 		// floor, here near 0.1% of pot.
 		expect(compact.exploitabilityPercent()).toBeLessThan(exact.exploitabilityPercent() * 1.5 + 0.1);
-		const ev = exact.snapshot().ev(0);
-		expect(Math.abs(compact.snapshot().ev(0) - ev)).toBeLessThan(0.005 * flop.pot);
+		const ev = exact.snapshot().evChips(0);
+		expect(Math.abs(compact.snapshot().evChips(0) - ev)).toBeLessThan(0.005 * flop.pot);
 		// Strategies read the average, which no longer equals the current profile.
 		const { tree } = compact.spot;
 		const river = tree.decisionNodes.find((n) => tree.round[n] === 2)!;

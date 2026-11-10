@@ -69,7 +69,7 @@ describe('subgames', () => {
 
 		const resolved = solve(sub, { iterations: 3000, workers: 1 });
 		expect(resolved.exploitabilityPercent()).toBeLessThan(0.01);
-		expect(resolved.ev(0)).toBeCloseTo(original, 2);
+		expect(resolved.evChips(0)).toBeCloseTo(original, 2);
 	});
 
 	it('re-solves with a richer tree than the original could afford', () => {

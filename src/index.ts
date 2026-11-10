@@ -77,6 +77,13 @@ export interface SpotConfig {
 	readonly board: string;
 	/** Dead money already in the middle, in chips. */
 	readonly pot: number;
+	/**
+	 * The pot `Solution.ev` and `Solution.handEvs` are percentages of, in
+	 * chips. Default `pot`. `Solution.subgameAt` sets it to the original
+	 * spot's, so a re-solved turn or river reports in the flop pot and its
+	 * values read the same way as the flop's down a hand.
+	 */
+	readonly evPot?: number;
 	/** Effective stack behind, per player, in chips. */
 	readonly stack: number;
 	/**
@@ -547,6 +554,9 @@ export function defineSpot(config: SpotConfig): Spot {
 
 	if (config.pot <= 0) throw new Error('pot must be positive');
 	if (config.stack <= 0) throw new Error('stack must be positive');
+	if (config.evPot !== undefined && !(Number.isFinite(config.evPot) && config.evPot > 0)) {
+		throw new Error(`evPot must be a positive number of chips; got ${config.evPot}`);
+	}
 
 	const rows = betRows(config, rounds);
 
@@ -1036,18 +1046,40 @@ export interface Solution {
 	/** The solver behind this solution, for analysis and warm starts. */
 	readonly solver: Solver;
 	/**
-	 * Chips per hand for a player, under the average strategy — or under the
-	 * current profile with `approximations.currentProfileEv`.
+	 * The pot, in chips, that `ev` and `handEvs` are percentages of:
+	 * `SpotConfig.evPot`, which defaults to the spot's own `pot` (rounded to
+	 * chip units, as the tree holds it). A subgame
+	 * from `subgameAt` carries the original spot's.
+	 */
+	readonly evPot: number;
+	/**
+	 * A player's share of the pot, in percent of `evPot`: what they win on
+	 * average per hand, `100 × (evChips + evPot / 2) / evPot`. Folding, or
+	 * losing every showdown, is 0; winning the pot uncontested is 100; the
+	 * two players' values add up to 100. In a subgame, whose own pot holds
+	 * chips both players put in earlier, folding at its root reads below 0:
+	 * the earlier chips given up, as a share of `evPot`. Under the average
+	 * strategy, or the current profile with `approximations.currentProfileEv`.
 	 */
 	ev(player: 0 | 1): number;
 	/**
-	 * Root EV in chips for each combination a player can hold, indexed like
-	 * `COMBO_CARDS` (as `reachAt` is): what that hand wins on average, over
-	 * the opponent hands it can be dealt against. Zero for combinations outside
-	 * the range or blocked by the board, and for a hand no opponent hand can be
-	 * dealt against, which has no EV to give. Weighted by range weight times
-	 * compatible opponent mass, the mean is `ev(player)`, and the same pass
-	 * serves both. Under the average strategy, or the current profile with
+	 * `ev` in chips per hand, against a baseline where each player already
+	 * owns half the pot: folding is worth −pot/2 and the players' values add
+	 * up to 0. The same baseline at every round, since a round opens with
+	 * both players level. `Solver.valuesAt` and the traversal use it.
+	 */
+	evChips(player: 0 | 1): number;
+	/** `handEvs` in chips on `evChips`'s half-pot baseline. Returns a fresh copy. */
+	handEvsChips(player: 0 | 1): Float64Array;
+	/**
+	 * Root EV for each combination a player can hold, in percent of `evPot`
+	 * as `ev` is, indexed like `COMBO_CARDS` (as `reachAt` is): what that hand
+	 * wins on average, over the opponent hands it can be dealt against. Zero
+	 * for combinations outside the range or blocked by the board, and for a
+	 * hand no opponent hand can be dealt against, which has no EV to give;
+	 * those carry no weight. Weighted by range weight times compatible
+	 * opponent mass, the mean is `ev(player)`, and the same pass serves both.
+	 * Under the average strategy, or the current profile with
 	 * `approximations.currentProfileEv`. Returns a fresh copy.
 	 */
 	handEvs(player: 0 | 1): Float64Array;
@@ -1538,7 +1570,8 @@ export function storageCost(of: Spot, at: Precision): number {
  * runouts are stored do not change the game, so they are left out.
  */
 function sameSpot(a: SpotConfig, b: SpotConfig): boolean {
-	const plain = ({ maxBytes: _bytes, maxCombos: _combos, isomorphism: _iso, ...game }: SpotConfig): string =>
+	// `evPot` only says how EV is reported, not what game is played.
+	const plain = ({ maxBytes: _bytes, maxCombos: _combos, isomorphism: _iso, evPot: _evPot, ...game }: SpotConfig): string =>
 		JSON.stringify(game, (_, value: unknown) => (value instanceof Float64Array ? Array.from(value) : value));
 	const kept = (config: SpotConfig): readonly string[] | undefined =>
 		typeof config.shareHistories === 'object' ? config.shareHistories.keepLines : undefined;
@@ -1829,7 +1862,13 @@ function makeSolution(
 	const rootValues = (): RootValues =>
 		(cachedEv ??= solver.rootValues(currentProfileEv ? Mode.Current : Mode.Average));
 	const cachedHands: [Float64Array | null, Float64Array | null] = [null, null];
+	const cachedChips: [Float64Array | null, Float64Array | null] = [null, null];
 	let cachedExploit: number | null = null;
+	// The pot as the tree holds it, rounded to chip units, so the half-pot
+	// baseline cancels exactly and a fold reads 0.
+	const evPot = spot.source.evPot ?? spot.potUnits / spot.chipScale;
+	// Chips on the half-pot baseline to a share of `evPot`.
+	const share = (chips: number): number => (100 * (chips + evPot / 2)) / evPot;
 
 	return {
 		spot,
@@ -1839,12 +1878,20 @@ function makeSolution(
 		workers,
 		solver,
 		history,
+		evPot,
 		ev(player) {
+			return share(rootValues().totals[player]);
+		},
+		evChips(player) {
 			return rootValues().totals[player];
 		},
 		handEvs(player) {
-			cachedHands[player] ??= solver.handEvs(player, rootValues().values[player]);
+			cachedHands[player] ??= solver.handEvs(player, rootValues().values[player], share);
 			return cachedHands[player].slice();
+		},
+		handEvsChips(player) {
+			cachedChips[player] ??= solver.handEvs(player, rootValues().values[player]);
+			return cachedChips[player].slice();
 		},
 		exploitability() {
 			cachedExploit ??= solver.exploitability();
@@ -1916,6 +1963,8 @@ function makeSolution(
 			return {
 				board: formatCards(cards),
 				pot: tree.pot[node] / spot.chipScale,
+				// EV stays a share of the original spot's pot down a hand.
+				evPot,
 				stack: (spot.stackUnits - invested) / spot.chipScale,
 				oop: reachAt(node, board, 0),
 				ip: reachAt(node, board, 1),

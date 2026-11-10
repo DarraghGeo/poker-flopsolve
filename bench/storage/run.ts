@@ -153,7 +153,7 @@ for (const target of checkpoints) {
 	done = target;
 	const exploitability = run.exploitabilityPercent();
 	const snap = run.snapshot();
-	const evs = [snap.handEvs(0), snap.handEvs(1)];
+	const evs = [snap.handEvsChips(0), snap.handEvsChips(1)];
 	const row: Record<string, unknown> = { iterations: done, trainSeconds: +(trainMs / 1000).toFixed(1), exploitability: +exploitability.toFixed(4) };
 	// Option 3's census: the share of stored regrets that are positive, and
 	// how many hands have a single positive action, over the late rounds.

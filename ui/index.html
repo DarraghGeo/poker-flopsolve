@@ -292,7 +292,7 @@ function renderStats(s) {
   if (!summary) return;
   const r = s.result, p = s.progress;
   const cells = [];
-  if (r) cells.push(['EV oop', r.ev[0].toFixed(2)]);
+  if (r) cells.push(['EV oop / ip', `${r.ev[0].toFixed(1)}% / ${r.ev[1].toFixed(1)}%`]);
   const eps = r?.exploitability ?? p?.exploitability;
   if (shown(eps)) cells.push(['exploitability', eps.toFixed(3) + '%']);
   cells.push(['combos', summary.combos.join(' v ')], ['runouts', summary.runouts.toLocaleString()],

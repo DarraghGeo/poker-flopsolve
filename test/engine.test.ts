@@ -25,7 +25,7 @@ function solveWith(config: SpotConfig, iterations: number, options: SolveOptions
 		run.step(iterations);
 		const solution = run.snapshot();
 		const root = solution.strategyAt(solution.spot.tree.decisionNodes[0], 0);
-		return { ev: solution.ev(0), exploitability: run.exploitabilityPercent(), root: Array.from(root.probs) };
+		return { ev: solution.evChips(0), exploitability: run.exploitabilityPercent(), root: Array.from(root.probs) };
 	} finally {
 		run.close();
 	}

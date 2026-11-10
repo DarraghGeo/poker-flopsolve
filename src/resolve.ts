@@ -61,7 +61,9 @@ export interface ResolvedSubgame {
 	readonly player: 0 | 1;
 	/**
 	 * Each opponent hand's best-response value at the node against the
-	 * blueprint, in chips, indexed like `COMBO_CARDS`; NaN off its range.
+	 * blueprint, in chips on `Solver.valuesAt`'s half-pot baseline (not
+	 * `Solution.ev`'s share of the pot), indexed like `COMBO_CARDS`; NaN off
+	 * its range.
 	 * Null unless `measure`.
 	 */
 	readonly alternative: Float64Array | null;

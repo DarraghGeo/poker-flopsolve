@@ -56,6 +56,7 @@ async function solveSpot(config: SpotConfig, iterations: number, targetPercent: 
 			type: 'done',
 			iterations: solution.iterations,
 			exploitability,
+			// Each player's share of the pot, in percent.
 			ev: [solution.ev(0), solution.ev(1)],
 			// A Solution cannot cross to the page, but what it returns can:
 			// typed arrays are copied by postMessage.
