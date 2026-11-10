@@ -22,7 +22,7 @@
 
 import { COMBOS } from './cards.ts';
 import type { ActiveLists, CompactPlan, Layout, PlayerIndex, RegretStore, RootTraversal, SamplingPlan, SumStore } from './cfr.ts';
-import { currentDcfrRule, dcfrFactors, Mode, treeDepth } from './cfr.ts';
+import { dcfrFactors, Mode, treeDepth } from './cfr.ts';
 import type { HandSpace } from './hands.ts';
 import type { Runouts } from './runouts.ts';
 import type { Tree } from './tree.ts';
@@ -477,7 +477,7 @@ export function createEngine(
 	if (pool) {
 		const plan = pool.plan;
 		const controlBuffer = new SharedArrayBuffer(ENGINE_CONTROL.size * 4);
-		const settingsBuffer = new SharedArrayBuffer(8 * 11);
+		const settingsBuffer = new SharedArrayBuffer(8 * 8);
 		control = new Int32Array(controlBuffer);
 		settings = new Float64Array(settingsBuffer);
 		const profileBuffer = new SharedArrayBuffer(8 * (PROFILE.busy + threads));
@@ -547,8 +547,6 @@ export function createEngine(
 		const [positive, negative, sum, weight, clamp] = settingsFor(mode, iterWeight, dcfr);
 		iteration = mode === Mode.Train ? iterWeight : 0;
 		dcfrRule = dcfr ? 1 : 0;
-		const rule = currentDcfrRule();
-		exports.setRule(rule.alpha, rule.gamma, dcfr && rule.floor ? 1 : 0);
 		if (plan || share || stored) exports.setIteration(iteration, dcfrRule);
 		// CFR+ at 16 bits or compact floors a negative regret, as `updateQuantised`
 		// and `updateCompact` do (one only a warm start could bring); 32-bit storage keeps it.
@@ -598,8 +596,7 @@ export function createEngine(
 		const timed = mode === Mode.Train && apply === 1;
 		order.sort((a, b) => costs[b] - costs[a] || a - b);
 		// Every thread takes boards off the order until none are left.
-		const rule = currentDcfrRule();
-		settings!.set([positive, negative, sum, weight, clamp, apply, iteration, dcfrRule, rule.alpha, rule.gamma, dcfrRule && rule.floor ? 1 : 0]);
+		settings!.set([positive, negative, sum, weight, clamp, apply, iteration, dcfrRule]);
 		Atomics.store(control!, ENGINE_CONTROL.done, 0);
 		Atomics.store(control!, ENGINE_CONTROL.next, 0);
 		Atomics.store(control!, ENGINE_CONTROL.mode, mode);
@@ -701,8 +698,6 @@ export interface EngineExports {
 		baselines: number, lastWalks: number, lastUpdates: number, blockOffsets: number,
 	): void;
 	setIteration(t: number, dcfr: number): void;
-	/** The DCFR schedule; see `DcfrRule` in src/cfr.ts. */
-	setRule(alpha: number, gamma: number, floor: number): void;
 	setShared(marks: number, blockOffsets: number, weighted: number): void;
 	run(mode: number, traverser: number, me: number, opp: number, positive: number, negative: number, sum: number, weight: number, clamp: number): number;
 	runChance(mode: number, traverser: number, node: number, me: number, opp: number, positive: number, negative: number, sum: number, weight: number, clamp: number): number;

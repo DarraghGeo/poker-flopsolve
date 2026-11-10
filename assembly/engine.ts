@@ -233,12 +233,11 @@ function blockFactors(block: usize, positive: f64, negative: f64, sum: f64): voi
 				// s^1.5 as s·√s, s^0 / (s^0 + 1) as 0.5, and a cube, without
 				// pulling a general power function into the module.
 				const age: f64 = t > 2 ? <f64>(t - 2) : 0;
-				const grown = ruleAlpha === 1.5 ? age * Math.sqrt(age) : ruleAlpha === 2 ? age * age : age;
+				const grown = age * Math.sqrt(age);
 				const kept = <f64>(t - 1) / <f64>t;
 				positive *= grown / (grown + 1);
 				negative *= 0.5;
-				if (ruleGamma === 3) sum *= kept * kept * kept;
-				else for (let g = 0; g < ruleGamma; g++) sum *= kept;
+				sum *= kept * kept * kept;
 			}
 		}
 		store<i32>(at, iteration);
@@ -273,19 +272,6 @@ let keepNegative: f32 = 0;
 let keepSum: f32 = 1;
 let weight: f32 = 1;
 let clamp: bool = false;
-
-// The DCFR schedule (`DcfrRule` in src/cfr.ts): α, γ, and whether regrets are
-// floored at zero without CFR+'s own-reach weighting of sums (DCFR+).
-let ruleAlpha: f64 = 1.5;
-let ruleGamma: i32 = 3;
-let floorRegret: bool = false;
-
-/** Set the DCFR schedule; see `DcfrRule` in src/cfr.ts. */
-export function setRule(alpha: f64, gamma: i32, floor: i32): void {
-	ruleAlpha = alpha;
-	ruleGamma = gamma;
-	floorRegret = floor !== 0;
-}
 
 /** Read the header of pointers src/engine.ts wrote at `header`. */
 export function init(header: usize): void {
@@ -834,7 +820,7 @@ function update(base: usize, sumBase: usize, actions: i32, n: i32, reachMe: usiz
 			const r = v128.load(base + row + o);
 			const factor = v128.bitselect(pos, neg, f32x4.gt(r, zero));
 			let updated = f32x4.add(f32x4.mul(r, factor), f32x4.sub(v128.load(actionValues + row + o), v128.load(value + o)));
-			if (clamp || floorRegret) updated = f32x4.max(updated, zero);
+			if (clamp) updated = f32x4.max(updated, zero);
 			v128.store(base + row + o, updated);
 			// DCFR adds the strategy unweighted by own reach (issue #8); CFR+ keeps the weight.
 			let played = v128.load(strategy + row + o);
@@ -847,7 +833,7 @@ function update(base: usize, sumBase: usize, actions: i32, n: i32, reachMe: usiz
 			const o = <usize>i << 2;
 			const r = load<f32>(base + row + o);
 			let updated = r * (r > 0 ? keepPositive : keepNegative) + load<f32>(actionValues + row + o) - load<f32>(value + o);
-			if ((clamp || floorRegret) && updated < 0) updated = 0;
+			if (clamp && updated < 0) updated = 0;
 			store<f32>(base + row + o, updated);
 			let played = load<f32>(strategy + row + o);
 			if (clamp) played = load<f32>(reachMe + o) * played;
@@ -1000,7 +986,7 @@ function updateI16(
 			const qv = v128.load64_zero(q + (<usize>i << 1));
 			const r = f32x4.mul(f32x4.convert_i32x4_s(i32x4.extend_low_i16x8_s(qv)), scaleR);
 			let u = f32x4.sub(f32x4.add(f32x4.mul(r, v128.bitselect(pos, neg, f32x4.gt(r, zero))), v128.load(actionValues + row + o)), v128.load(value + o));
-			if (clamp || floorRegret) u = f32x4.max(u, zero);
+			if (clamp) u = f32x4.max(u, zero);
 			v128.store(actionValues + row + o, u);
 			topR = f32x4.max(topR, f32x4.abs(u));
 			// DCFR adds the strategy unweighted by own reach (issue #8); CFR+ keeps the weight.
@@ -1015,7 +1001,7 @@ function updateI16(
 			const o = <usize>i << 2;
 			const r = <f32>load<i16>(q + (<usize>i << 1)) * oldRegret;
 			let u = r * (r > 0 ? <f32>positive : <f32>negative) + load<f32>(actionValues + row + o) - load<f32>(value + o);
-			if ((clamp || floorRegret) && u < 0) u = 0;
+			if (clamp && u < 0) u = 0;
 			store<f32>(actionValues + row + o, u);
 			topR = f32x4.max(topR, f32x4.splat(Mathf.abs(u)));
 			const played = load<f32>(strategy + row + o);
@@ -1123,7 +1109,7 @@ function updateCompact(
 			const accumulated = <f64>load<f32>(q);
 			const updated = accumulated * (accumulated > 0 ? positive : negative)
 				+ <f64>load<f32>(actionValues + (<usize>k << 2)) - <f64>load<f32>(value + (<usize>(k % n) << 2));
-			store<f32>(q, <f32>((clamp || floorRegret) && updated < 0 ? 0 : updated));
+			store<f32>(q, <f32>(clamp && updated < 0 ? 0 : updated));
 		}
 		return;
 	}
@@ -1147,7 +1133,7 @@ function updateCompact(
 					const accumulated = <f64>load<i8>(q) * old;
 					let updated = accumulated * (accumulated > 0 ? positive : negative)
 						+ <f64>load<f32>(actionValues + <usize>a * rowStride + (<usize>i << 2)) - <f64>load<f32>(value + (<usize>i << 2));
-					if ((clamp || floorRegret) && updated < 0) updated = 0;
+					if (clamp && updated < 0) updated = 0;
 					if (pass === 0) {
 						const magnitude = updated < 0 ? -updated : updated;
 						if (magnitude > largest) largest = magnitude;
@@ -1191,7 +1177,7 @@ function updateCompact(
 			const at = actionValues + <usize>a * rowStride + o;
 			const r = f32x4.mul(signedBytes(base + <usize>(a * n + i)), scale4);
 			let u = f32x4.sub(f32x4.add(f32x4.mul(r, v128.bitselect(pos, neg, f32x4.gt(r, zero))), v128.load(at)), out4);
-			if (clamp || floorRegret) u = f32x4.max(u, zero);
+			if (clamp) u = f32x4.max(u, zero);
 			v128.store(at, u);
 			largest = f32x4.max(largest, f32x4.abs(u));
 		}
@@ -1247,7 +1233,7 @@ function updateCompact(
 		for (let a = 0; a < actions; a++) {
 			const accumulated = <f64>load<i8>(base + <usize>(a * n + i)) * scale;
 			let updated = accumulated * (accumulated > 0 ? positive : negative) + <f64>load<f32>(actionValues + <usize>a * rowStride + o) - out;
-			if ((clamp || floorRegret) && updated < 0) updated = 0;
+			if (clamp && updated < 0) updated = 0;
 			const magnitude = updated < 0 ? -updated : updated;
 			if (magnitude > largest) largest = magnitude;
 		}
@@ -1260,7 +1246,7 @@ function updateCompact(
 			const q = base + <usize>(a * n + i);
 			const accumulated = <f64>load<i8>(q) * scale;
 			let updated = accumulated * (accumulated > 0 ? positive : negative) + <f64>load<f32>(actionValues + <usize>a * rowStride + o) - out;
-			if ((clamp || floorRegret) && updated < 0) updated = 0;
+			if (clamp && updated < 0) updated = 0;
 			const v = updated * inverse;
 			let rounded: f64;
 			if (stochastic) {

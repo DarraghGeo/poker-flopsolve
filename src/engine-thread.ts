@@ -61,7 +61,6 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 			baselines: number, lastWalks: number, lastUpdates: number, blockOffsets: number,
 		): void;
 		setIteration(t: number, dcfr: number): void;
-		setRule(alpha: number, gamma: number, floor: number): void;
 		runChance(
 			mode: number, traverser: number, node: number, me: number, opp: number,
 			positive: number, negative: number, sum: number, weight: number, clamp: number,
@@ -117,7 +116,6 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 			// Off for a current-profile read, which updates nothing.
 			engine.setPhase(0, settings[5]);
 			if (needsIteration) engine.setIteration(settings[6], settings[7]);
-			engine.setRule(settings[8], settings[9], settings[10]);
 			const heap = new Float32Array(memory.buffer);
 			const started = performance.now();
 			// Boards off the shared order until none are left; each board's
