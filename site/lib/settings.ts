@@ -12,15 +12,25 @@ import type { SpotConfig } from '../../src/index.ts';
 import { parseRange } from '../../src/range.ts';
 import { RANGE_PRESETS } from './ranges.ts';
 
-/** The bet size menus, pot fractions on every street. */
-export const SIZE_PRESETS = {
-	small: { label: '33% pot', sizes: [0.33] },
-	one: { label: '66% pot', sizes: [0.66] },
-	large: { label: '100% pot', sizes: [1] },
-	two: { label: '33% + 75% pot', sizes: [0.33, 0.75] },
-} as const;
+/** Bet sizes offered, pot fractions on every street; any mix of them. */
+export const BET_SIZES = [0.25, 0.33, 0.5, 0.66, 0.75, 1, 1.5, 2] as const;
 
-export type SizeKey = keyof typeof SIZE_PRESETS;
+/** Raise sizes offered, multiples of the bet faced; none picked raises with the bet sizes. */
+export const RAISE_SIZES = [2, 2.5, 3, 4, 5] as const;
+
+/** At most this many bet sizes, and as many raise sizes: each one multiplies the work. */
+export const MAX_SIZES = 4;
+
+/** Raises after the opening bet, per street. */
+export const MAX_RAISES = 3;
+
+/** The bet size menus of links made before sizes could be mixed freely. */
+const LEGACY_SIZES: Record<string, readonly number[]> = {
+	small: [0.33],
+	one: [0.66],
+	large: [1],
+	two: [0.33, 0.75],
+};
 
 /** Targets offered, % of pot. */
 export const TARGETS = [2, 1, 0.5, 0.3] as const;
@@ -44,9 +54,12 @@ export interface Settings {
 	readonly pot: number;
 	/** Effective stack behind, big blinds. */
 	readonly stack: number;
-	readonly sizes: SizeKey;
-	/** One raise allowed after a bet. */
-	readonly raise: boolean;
+	/** Bet sizes, pot fractions from `BET_SIZES`, ascending, one to `MAX_SIZES`. */
+	readonly bets: readonly number[];
+	/** Raises allowed after the opening bet, 0 to `MAX_RAISES`. */
+	readonly raises: number;
+	/** Raise sizes, multiples from `RAISE_SIZES`, ascending; empty raises with the bet sizes. */
+	readonly raiseSizes: readonly number[];
 	readonly allIn: boolean;
 	/** Stop at this exploitability, % of pot. */
 	readonly target: number;
@@ -66,8 +79,9 @@ export const DEFAULT_SETTINGS: Settings = {
 	ip: preset('BTN open'),
 	pot: 5.5,
 	stack: 97.5,
-	sizes: 'one',
-	raise: false,
+	bets: [0.66],
+	raises: 0,
+	raiseSizes: [],
 	allIn: false,
 	target: 0.5,
 	threads: 0,
@@ -99,10 +113,35 @@ export function configOf(settings: Settings, auto = 512): SpotConfig {
 		stack: settings.stack,
 		oop: settings.oop,
 		ip: settings.ip,
-		betSizes: [[...SIZE_PRESETS[settings.sizes].sizes]],
-		maxRaises: settings.raise ? 2 : 1,
+		betSizes: [[...settings.bets]],
+		raiseSizes: settings.raises > 0 && settings.raiseSizes.length > 0 ? settings.raiseSizes.map((times) => ({ times })) : undefined,
+		maxRaises: 1 + settings.raises,
 		allowAllIn: settings.allIn,
 	};
+}
+
+const percent = (fraction: number): string => `${Math.round(fraction * 100)}%`;
+
+/** The betting in plain words, e.g. "33% + 75% pot, 1 raise of 3×, all-in". */
+export function bettingLabel(settings: Settings): string {
+	let text = `${settings.bets.map(percent).join(' + ')} pot`;
+	if (settings.raises > 0) {
+		text += `, ${settings.raises} raise${settings.raises === 1 ? '' : 's'}`;
+		if (settings.raiseSizes.length > 0) text += ` of ${settings.raiseSizes.map((x) => `${x}×`).join(' or ')}`;
+	}
+	if (settings.allIn) text += ', all-in';
+	return text;
+}
+
+/**
+ * Sizes from a link's comma list, ascending without repeats, or null unless
+ * every one is offered and there are `min` to `MAX_SIZES` of them.
+ */
+function sizeList(text: string, offered: readonly number[], min: number): number[] | null {
+	const items = text.trim() === '' ? [] : text.split(',').map((item) => Number(item));
+	if (!items.every((n) => offered.includes(n))) return null;
+	const sizes = [...new Set(items)].sort((a, b) => a - b);
+	return sizes.length >= min && sizes.length <= MAX_SIZES ? sizes : null;
 }
 
 /** A board of three to five distinct cards, normalised, or null. */
@@ -143,15 +182,25 @@ export function readSettings(query: string): Settings {
 		const text = params.get(key);
 		return text !== null && validRange(text) ? text : fallback;
 	};
-	const sizes = params.get('sizes');
+	const legacy = params.get('sizes');
+	const betsText = params.get('bets');
+	const raiseText = params.get('rx');
+	const raiseFlag = params.get('raise');
+	const bets =
+		betsText !== null
+			? sizeList(betsText, BET_SIZES, 1)
+			: legacy !== null && Object.hasOwn(LEGACY_SIZES, legacy) ? [...LEGACY_SIZES[legacy]] : null;
 	return {
 		board: normaliseBoard(params.get('board') ?? '') ?? d.board,
 		oop: range('oop', d.oop),
 		ip: range('ip', d.ip),
 		pot: number('pot', d.pot, (n) => n > 0 && n <= 1e6),
 		stack: number('stack', d.stack, (n) => n > 0 && n <= 1e6),
-		sizes: sizes !== null && sizes in SIZE_PRESETS ? (sizes as SizeKey) : d.sizes,
-		raise: flag('raise', d.raise),
+		bets: bets ?? d.bets,
+		raises: params.has('raises')
+			? number('raises', d.raises, (n) => Number.isInteger(n) && n >= 0 && n <= MAX_RAISES)
+			: raiseFlag === '1' ? 1 : d.raises,
+		raiseSizes: (raiseText !== null ? sizeList(raiseText, RAISE_SIZES, 0) : null) ?? d.raiseSizes,
 		allIn: flag('allin', d.allIn),
 		target: number('target', d.target, (n) => (TARGETS as readonly number[]).includes(n)),
 		threads: number('threads', d.threads, (n) => Number.isInteger(n) && n >= 0 && n <= 256),
@@ -172,8 +221,9 @@ export function writeSettings(settings: Settings): string {
 	put('ip', settings.ip, d.ip);
 	put('pot', String(settings.pot), String(d.pot));
 	put('stack', String(settings.stack), String(d.stack));
-	put('sizes', settings.sizes, d.sizes);
-	put('raise', settings.raise ? '1' : '0', d.raise ? '1' : '0');
+	put('bets', settings.bets.join(','), d.bets.join(','));
+	put('raises', String(settings.raises), String(d.raises));
+	put('rx', settings.raiseSizes.join(','), d.raiseSizes.join(','));
 	put('allin', settings.allIn ? '1' : '0', d.allIn ? '1' : '0');
 	put('target', String(settings.target), String(d.target));
 	put('threads', String(settings.threads), String(d.threads));
