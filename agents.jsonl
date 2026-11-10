@@ -54,3 +54,4 @@
 {"url":"https://claude.ai/code/session_014RSNFi3zrWU1xwAupRfFWs","title":"Update GitHub Pages","issue":144,"state":"active","updated":"2026-11-10T22:02:21.543Z"}
 {"url":"https://claude.ai/code/session_014RSNFhNst6xQVzaU5BJNLf","title":"Flaky: thread-failure test \"fails a WebAssembly engine step, and every step after\"","issue":140,"state":"active","updated":"2026-11-10T22:08:27.369Z"}
 {"url":"https://claude.ai/code/session_014RSNFh2ghYoi3RSaD6WkdW","title":"coarseStart's memory budget leaves out chance sampling's baselines","issue":141,"state":"active","updated":"2026-11-10T22:08:27.369Z"}
+{"url":null,"title":"Enable Resolve after Lite","issue":147,"state":"active","updated":"2026-11-10T22:21:49.250Z"}
