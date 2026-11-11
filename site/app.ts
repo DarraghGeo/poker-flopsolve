@@ -1114,6 +1114,9 @@ let accuracy:
 	| { state: 'done'; result: Measured }
 	| { state: 'failed'; message: string } = { state: 'idle' };
 
+/** The Accuracy tile as last drawn. */
+let accuracyHtml = '';
+
 /** Whether the kept worker is free to measure: no step of the walk-through under way. */
 const canMeasure = (): boolean => explorer !== null && pending === null && !explore?.resolving;
 
@@ -1121,7 +1124,7 @@ const canMeasure = (): boolean => explorer !== null && pending === null && !expl
 function accuracyTile(): string {
 	const r = shown!;
 	const tile = (label: string, value: string, note: string): string =>
-		`<div class="tile" id="accuracy"><span>${label}</span>${value}<small>${note}</small></div>`;
+		(accuracyHtml = `<div class="tile" id="accuracy"><span>${label}</span>${value}<small>${note}</small></div>`);
 	const b = (text: string): string => `<b>${text}</b>`;
 	const exact = r.exact;
 	if (!exact) return tile('Accuracy', b('Not measured'), 'Lite cannot measure it');
@@ -1158,7 +1161,11 @@ function accuracyTile(): string {
 function renderAccuracy(): void {
 	const el = document.getElementById('accuracy');
 	if (!el || !shown || shown.mode !== 'lite') return;
-	el.outerHTML = accuracyTile();
+	const before = accuracyHtml;
+	const html = accuracyTile();
+	// Unchanged, it stays as it is, and keeps focus.
+	if (html === before) return;
+	el.outerHTML = html;
 	bindAccuracy();
 }
 
@@ -1192,7 +1199,7 @@ function onMeasuring(data: Extract<Outbound, { type: 'measuring' }>): void {
 function onMeasured(data: Extract<Outbound, { type: 'measured' }>): void {
 	if (accuracy.state !== 'measuring' || data.id !== accuracy.id) return;
 	accuracy = data.result ? { state: 'done', result: data.result } : { state: 'failed', message: data.message ?? 'The measure failed.' };
-	if (data.result?.dropped && explore && shown) {
+	if (data.dropped && explore && shown) {
 		// The worker dropped the re-solved streets to make room: the line is back at the start.
 		explore.trail = [{ layer: 0, node: 0, board: 0, round: 0, via: '' }];
 		explore.view = shown.root;

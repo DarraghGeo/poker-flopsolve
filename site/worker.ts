@@ -53,6 +53,8 @@ const CHUNK_MS = 200;
 let stopping = false;
 /** Stops the Exact solve a measure makes, apart from `stopping`, which a newer card sets to stop a re-solve. */
 let measureStopping = false;
+/** Whether the measure under way let the re-solved streets go, so the page hears it even if the measure fails. */
+let measureDropped = false;
 
 /** A solve the walk-through reads: the benchmark's, or a street re-solved from one. */
 interface Layer {
@@ -346,11 +348,17 @@ const heldNow = (): number => layers.reduce((sum, layer) => sum + layer.bytes, 0
 
 /** The Exact game, the spot as asked, within `room` bytes; null if it does not fit even compressed. */
 function exactSpot(config: SpotConfig, room: number): Spot | null {
+	const spot = exactSpotOr(config, room);
+	return spot instanceof SpotTooLargeError || spot === null ? null : spot;
+}
+
+/** The Exact game within `room`, or why it does not fit: the error with its estimate, or null for no room at all. */
+function exactSpotOr(config: SpotConfig, room: number): Spot | SpotTooLargeError | null {
 	if (!(room > 0)) return null;
 	try {
 		return defineSpot({ ...config, maxBytes: room });
 	} catch (error) {
-		if (error instanceof SpotTooLargeError) return null;
+		if (error instanceof SpotTooLargeError) return error;
 		throw error;
 	}
 }
@@ -358,11 +366,12 @@ function exactSpot(config: SpotConfig, room: number): Spot | null {
 /** Whether the Exact game fits beside the Lite solve, and at what storage; null if it cannot be built at all. */
 function exactFit(config: SpotConfig, room: number): ExactFit | null {
 	try {
-		if (!(room > 0)) return { fits: false, bytes: 0 };
-		const { estimate } = defineSpot({ ...config, maxBytes: room });
-		return { fits: true, bytes: precisionFor(estimate, room) === 'i16' ? estimate.compressedBytes : estimate.bytes };
-	} catch (error) {
-		return error instanceof SpotTooLargeError ? { fits: false, bytes: error.estimate.compressedBytes } : null;
+		const spot = exactSpotOr(config, room);
+		if (spot === null) return { fits: false, bytes: 0 };
+		if (spot instanceof SpotTooLargeError) return { fits: false, bytes: spot.estimate.compressedBytes };
+		return { fits: true, bytes: precisionFor(spot.estimate, room) === 'i16' ? spot.estimate.compressedBytes : spot.estimate.bytes };
+	} catch {
+		return null;
 	}
 }
 
@@ -377,11 +386,11 @@ async function measureExact(request: Extract<Inbound, { type: 'measure' }>): Pro
 	if (!solved || solved.mode !== 'lite' || !lite) throw new Error('Nothing to measure: run the spot in Lite first.');
 	const started = performance.now();
 	measureStopping = false;
-	let dropped = false;
+	measureDropped = false;
 	let spot = exactSpot(solved.config, solved.maxBytes - heldNow());
 	if (!spot && layers.length > 1) {
 		dropLayers(1);
-		dropped = true;
+		measureDropped = true;
 		spot = exactSpot(solved.config, solved.maxBytes - heldNow());
 	}
 	if (!spot) throw new Error(TOO_BIG_TO_MEASURE);
@@ -408,9 +417,8 @@ async function measureExact(request: Extract<Inbound, { type: 'measure' }>): Pro
 			exploitability: exploitabilityInExact(lite.solution, run),
 			exact: { exploitability: floor, iterations: run.completed, stoppedBy: stoppedBy === 'settled' ? 'target' : stoppedBy },
 			ms: performance.now() - started,
-			dropped,
 		};
-		post({ type: 'measured', id, result });
+		post({ type: 'measured', id, result, dropped: measureDropped });
 	} finally {
 		run.close();
 	}
@@ -561,7 +569,9 @@ scope.onmessage = ({ data }) => {
 	if (data.type === 'measure') {
 		// After any re-solve under way, which the page lets finish first.
 		resolves = resolves.then(() =>
-			measureExact(data).catch((error: unknown) => post({ type: 'measured', id: data.id, result: null, message: messageOf(error) })),
+			measureExact(data).catch((error: unknown) =>
+				post({ type: 'measured', id: data.id, result: null, message: messageOf(error), dropped: measureDropped }),
+			),
 		);
 		return;
 	}

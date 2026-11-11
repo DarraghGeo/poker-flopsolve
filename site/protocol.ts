@@ -88,8 +88,6 @@ export interface Measured {
 	};
 	/** Solving Exact and measuring, wall clock. */
 	readonly ms: number;
-	/** Whether the re-solved streets were dropped to make room; the walk-through is back at the start. */
-	readonly dropped: boolean;
 }
 
 /** Everything one benchmark measured. */
@@ -185,6 +183,7 @@ export type Outbound =
 	| { type: 'resolving'; id: number; iterations: number; measure: number | null; goal: number; settle: boolean }
 	/** The Exact solve a measure needs: its progress, `measure` its last exploitability. */
 	| { type: 'measuring'; id: number; iterations: number; measure: number | null; goal: number }
-	| { type: 'measured'; id: number; result: Measured | null; message?: string }
+	/** `dropped`: the re-solved streets were let go to make room, measured or not; the walk-through is back at the start. */
+	| { type: 'measured'; id: number; result: Measured | null; message?: string; dropped: boolean }
 	/** `resolved` when the view follows a re-solve. */
 	| { type: 'view'; id: number; view: WalkView | null; message?: string; resolved?: Resolved };
