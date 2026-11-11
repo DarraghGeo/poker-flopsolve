@@ -2048,6 +2048,6 @@ function makeSolution(
 }
 
 export { formatCards, parseCards };
-export { bettingFrom, checkedDown, keepWithin, liteConfig, litePreset, solveLite } from './lite.ts';
+export { bettingFrom, checkedDown, exploitabilityInExact, keepWithin, liteConfig, litePreset, solveLite } from './lite.ts';
 export type { LiteOptions, LitePreset, LiteResolveOptions, LiteSolution, SolveLiteOptions } from './lite.ts';
 export type { PresetChanges, SettingChange, SizesCut, Street } from './presets.ts';
