@@ -57,3 +57,4 @@
 {"url":"https://claude.ai/code/session_014RSNFkiBq6DB5dsJF4Vmks","title":"Enable Resolve after Lite","issue":147,"state":"active","updated":"2026-11-10T22:22:28.963Z"}
 {"url":"https://claude.ai/code/session_014RSNFg3UoRBjyiciqKQPKj","title":"thread-failure test fails in full-suite runs","issue":145,"state":"active","updated":"2026-11-10T22:23:15.331Z"}
 {"url":"https://claude.ai/code/session_014RSNFjDuwGqYFD9Hkx643k","title":"Default precision ignores coarseStart, so a spot that fits at 16 bits is refused","issue":148,"state":"active","updated":"2026-11-10T22:42:38.685Z"}
+{"url":null,"title":"Measure Exploitability of Lite","issue":154,"state":"active","updated":"2026-11-11T18:55:10.164Z"}
