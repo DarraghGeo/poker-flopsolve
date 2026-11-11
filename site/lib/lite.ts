@@ -11,7 +11,7 @@ import type { PresetChanges, SpotConfig } from '../../src/index.ts';
 /** What Lite gives up, the same for every spot. */
 export const LITE_LIMITS: readonly string[] = [
 	'The first decisions come out close to exact; later streets are only a rough guide until the walk-through re-solves them.',
-	'It has no accuracy figure: it cannot measure how far it is from perfect play.',
+	'It has no accuracy figure of its own. Where the Exact game fits beside it, the Accuracy box can solve Exact and measure Lite\'s play there.',
 	'Its times are not comparable with Exact, which solves the whole game.',
 ];
 

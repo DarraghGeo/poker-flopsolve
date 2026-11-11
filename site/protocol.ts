@@ -66,6 +66,30 @@ export interface Resolved {
 	readonly stoppedBy: 'target' | 'settled' | 'iterations' | 'stopped';
 }
 
+/**
+ * Lite: whether the Exact game (the spot at its own betting, every runout)
+ * fits beside the Lite solve, to measure Lite's exploitability in it.
+ */
+export interface ExactFit {
+	readonly fits: boolean;
+	/** Its storage: at 32 bits if that fits, else 16. */
+	readonly bytes: number;
+}
+
+/** Lite's exploitability in the Exact game (issue #154), and the Exact solve it was read from. */
+export interface Measured {
+	/** % of the pot. */
+	readonly exploitability: number;
+	readonly exact: {
+		/** Where the Exact solve stopped, % of the pot: the measure's floor. */
+		readonly exploitability: number;
+		readonly iterations: number;
+		readonly stoppedBy: 'target' | 'iterations' | 'stopped';
+	};
+	/** Solving Exact and measuring, wall clock. */
+	readonly ms: number;
+}
+
 /** Everything one benchmark measured. */
 export interface Report {
 	readonly config: SpotConfig;
@@ -108,6 +132,8 @@ export interface Report {
 	readonly ev: readonly [number, number];
 	/** The first decision, as the walk-through draws it. */
 	readonly root: WalkView;
+	/** Lite: whether Exact fits beside it to measure it; null for Exact, or a spot Exact cannot build. */
+	readonly exact: ExactFit | null;
 }
 
 export type Phase = 'threads' | 'build' | 'alloc' | 'solve' | 'finish';
@@ -126,7 +152,12 @@ export type Inbound =
 	 * reaches the card, `asIs` draws the decision as solve `layer` has it
 	 * instead of refusing.
 	 */
-	| { type: 'resolve'; id: number; layer: number; node: number; board: number; then: number; asIs: boolean };
+	| { type: 'resolve'; id: number; layer: number; node: number; board: number; then: number; asIs: boolean }
+	/**
+	 * After `done`, in Lite: solve the Exact game to `target` % of the pot
+	 * (or `cap` iterations), then measure Lite's exploitability in it.
+	 */
+	| { type: 'measure'; id: number; target: number; cap: number };
 
 /** A spot the solver will not build, and why. */
 export interface EstimateRefused {
@@ -150,5 +181,9 @@ export type Outbound =
 	| { type: 'error'; message: string }
 	/** A re-solve's progress; `measure` is its last reading, % as the solve's own. */
 	| { type: 'resolving'; id: number; iterations: number; measure: number | null; goal: number; settle: boolean }
+	/** The Exact solve a measure needs: its progress, `measure` its last exploitability. */
+	| { type: 'measuring'; id: number; iterations: number; measure: number | null; goal: number }
+	/** `dropped`: the re-solved streets were let go to make room, measured or not; the walk-through is back at the start. */
+	| { type: 'measured'; id: number; result: Measured | null; message?: string; dropped: boolean }
 	/** `resolved` when the view follows a re-solve. */
 	| { type: 'view'; id: number; view: WalkView | null; message?: string; resolved?: Resolved };

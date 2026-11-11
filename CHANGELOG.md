@@ -4,6 +4,16 @@
 
 Not in 0.5.0-beta.0, which was already published: this lands in the next beta or in 0.5.0.
 
+### Lite's exploitability in the full game (issue #154)
+
+- `exploitabilityInExact(lite, exact)` measures how exploitable a Lite solve's play is in
+  the caller's full game. It copies Lite's strategy onto a run of the full spot wherever
+  Lite has the decision, keeps that run's own play below the sizes and raises Lite cut, and
+  returns the exploitability as a % of the pot.
+- The benchmark page's Accuracy box, after a Lite solve, offers "Measure against Exact"
+  when the full game fits in the memory left beside it. It solves Exact to the form's
+  target and shows Lite's exploitability with Exact's own beside it.
+
 ### Faster: engine threads share out boards (issue #133)
 
 - On the WebAssembly engine, threads take the split round's boards off a shared queue,

@@ -836,6 +836,14 @@ position's decision after a check. It stops once both have moved less than 1% of
 range, by total variation weighted by range, twice in a row. That is two strategy reads,
 with no best-response pass. It works on any solve: `solve(spot, { settle: {} })`.
 
+Where the full game fits in memory too, `exploitabilityInExact(lite, exact)` measures Lite's
+play there (issue #154): `exact` is a run of your own spot, solved as far as you like. Each of its
+decisions that Lite also has takes Lite's average strategy, so a size Lite cut is never played,
+and the decisions only reachable through such a size or a raise keep `exact`'s own play. The
+result, % of the pot, is the exploitability of that strategy, with `exact`'s own as its floor.
+It overwrites `exact`'s strategy, so close the run after. The benchmark page's Accuracy box does this
+after a Lite solve, solving Exact to the form's target first.
+
 Measured on that spot's betting, in headless Chromium. The time counts solving and the settle
 checks. Root play loss is what OOP's root mix and IP's mix after a check lose at the
 unshared blueprint's per-action values (solved to 0.05% of pot), with that blueprint's

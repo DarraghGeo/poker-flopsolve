@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
-	ActionKind, bettingFrom, checkedDown, createRun, defineSpot, keepWithin, liteConfig, litePreset, NodeKind, rootPlay, rootPlayMovement, rootPlayNodes, solve, solveLite,
+	ActionKind, bettingFrom, checkedDown, createRun, defineSpot, exploitabilityInExact, keepWithin, liteConfig, litePreset, NodeKind, rootPlay, rootPlayMovement, rootPlayNodes, solve, solveLite,
 	storageCost, trackSettle, turnLineReach,
 } from '../src/index.ts';
 import type { SpotConfig } from '../src/index.ts';
@@ -373,5 +373,58 @@ describe('checkedDown', () => {
 		expect(perPlayer.allowAllIn).toEqual([true, false]);
 		const river = checkedDown({ ...small, board: 'Ts 9h 4d 2c 3s', betSizes: [[0.5]] });
 		expect(river.betSizes).toEqual([[]]);
+	});
+});
+
+describe('exploitabilityInExact', () => {
+	it('measures a solve of the very same spot as its own exploitability', () => {
+		const spot = defineSpot(small);
+		const own = createRun(spot, { workers: 1 });
+		const exact = createRun(spot, { workers: 1 });
+		try {
+			own.step(15);
+			exact.step(60);
+			expect(exploitabilityInExact(own, exact)).toBeCloseTo(own.exploitabilityPercent(), 6);
+		} finally {
+			own.close();
+			exact.close();
+		}
+	});
+
+	it('plays the Exact solve below actions the simplified tree lacks', () => {
+		// Lite's turn keeps one size, so the 0.5 bet and every raise are the Exact game's alone.
+		const preset = litePreset(small, { workers: 1, sampling: false });
+		const lite = createRun(defineSpot(preset.config), { workers: 1 });
+		const exact = createRun(defineSpot(small), { workers: 1 });
+		const cold = createRun(defineSpot(small), { workers: 1 });
+		try {
+			lite.step(150);
+			exact.step(300);
+			const floor = exact.exploitabilityPercent();
+			const measured = exploitabilityInExact(lite, exact);
+			// Uniform play wherever Lite has no decision, for comparison.
+			const uniform = exploitabilityInExact(lite, cold);
+			expect(measured).toBeGreaterThan(floor);
+			expect(measured).toBeLessThan(uniform);
+			expect(Number.isFinite(measured)).toBe(true);
+		} finally {
+			lite.close();
+			exact.close();
+			cold.close();
+		}
+	});
+
+	it('refuses an Exact run of another board, or one that shares histories', () => {
+		const own = createRun(defineSpot(small), { workers: 1 });
+		const other = createRun(defineSpot({ ...small, board: 'Ts 9h 4d 3c' }), { workers: 1 });
+		const shared = createRun(defineSpot({ ...small, shareHistories: true }), { workers: 1 });
+		try {
+			expect(() => exploitabilityInExact(own, other)).toThrow(/same board/);
+			expect(() => exploitabilityInExact(own, shared)).toThrow(/shares histories/);
+		} finally {
+			own.close();
+			other.close();
+			shared.close();
+		}
 	});
 });
