@@ -10,13 +10,15 @@
  * keeps the solved run and draws any decision of it the page asks for. In
  * Lite it also re-solves, on request, the street a dealt card opens at the
  * spot's own betting (issue #147), and keeps each re-solve beside the solve
- * it came from, the line's streets one on another.
+ * it came from, the line's streets one on another. And in Lite, on request,
+ * it solves the Exact game beside the Lite solve and measures how
+ * exploitable Lite's play is in it (issue #154).
  *
  * Iterations run in chunks of about a fifth of a second with a yield between
  * them, so progress streams and a stop message lands.
  */
 
-import { COMBO_CARDS, createRun, defineSpot, litePreset, simdAvailable, SpotTooLargeError, trackSettle } from '../src/index.ts';
+import { COMBO_CARDS, createRun, defineSpot, exploitabilityInExact, litePreset, simdAvailable, SpotTooLargeError, trackSettle } from '../src/index.ts';
 import type { Estimate, Precision, Solution, SolveOptions, SolveRun, Spot, SpotConfig } from '../src/index.ts';
 import { DEFAULT_MAX_BYTES } from '../src/platform/browser.ts';
 import { settlePlan } from '../src/settle.ts';
@@ -28,7 +30,7 @@ import { nodeView, runoutsOf } from './lib/explore.ts';
 import { liteSummary } from './lib/lite.ts';
 import { RESOLVE_CAP, resolvePlan } from './lib/resolve.ts';
 import type { Mode } from './lib/settings.ts';
-import type { Inbound, Origin, Outbound, Report, Resolved, SpotSummary, WalkView } from './protocol.ts';
+import type { ExactFit, Inbound, Measured, Origin, Outbound, Report, Resolved, SpotSummary, WalkView } from './protocol.ts';
 
 const scope = self as unknown as {
 	postMessage(message: Outbound): void;
@@ -41,12 +43,16 @@ const post = (message: Outbound): void => scope.postMessage(message);
 
 const TOO_BIG_FOR_SAMPLING = "Too big for the memory limit once Lite's card sampling is added. Try a higher limit, fewer bet sizes or narrower ranges.";
 
+const TOO_BIG_TO_MEASURE = 'The Exact game is too big to solve in the memory left beside the Lite solve. Try a higher memory limit, fewer bet sizes or narrower ranges.';
+
 const TOO_BIG_TO_RESOLVE = 'This street is too big to re-solve at your sizes in the memory left beside the solve. Try a higher memory limit, fewer sizes or fewer raises.';
 
 /** Solving time each chunk aims at, so progress streams and stop lands. */
 const CHUNK_MS = 200;
 
 let stopping = false;
+/** Stops the Exact solve a measure makes, apart from `stopping`, which a newer card sets to stop a re-solve. */
+let measureStopping = false;
 
 /** A solve the walk-through reads: the benchmark's, or a street re-solved from one. */
 interface Layer {
@@ -154,6 +160,8 @@ interface DrivePlan {
 	readonly cap: number;
 	/** On a stop, measure exploitability where it stopped, so the last figure matches the iterations. */
 	readonly measureOnStop: boolean;
+	/** Whether to stop where it is; unset, `stopping`. */
+	readonly stopped?: () => boolean;
 	onProgress(solveMs: number, measureMs: number): void;
 	onCheck(check: Check): void;
 }
@@ -216,7 +224,7 @@ async function drive(run: SolveRun, plan: DrivePlan): Promise<{ checks: Check[];
 		}
 		if (run.completed >= cap) break;
 		await yieldToMessages();
-		if (stopping) {
+		if (plan.stopped ? plan.stopped() : stopping) {
 			stoppedBy = 'stopped';
 			if (plan.measureOnStop && !tracker && checks[checks.length - 1]?.iterations !== run.completed) {
 				t = now();
@@ -296,8 +304,7 @@ async function resolveStreet(request: Extract<Inbound, { type: 'resolve' }>): Pr
 		return;
 	}
 	dropLayers(request.layer + 1);
-	const held = layers.reduce((sum, layer) => sum + layer.bytes, 0);
-	const room = solved.maxBytes - held;
+	const room = solved.maxBytes - heldNow();
 	if (!(room > 0)) throw new Error(TOO_BIG_TO_RESOLVE);
 	const plan = resolvePlan(solved.config, parent.solution, request.node, request.board, parent.base, room);
 	let spot: Spot;
@@ -332,6 +339,81 @@ async function resolveStreet(request: Extract<Inbound, { type: 'resolve' }>): Pr
 	}
 	const resolved: Resolved = { round: plan.round, iterations: run.completed, ms: performance.now() - started, stoppedBy };
 	post({ type: 'view', id, view: walkView(layers.length - 1, request.then, 0), resolved });
+}
+
+/** Memory the solves the walk-through holds take. */
+const heldNow = (): number => layers.reduce((sum, layer) => sum + layer.bytes, 0);
+
+/** The Exact game, the spot as asked, within `room` bytes; null if it does not fit even compressed. */
+function exactSpot(config: SpotConfig, room: number): Spot | null {
+	if (!(room > 0)) return null;
+	try {
+		return defineSpot({ ...config, maxBytes: room });
+	} catch (error) {
+		if (error instanceof SpotTooLargeError) return null;
+		throw error;
+	}
+}
+
+/** Whether the Exact game fits beside the Lite solve, and at what storage; null if it cannot be built at all. */
+function exactFit(config: SpotConfig, room: number): ExactFit | null {
+	try {
+		if (!(room > 0)) return { fits: false, bytes: 0 };
+		const { estimate } = defineSpot({ ...config, maxBytes: room });
+		return { fits: true, bytes: precisionFor(estimate, room) === 'i16' ? estimate.compressedBytes : estimate.bytes };
+	} catch (error) {
+		return error instanceof SpotTooLargeError ? { fits: false, bytes: error.estimate.compressedBytes } : null;
+	}
+}
+
+/**
+ * Solve the Exact game beside the Lite solve to `target`, then measure how
+ * exploitable Lite's play is in it (`exploitabilityInExact`). If it does not
+ * fit beside every solve held, the re-solved streets are dropped to make room.
+ */
+async function measureExact(request: Extract<Inbound, { type: 'measure' }>): Promise<void> {
+	const { id } = request;
+	const lite = layers[0];
+	if (!solved || solved.mode !== 'lite' || !lite) throw new Error('Nothing to measure: run the spot in Lite first.');
+	const started = performance.now();
+	measureStopping = false;
+	let dropped = false;
+	let spot = exactSpot(solved.config, solved.maxBytes - heldNow());
+	if (!spot && layers.length > 1) {
+		dropLayers(1);
+		dropped = true;
+		spot = exactSpot(solved.config, solved.maxBytes - heldNow());
+	}
+	if (!spot) throw new Error(TOO_BIG_TO_MEASURE);
+	const room = solved.maxBytes - heldNow();
+	const { run } = openRun(spot, {}, solved.threads, room, TOO_BIG_TO_MEASURE);
+	try {
+		let measure: number | null = null;
+		const progress = (): void => post({ type: 'measuring', id, iterations: run.completed, measure, goal: request.target });
+		const { checks, stoppedBy } = await drive(run, {
+			settle: null,
+			tracker: null,
+			target: request.target,
+			cap: request.cap,
+			measureOnStop: true,
+			stopped: () => measureStopping,
+			onProgress: progress,
+			onCheck: (check) => {
+				measure = check.exploitability;
+				progress();
+			},
+		});
+		const floor = checks.length > 0 ? checks[checks.length - 1].exploitability : run.exploitabilityPercent();
+		const result: Measured = {
+			exploitability: exploitabilityInExact(lite.solution, run),
+			exact: { exploitability: floor, iterations: run.completed, stoppedBy: stoppedBy === 'settled' ? 'target' : stoppedBy },
+			ms: performance.now() - started,
+			dropped,
+		};
+		post({ type: 'measured', id, result });
+	} finally {
+		run.close();
+	}
 }
 
 /**
@@ -402,6 +484,8 @@ async function solveSpot(config: SpotConfig, mode: Mode, target: number, threads
 		layers = [{ spot, solution, run: null, base: 0, from: null, bytes: heldBytes(run, storageBytes) }];
 		const root = walkView(0, 0, 0);
 		const finishMs = now() - t;
+		// Outside the timed phases: whether Exact fits beside this solve to measure it.
+		const exact = mode === 'lite' ? exactFit(config, maxBytes - heldNow()) : null;
 
 		const g = scope;
 		const report: Report = {
@@ -440,6 +524,7 @@ async function solveSpot(config: SpotConfig, mode: Mode, target: number, threads
 			},
 			ev,
 			root,
+			exact,
 		};
 		post({ type: 'done', report });
 	} catch (error) {
@@ -473,8 +558,16 @@ scope.onmessage = ({ data }) => {
 		);
 		return;
 	}
+	if (data.type === 'measure') {
+		// After any re-solve under way, which the page lets finish first.
+		resolves = resolves.then(() =>
+			measureExact(data).catch((error: unknown) => post({ type: 'measured', id: data.id, result: null, message: messageOf(error) })),
+		);
+		return;
+	}
 	if (data.type === 'stop') {
 		stopping = true;
+		measureStopping = true;
 		return;
 	}
 	if (data.type === 'estimate') {

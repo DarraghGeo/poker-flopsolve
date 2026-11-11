@@ -45,7 +45,7 @@ import {
 	TARGETS,
 	writeSettings,
 } from './lib/settings.ts';
-import type { Inbound, Outbound, Phase, Report, Resolved, Setup, SpotSummary, WalkView } from './protocol.ts';
+import type { Inbound, Measured, Outbound, Phase, Report, Resolved, Setup, SpotSummary, WalkView } from './protocol.ts';
 
 // ---------------------------------------------------------------- helpers
 
@@ -802,6 +802,8 @@ function endRun(keep = false): void {
 		explorer.onmessage = ({ data }: MessageEvent<Outbound>) => {
 			if (data.type === 'view') onView(data);
 			else if (data.type === 'resolving') onResolving(data);
+			else if (data.type === 'measuring') onMeasuring(data);
+			else if (data.type === 'measured') onMeasured(data);
 		};
 		// The results stand; only the walk-through stops.
 		explorer.onerror = () => releaseExplorer();
@@ -974,6 +976,8 @@ function kv(rows: [string, string][]): string {
 
 function renderResults(report: Report): void {
 	const r = report;
+	shown = report;
+	accuracy = { state: 'idle' };
 	const perSecond = r.ms.solve > 0 ? (r.iterations / r.ms.solve) * 1000 : 0;
 	const perIteration = r.iterations > 0 ? r.ms.solve / r.iterations : 0;
 	const lite = r.mode === 'lite';
@@ -988,7 +992,7 @@ function renderResults(report: Report): void {
 		tile('Iterations per second', perSecond >= 100 ? number(perSecond) : perSecond.toFixed(1), `${number(r.iterations)} iterations`) +
 		tile('Time per iteration', formatMs(perIteration), `${r.setup.threads} thread${r.setup.threads === 1 ? '' : 's'} · ${r.setup.engine === 'wasm' ? 'WebAssembly' : 'JavaScript'}`) +
 		(lite
-			? tile('Accuracy', 'Not measured', 'Lite cannot measure it')
+			? accuracyTile()
 			: tile('Exploitability', e === null ? '—' : `${e.toFixed(2)}%`, `of the pot · target ${r.target}%`)) +
 		`</div>`;
 
@@ -1080,6 +1084,7 @@ function renderResults(report: Report): void {
 		`<div class="actions"><button class="secondary" id="copy-report">Copy report (JSON)</button><button class="secondary" id="copy-link">Copy link to this spot</button><button class="secondary" id="run-again">Run again</button></div>` +
 		`</section></div>`;
 	resultsEl.hidden = false;
+	bindAccuracy();
 	explore = {
 		trail: [{ layer: 0, node: 0, board: 0, round: 0, via: '' }],
 		firstStreet: STREETS.indexOf(streetOf(r.config.board)),
@@ -1091,9 +1096,111 @@ function renderResults(report: Report): void {
 	};
 	renderExplore();
 	renderChart($('result-chart'), r.checks, r.target, r.mode);
-	$('copy-report').addEventListener('click', () => void copy(JSON.stringify(report, null, 2), 'Report copied'));
+	// With Lite's exploitability in Exact, once measured.
+	$('copy-report').addEventListener('click', () =>
+		void copy(JSON.stringify(accuracy.state === 'done' ? { ...report, measured: accuracy.result } : report, null, 2), 'Report copied'));
 	$('copy-link').addEventListener('click', () => void copy(`${location.origin}${location.pathname}#${writeSettings(runSettings)}`, 'Link copied'));
 	$('run-again').addEventListener('click', startRun);
+}
+
+// ---------------------------------------------------------------- Lite against Exact
+
+/** The results on screen. */
+let shown: Report | null = null;
+/** Lite's exploitability in the Exact game (issue #154): asked for from the Accuracy tile. */
+let accuracy:
+	| { state: 'idle' }
+	| { state: 'measuring'; id: number; progress: Extract<Outbound, { type: 'measuring' }> | null; stopping: boolean }
+	| { state: 'done'; result: Measured }
+	| { state: 'failed'; message: string } = { state: 'idle' };
+
+/** Whether the kept worker is free to measure: no step of the walk-through under way. */
+const canMeasure = (): boolean => explorer !== null && pending === null && !explore?.resolving;
+
+/** The Accuracy tile of a Lite run: a button to measure it against Exact where Exact fits beside it. */
+function accuracyTile(): string {
+	const r = shown!;
+	const tile = (label: string, value: string, note: string): string =>
+		`<div class="tile" id="accuracy"><span>${label}</span>${value}<small>${note}</small></div>`;
+	const b = (text: string): string => `<b>${text}</b>`;
+	const exact = r.exact;
+	if (!exact) return tile('Accuracy', b('Not measured'), 'Lite cannot measure it');
+	if (!exact.fits) {
+		return tile('Accuracy', b('Not measured'), exact.bytes > 0
+			? `Exact needs ${formatBytes(exact.bytes)}, more than is left beside Lite`
+			: 'No memory left beside Lite to solve Exact');
+	}
+	switch (accuracy.state) {
+		case 'measuring': {
+			const p = accuracy.progress;
+			const status = !p ? 'Building Exact…'
+				: `Exact: ${number(p.iterations)} iterations${p.measure === null ? '' : ` · ${p.measure.toFixed(2)}%, stops under ${p.goal}%`}`;
+			return tile('Accuracy', b('Measuring…'),
+				`<span id="accuracy-status">${status}</span> <button class="crumb" id="measure-stop"${accuracy.stopping ? ' disabled' : ''}>Stop</button>`);
+		}
+		case 'done': {
+			const { result } = accuracy;
+			const early = result.exact.stoppedBy === 'target' ? '' : `, stopped after ${number(result.exact.iterations)} iterations`;
+			return tile('Exploitability', b(`${result.exploitability.toFixed(2)}%`),
+				`of the pot in the Exact game · Exact itself ${result.exact.exploitability.toFixed(2)}%${early}`);
+		}
+		default: {
+			const failed = accuracy.state === 'failed' ? `${esc(accuracy.message)} ` : '';
+			if (!explorer) return tile('Accuracy', b('Not measured'), `${failed}Run again to measure it against Exact`);
+			return tile('Accuracy',
+				`<button class="secondary" id="measure-exact"${canMeasure() ? '' : ' disabled'}>${accuracy.state === 'failed' ? 'Try again' : 'Measure against Exact'}</button>`,
+				`${failed}Solves Exact to ${runSettings.target}% of pot · ${formatBytes(exact.bytes)}`);
+		}
+	}
+}
+
+/** Draw the Accuracy tile again, as the measure goes. */
+function renderAccuracy(): void {
+	const el = document.getElementById('accuracy');
+	if (!el || !shown || shown.mode !== 'lite') return;
+	el.outerHTML = accuracyTile();
+	bindAccuracy();
+}
+
+function bindAccuracy(): void {
+	document.getElementById('measure-exact')?.addEventListener('click', measureExact);
+	document.getElementById('measure-stop')?.addEventListener('click', () => {
+		if (accuracy.state !== 'measuring' || !explorer) return;
+		accuracy.stopping = true;
+		const message: Inbound = { type: 'stop' };
+		explorer.postMessage(message);
+		renderAccuracy();
+	});
+}
+
+function measureExact(): void {
+	if (!canMeasure() || accuracy.state === 'measuring') return;
+	const message: Inbound = { type: 'measure', id: ++viewId, target: runSettings.target, cap: ITERATION_CAP };
+	accuracy = { state: 'measuring', id: message.id, progress: null, stopping: false };
+	explorer!.postMessage(message);
+	renderAccuracy();
+	// The walk-through waits for the measure.
+	renderExplore();
+}
+
+function onMeasuring(data: Extract<Outbound, { type: 'measuring' }>): void {
+	if (accuracy.state !== 'measuring' || data.id !== accuracy.id) return;
+	accuracy.progress = data;
+	renderAccuracy();
+}
+
+function onMeasured(data: Extract<Outbound, { type: 'measured' }>): void {
+	if (accuracy.state !== 'measuring' || data.id !== accuracy.id) return;
+	accuracy = data.result ? { state: 'done', result: data.result } : { state: 'failed', message: data.message ?? 'The measure failed.' };
+	if (data.result?.dropped && explore && shown) {
+		// The worker dropped the re-solved streets to make room: the line is back at the start.
+		explore.trail = [{ layer: 0, node: 0, board: 0, round: 0, via: '' }];
+		explore.view = shown.root;
+		explore.resolved.clear();
+		explore.failed = 'The re-solved streets were let go to make room for Exact.';
+	}
+	renderAccuracy();
+	renderExplore();
 }
 
 // ---------------------------------------------------------------- walk-through
@@ -1158,6 +1265,8 @@ function releaseExplorer(): void {
 	explorer.terminate();
 	explorer = null;
 	pending = null;
+	if (accuracy.state === 'measuring') accuracy = { state: 'idle' };
+	renderAccuracy();
 	if (explore) {
 		explore.resolving = null;
 		renderExplore();
@@ -1170,6 +1279,7 @@ function ask(message: Extract<Inbound, { type: 'view' | 'resolve' }>, trail: (vi
 	pending = { id: message.id, trail, fallback, note, from: message.type === 'resolve' ? message.layer : null };
 	explorer.postMessage(message);
 	$('explore').classList.add('loading');
+	renderAccuracy();
 }
 
 /** Ask the kept worker to draw `trail`'s last decision; the line moves there once it answers. */
@@ -1232,12 +1342,14 @@ function onView(data: Extract<Outbound, { type: 'view' }>): void {
 
 function renderExplore(): void {
 	if (!explore) return;
+	// The measure waits for any step of the walk-through.
+	renderAccuracy();
 	const { view, trail } = explore;
 	const el = $('explore');
 	const colours = actionColours(view.actions);
 	const who = view.player === 0 ? 'OOP' : 'IP';
 	const { resolving } = explore;
-	const walkable = explorer !== null && resolving === null;
+	const walkable = explorer !== null && resolving === null && accuracy.state !== 'measuring';
 	const streetName = (round: number): string => STREETS[explore!.firstStreet + round] ?? '';
 
 	const crumbs = trail

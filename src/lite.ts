@@ -15,7 +15,7 @@
 import { parseCards } from './cards.ts';
 import type { SamplingOptions } from './cfr.ts';
 import { linesWithin } from './hybrid.ts';
-import type { ShareHistories, Solution, SolveOptions, SpotConfig, SubgameBetting } from './index.ts';
+import type { ShareHistories, Solution, SolveOptions, SolveRun, SpotConfig, SubgameBetting } from './index.ts';
 import { defineSpot, solve } from './index.ts';
 import type { PresetChanges, SettingChange } from './presets.ts';
 import { presetChanges, samplingNote } from './presets.ts';
@@ -25,6 +25,7 @@ import type { SettleOptions } from './settle.ts';
 import { settlePlan } from './settle.ts';
 import type { BetSize, PerPlayer, RaiseSizes } from './tree.ts';
 import { mapPlayers, perRound, raisesPerRound } from './tree.ts';
+import { warmStart } from './warm.ts';
 
 /** How `liteConfig` simplifies the caller's betting. */
 export interface LiteOptions {
@@ -548,4 +549,33 @@ export function bettingFrom(config: SpotConfig, round: number): SubgameBetting {
 	// `subgameAt` reads these with `in`, so an unset one stays present and
 	// says "none" rather than carrying the blueprint's over.
 	return out as SubgameBetting;
+}
+
+/**
+ * How exploitable a Lite solve's play is in the caller's full game, % of the
+ * pot (issue #154). Lite cannot measure itself: its exploitability is that
+ * of the simplified game, sizes cut, runouts bucketed, histories shared.
+ *
+ * `exact` is a run of the caller's own spot, solved as far as the caller
+ * likes. Every decision of it that `lite` also has takes `lite`'s average
+ * strategy, as a warm start copies it, so an action `lite` lacks there gets
+ * none; the decisions only reachable through such an action (a size Lite
+ * cut, a raise) keep `exact`'s play, the best answer at hand. The figure is
+ * then the exploitability of that strategy: what Lite's own decisions cost,
+ * with no penalty for the ones it never made. `exact`'s own exploitability
+ * is its floor, since what Lite lacks is played no better than `exact`
+ * plays it.
+ *
+ * `exact` is spent: its strategy is overwritten, so read anything else from
+ * it first and close it after.
+ *
+ * @param lite the Lite solve, or any solve of the same board
+ * @param exact a run of the full game: same board, unshared histories
+ * @throws if the boards differ or `exact` shares histories
+ */
+export function exploitabilityInExact(lite: Solution | SolveRun, exact: SolveRun): number {
+	// Shared storage would let one history's copy overwrite another's.
+	if (exact.solver.ctx.layout.shared) throw new Error('The Exact run shares histories; measure in one that keeps them apart');
+	warmStart(exact.solver.ctx, lite.solver.ctx, true);
+	return exact.exploitabilityPercent();
 }

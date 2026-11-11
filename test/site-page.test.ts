@@ -213,7 +213,16 @@ describe('site page in a browser', () => {
 		const results = (await page.textContent('#results')) ?? '';
 		expect(results).toContain('What Lite simplified');
 		expect(results).toContain('Limitations');
-		expect(results).toContain('Not measured');
+		// Small enough to solve Exact beside it: the Accuracy box measures Lite there (issue #154).
+		expect(await page.textContent('#accuracy')).toContain('Measure against Exact');
+		await page.click('#measure-exact');
+		await page.waitForFunction("document.querySelector('#accuracy span').textContent === 'Exploitability'", undefined, { timeout: 120_000 });
+		const tile = (await page.textContent('#accuracy')) ?? '';
+		const [lite, exact] = [/Exploitability([\d.]+)%/, /Exact itself ([\d.]+)%/].map((pattern) => Number(pattern.exec(tile)?.[1]));
+		expect(exact).toBeLessThanOrEqual(0.5);
+		expect(lite).toBeGreaterThan(exact);
+		// The walk-through is free again.
+		expect(await page.$('#explore .step-into')).not.toBeNull();
 	});
 
 	it('re-solves each card Lite deals at the form\'s betting', async (context) => {
