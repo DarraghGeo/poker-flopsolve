@@ -163,7 +163,9 @@ export interface LiteSolution {
  * round one bet size (the given size nearest `laterSize`) and, with
  * `laterRaise`, one raise; no shove offered after the first round; and
  * `shareHistories` and `runoutBuckets: 3`. Ranges, pot, stacks and everything
- * else carry over. Per-player betting is simplified side by side.
+ * else carry over, the ranges compressed first with `compressRanges`
+ * (which takes `minWeight` with it). Per-player betting is simplified side
+ * by side.
  *
  * Bet and raise cuts (`removeActions`) on the first round carry over, but
  * for those past `flopMaxRaises`; those below a deal are dropped, as the
@@ -461,7 +463,7 @@ export function litePreset(config: SpotConfig, options: SolveLiteOptions = {}): 
 	}
 	if (options.compressRanges) {
 		const count = (range: string | Float64Array): number => activeCombos(typeof range === 'string' ? parseRange(range) : range).length;
-		change('ranges', undefined, options.compressRanges, `compressed to ${count(blueprint.oop)} and ${count(blueprint.ip)} re-weighted combinations (out of position, in position) that keep each range's equity distribution on this flop's boards; approximate: the blueprint has no strategy for a combination left out, and what one combination does is not preserved`);
+		change('compressRanges', undefined, options.compressRanges, `compressed to ${count(blueprint.oop)} and ${count(blueprint.ip)} re-weighted combinations (out of position, in position) that keep each range's equity distribution on this flop's boards; approximate: the blueprint has no strategy for a combination left out, and what one combination does is not preserved`);
 	}
 	if (sampling) change('approximations.chanceSampling', undefined, sampling, samplingNote(sampling));
 	if (settle) {
@@ -589,7 +591,8 @@ export function bettingFrom(config: SpotConfig, round: number): SubgameBetting {
  * then the exploitability of that strategy: what Lite's own decisions cost,
  * with no penalty for the ones it never made. `exact`'s own exploitability
  * is its floor, since what Lite lacks is played no better than `exact`
- * plays it.
+ * plays it. A combination Lite left out (`compressRanges`) keeps `exact`'s
+ * play too, so the figure covers only the combinations Lite solved.
  *
  * `exact` is spent: its strategy is overwritten, so read anything else from
  * it first and close it after.

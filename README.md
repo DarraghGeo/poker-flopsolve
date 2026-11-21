@@ -554,6 +554,7 @@ against the exact solve at equal iterations, root loss OOP / IP in % of pot (the
 | `solveLite` / `litePreset` | preset | both | — | settled at 2.6× the iterations: 0.22× storage, 0.30× time, root 0.052 / 0.068, turn nodes 0.127, 1.89% exploitable ([Lite mode](#lite-mode-solvelite)) |
 | `largeTree` | preset | WebAssembly | — | at 4× the iterations: 0.38× storage, 0.58× time, root 0.057 / 0.289 (IP's cut 0.33 bet), 0.39% exploitable in its own tree ([Fitting a large tree](#fitting-a-large-tree-largetree)) |
 | `shareHistories` | preset-internal (lite) | both | — | 0.40× storage, 1.00× time, root 0.061 / 0.068, 1.89% exploitable |
+| `compressRanges` (`solveLite`, or on its own) | advanced (a lite option) | both | a board that is not a flop | edits the ranges. Wide weighted ranges: 0.42–0.72× storage, 0.46–0.60× time, root play 1.2–2.7 points off where two Lite solves were 1.8–3.0 apart. Narrow ranges: little, and slower on a monotone flop ([Lite mode](#lite-mode-solvelite)) |
 | `keepBudget` (`solveLite`), `shareHistories.keepLines`, `linesWithin` | advanced (a lite option) | both | — | turn re-solve gain within 0.1–0.8% of the subgame pot of an unshared blueprint's, against 3.0–4.2% from plain sharing ([History sharing](#history-sharing)) |
 | `runoutBuckets` | preset-internal (lite) | both | — | folds nothing on napkinpoker's weighted ranges. Bench ranges, gap 3: 0.61× time, true exploitability 0.302 against 0.271 ([Runout buckets](#runout-buckets-and-coarse-start)) |
 | `approximations.chanceSampling` | preset-internal (both) | both, threaded | — | at 4× the iterations: 0.69× time, root 0.057 / 0.056, 0.60% exploitable |
@@ -843,6 +844,39 @@ and the decisions only reachable through such a size or a raise keep `exact`'s o
 result, % of the pot, is the exploitability of that strategy, with `exact`'s own as its floor.
 It overwrites `exact`'s strategy, so close the run after. The benchmark page's Accuracy box does this
 after a Lite solve, solving Exact to the form's target first.
+
+`compressRanges` (issue #156) shrinks both ranges before the blueprint is solved. Each range keeps
+the fewest of its combinations, re-weighted, whose distribution of equity on the flop, on every
+turn and on the river boards stays within a tolerance (default 0.01) of the full range's:
+
+```ts
+const lite = solveLite(spot, { workers: 4, compressRanges: true }); // or { tolerance: 0.02 }, or { size: 150 }
+lite.changes.notes; // [..., 'ranges: compressed to 186 and 180 re-weighted combinations ...']
+```
+
+It is for wide ranges, and off by default. On a button open against a big-blind call (433–518
+weighted combinations a side, issue #47's betting, 4 threads in Node), the compression itself
+taking about 0.05 s (up to three times that where WebAssembly SIMD is missing):
+
+| flop | Lite | tolerance 0.01 | tolerance 0.02 | two Lite solves apart |
+|---|---|---|---|---|
+| As Kh 7d | 87.6 s, 706 MiB | 40.6 s, 294 MiB, 186 / 180 combinations, root play 2.7 points off | 31.0 s, 210 MiB, 127 / 128, 2.4 | 2.0 |
+| Ts 9s 4h | 62.1 s, 393 MiB | 31.2 s, 214 MiB, 248 / 268, 1.2 | 25.1 s, 166 MiB, 191 / 204, 1.5 | 1.8 |
+| Ks 9s 4s | 27.3 s, 146 MiB | 16.5 s, 105 MiB, 316 / 372, 2.5 | 13.2 s, 91 MiB, 277 / 319, 2.0 | 3.0 |
+
+"Root play off" is the largest difference in how often the range takes an action at the root or
+at in position's decision after a check, against Lite on the full ranges; the last column is the
+same between two Lite solves of the full ranges, one stopped at half the settle tolerance. On
+the narrow bench ranges (about 200 combinations) it gains little, and on the monotone flop it
+loses: As Kh 7d settled in 16.0 s against 21.5 (135 MiB against 173), Ts 9s 4h in 8.6 against 12.7 (91 against 122), and Ks 9s 4s in 7.8 against 6.6 (57 against 47). Dropping
+combinations breaks the suit and rank symmetries that fold boards together, so where those were
+saving the most there is the least to gain (`bench/range-compress`).
+
+What it keeps is how the range plays. What it does not keep is what one combination does: the
+blueprint, and `resolve`, hold a strategy only for the combinations kept, each carrying the
+weight of those dropped, and `exploitabilityInExact` covers only those: a combination left out
+keeps `exact`'s play. `compressRanges(spot)` gives the two compressed ranges on their own.
+`minWeight` is applied to the ranges as given, before compressing.
 
 Measured on that spot's betting, in headless Chromium. The time counts solving and the settle
 checks. Root play loss is what OOP's root mix and IP's mix after a check lose at the

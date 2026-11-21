@@ -4,7 +4,9 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { COMBO_CARDS, COMBOS, compressRanges, liteConfig, litePreset, parseCards, parseRange, solveLite } from '../src/index.ts';
+import {
+	COMBO_CARDS, COMBOS, compressRanges, createRun, defineSpot, exploitabilityInExact, liteConfig, litePreset, NodeKind, parseCards, parseRange, solveLite,
+} from '../src/index.ts';
 import type { SpotConfig } from '../src/index.ts';
 
 const OOP = 'AA-22,AKs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,AKo-ATo,KQo-KJo';
@@ -81,7 +83,7 @@ describe('compressRanges', () => {
 describe('solveLite with compressRanges', () => {
 	it('is off unless asked', () => {
 		expect(liteConfig(spot).oop).toBe(OOP);
-		expect(litePreset(spot).changes.settings.some((s) => s.setting === 'ranges')).toBe(false);
+		expect(litePreset(spot).changes.settings.some((s) => s.setting === 'compressRanges')).toBe(false);
 	});
 
 	it('puts the compressed ranges in the blueprint and says so', () => {
@@ -92,8 +94,29 @@ describe('solveLite with compressRanges', () => {
 		expect(lite.minWeight).toBeUndefined();
 		expect(liteConfig(spot, { compressRanges: true }).oop).toEqual(compressRanges(spot).oop);
 		const { changes } = litePreset(spot, { compressRanges: { tolerance: 0.02 } });
-		expect(changes.settings.find((s) => s.setting === 'ranges')?.to).toEqual({ tolerance: 0.02 });
+		expect(changes.settings.find((s) => s.setting === 'compressRanges')?.to).toEqual({ tolerance: 0.02 });
 		expect(changes.notes.some((note) => note.includes(`${direct.report[0].to} and ${direct.report[1].to}`))).toBe(true);
+	});
+
+	it('re-solves a turn and is measured in the full game from the compressed blueprint', () => {
+		const tiny: SpotConfig = { ...spot, pot: 60, stack: 60, betSizes: [[1]], maxRaises: 1 };
+		const lite = solveLite(tiny, { compressRanges: { tolerance: 0.03 }, iterations: 30, settle: false, sampling: false });
+		const { tree } = lite.solution.spot;
+		const node = [...tree.kind.keys()].find((n) => tree.round[n] === 1 && tree.kind[n] === NodeKind.Decision)!;
+		const turn = lite.resolve(node, 0, { player: 0, iterations: 10 });
+		// The subgame is solved for the ranges the blueprint brings: no combination it never held.
+		expect(turn.solution.spot.players[0].count).toBeLessThanOrEqual(lite.solution.spot.players[0].count);
+		expect(turn.solution.spot.players[0].count).toBeGreaterThan(0);
+		const exact = createRun(defineSpot(tiny), {});
+		exact.step(20);
+		const exploitable = exploitabilityInExact(lite.solution, exact);
+		expect(exploitable).toBeGreaterThan(0);
+		expect(Number.isFinite(exploitable)).toBe(true);
+	});
+
+	it('takes a range on any scale', () => {
+		const scaled = parseRange(OOP).map((weight) => weight * 1e-7);
+		expect(compressRanges({ ...spot, oop: scaled }).oop).toEqual(compressRanges(spot).oop);
 	});
 
 	it('solves the compressed ranges, with a strategy only for the combinations kept', () => {

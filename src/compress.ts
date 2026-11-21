@@ -79,24 +79,36 @@ export function compressRanges(
 	const live = (range: string | Float64Array, who: string): WeightedHand[] => {
 		const weights = typeof range === 'string' ? parseRange(range) : range;
 		if (weights.length !== COMBOS) throw new Error(`The ${who} range has ${weights.length} weights; one per combination is ${COMBOS}`);
-		const hands: WeightedHand[] = [];
+		const kept: number[] = [];
+		let largest = 0;
 		for (let combo = 0; combo < COMBOS; combo++) {
 			const weight = weights[combo];
 			if (!(weight > 0) || weight < floor) continue;
 			if (onBoard.has(COMBO_CARDS[combo * 2]) || onBoard.has(COMBO_CARDS[combo * 2 + 1])) continue;
-			hands.push({ hand: formatCombo(combo), weight });
+			kept.push(combo);
+			if (weight > largest) largest = weight;
 		}
-		if (hands.length === 0) throw new Error(`The ${who} range is empty once the board is removed`);
-		return hands;
+		if (kept.length === 0) throw new Error(`The ${who} range is empty once the board's cards${floor > 0 ? ' and the combinations under minWeight' : ''} are removed`);
+		// Only the weights' ratios matter; the largest at 1 keeps the
+		// compressor's absolute tolerances meaningful for a range given on
+		// any scale.
+		return kept.map((combo) => ({ hand: formatCombo(combo), weight: weights[combo] / largest }));
 	};
 	const oop = live(config.oop, 'out-of-position');
 	const ip = live(config.ip, 'in-position');
-	const result = RangeCompress.compressBoth({
-		oop,
-		ip,
-		flop: board.map(formatCard).join(''),
-		...(sizes ? { sizeOop: Math.min(sizes[0], oop.length), sizeIp: Math.min(sizes[1], ip.length) } : { tolerance }),
-	});
+	let result: ReturnType<typeof RangeCompress.compressBoth>;
+	try {
+		result = RangeCompress.compressBoth({
+			oop,
+			ip,
+			flop: board.map(formatCard).join(''),
+			...(sizes ? { sizeOop: Math.min(sizes[0], oop.length), sizeIp: Math.min(sizes[1], ip.length) } : { tolerance }),
+		});
+	} finally {
+		// Its WebAssembly memory, tens of MiB for wide ranges, would
+		// otherwise stay resident beside the solve that follows.
+		RangeCompress.releaseMemory();
+	}
 	const weightsOf = (hands: readonly WeightedHand[]): Float64Array => {
 		const weights = new Float64Array(COMBOS);
 		for (const { hand, weight } of hands) weights[comboIndex(parseCard(hand.slice(0, 2)), parseCard(hand.slice(2, 4)))] = weight;
