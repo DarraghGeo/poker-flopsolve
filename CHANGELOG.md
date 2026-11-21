@@ -1,5 +1,77 @@
 # Changelog
 
+## 0.5.0-beta.2
+
+The third beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.1.
+
+### `openLite` takes any range, with every Lite option
+
+- A session no longer refuses a range. One that adds a hand the blueprint does not store, or
+  breaks a suit symmetry it folds, gets a new run started from the old one's regrets, so
+  `oopReserve` and `ipReserve` are optional: five moves with no reserve took 83 s against 143
+  for `solveLite` on As Kh 7d, 66 against 91 on Ts 9s 4h and 27 against 51 on Ks 9s 4s.
+- `compressRanges` works in a session, compressing both ranges again at every move: 161 s
+  against 193 on As Kh 7d, 110 against 178 on Ts 9s 4h and 50 against 90 on Ks 9s 4s, on wide
+  ranges, less exploitable in 14 moves of 15.
+- `algorithm: 'cfr+'` works in a session and in `run.setRange`, which clears its average and
+  keeps its count: 105 s against 147, 70 against 103 and 20 against 58, less exploitable in 8
+  moves of 15 and 0.2–1.4% of pot more on the monotone flop.
+- `run.setRange` throws `RangeNotInPlaceError` for a range that needs a new run, apart from a
+  range that is no range.
+- `defineSpot` refuses two ranges of which no pair of hands can be held together, which
+  solved to NaN before.
+- A warm start into a new run copies about nine times faster (4.7 s to 0.5 on a 265 MiB
+  blueprint), the same values bit for bit.
+
+### Startup
+
+- Less stands between a call and solving. Defining the spot, creating the run and the first
+  iteration's extra cost took 727 ms on the bench flop on 4 threads and take 244, or 65 for a
+  later solve of the same board and hands; 582 and 233 (75) on one thread; 1456 and 584 (436)
+  for the Lite blueprint on As Kh 7d. Results are the same, bit for bit.
+- The per-hand tables are built about five times faster, and the last set is kept for a spot
+  defined again on the same board with the same hands. `releaseSetupCache()` lets it go.
+- In Node a run's threads start beside its setup, and when it closes replacements start and
+  wait 30 seconds for the next run; `enableThreads(n)` starts them ahead and keeps that many.
+- The engine's storage is written once before the first iteration, a share a thread, instead
+  of being mapped by every thread at once during it.
+
+### Lite for a range slider: `openLite`
+
+- `openLite(spot, options)` solves the Lite blueprint as `solveLite` does and keeps it live.
+  `session.setRange(player, range)` changes a range in place and settles the blueprint again
+  from where it stands; `session.refine(n)` runs more iterations while the slider is at rest;
+  `session.current` is the `LiteSolution`, `resolve` included.
+- On issue #47's betting, 4 threads, five moves of out of position's range settled in 95 s
+  against 163 for five `solveLite` calls on As Kh 7d, 69 against 103 on Ts 9s 4h and 27 against
+  52 on Ks 9s 4s: 0.31–0.61× the time for two hand classes added or dropped, 0.66–0.92× for a
+  third of the range dropped. It ended less exploitable than `solveLite` in 11 moves of 15, and
+  0.6–1.8% of pot more on the monotone flop's three moves that dropped hands.
+- `oopReserve` and `ipReserve` on a spot keep storage for hands a range does not hold yet, so
+  they can be added. With nine classes in reserve an iteration cost 27–42% more and the first
+  solve took 20–52% longer.
+- `run.setRange(player, range, { resume })` is the same change on any run, exact solves
+  included: about 0.02 ms a call, nothing built or copied, where a `warmStart` into a new run
+  costs about two iterations of the spot. It keeps the regrets and resumes the iteration count
+  (from 10, `RANGE_RESUME`; `openLite` resumes from 30, as chance sampling was unstable at 10).
+  The range must keep the suit symmetries the spot folds runouts by; runout buckets stand.
+  A CFR+ run is refused.
+- `runToStop(run, options)` runs a live run as `solve` runs its own: to the iteration cap, the
+  target or the settle stop.
+
+### `compressRanges` on a spot that starts on the turn or the river (issue #158)
+
+- `compressRanges(spot)`, and Lite's option of the same name, take a board of four or five cards
+  with the ranges the players hold there; before, any board but a flop was refused. A turn is
+  matched on its board and each river that can follow. A river is also matched on what the other
+  player's hands face: how much of the range beats each, ties it and loses to it.
+- The default tolerance past the flop is 0.005. Under Lite on four turns (270–497 combinations a
+  side, 4 threads) that settled in 0.6–0.8 s against 1.3–2.4, in 3–4 MiB against 6–11, the root
+  play 1.2–1.9 points from Lite's on the full ranges, where two Lite solves were 0.6–2.6 apart.
+  At 0.01 it was 1.1–7.8 points off.
+- On a river there is nothing to save: Lite took 0.1 s on the full ranges.
+- The vendored compressor is poker-rangecompress 0.2.0. A flop compresses as before.
+
 ## 0.5.0-beta.1
 
 The second beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.0.

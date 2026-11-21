@@ -19,7 +19,9 @@ import type { RunoutMerge } from './runouts.ts';
 import { boardAtRound, enumerateRunouts, rankSwap, resolveBoard } from './runouts.ts';
 import { suitSymmetries } from './abstraction.ts';
 import { activeCombos, parseRange } from './range.ts';
+import type { ShowdownTable } from './showdown.ts';
 import { buildShowdownTable } from './showdown.ts';
+import type { HandSpace } from './hands.ts';
 import { buildHandSpace } from './hands.ts';
 import { createEngine, threadProfiles } from './engine.ts';
 import type { WasmStorage } from './engine.ts';
@@ -31,8 +33,8 @@ import { aliasHistories } from './history-merge.ts';
 import { betRows, DEFAULT_CHIP_SCALE, treeConfig } from './betting.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
-import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit } from './platform/node.ts';
-import type { CompactPlan, Context, Layout, PlayerIndex, RegretStore, RootValues, SamplingOptions, Solver, SumStore } from './cfr.ts';
+import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit, warmEngineThreads } from './platform/node.ts';
+import type { ActiveLists, CompactPlan, Context, Layout, PlayerIndex, RegretStore, RootValues, SamplingOptions, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
@@ -94,6 +96,21 @@ export interface SpotConfig {
 	readonly oop: string | Float64Array;
 	/** The in-position player's range, in either form. */
 	readonly ip: string | Float64Array;
+	/**
+	 * Hands to keep storage for although the out-of-position range gives them
+	 * no weight yet, so `SolveRun.setRange` can add them later without
+	 * building anything: a range, of which only the hands matter, not their
+	 * weights. Every hand a range slider can reach belongs here. A reserved
+	 * hand costs what a held one does, in memory and per iteration, and is
+	 * solved all along, so it has a strategy the moment it gets weight;
+	 * except at nodes that share storage (`shareHistories`), whose updates
+	 * are weighted by the hand's own reach, so there it starts from nothing.
+	 * Unset, only the range's own hands are stored, and `setRange` can
+	 * reweight or drop them but add none.
+	 */
+	readonly oopReserve?: string | Float64Array;
+	/** `oopReserve` for the in-position range. */
+	readonly ipReserve?: string | Float64Array;
 	/**
 	 * Bet sizes per betting round; a single row applies to every round.
 	 *
@@ -587,21 +604,50 @@ export function defineSpot(config: SpotConfig): Spot {
 		return weights;
 	};
 
+	// Which hands are reserved, board cards removed; null without a reserve.
+	const reserved = (range: string | Float64Array | undefined, who: string): Float64Array | null => {
+		if (range === undefined) return null;
+		const hands = typeof range === 'string' ? parseRange(range) : range;
+		if (hands.length !== COMBOS) {
+			throw new Error(`The ${who} reserve has ${hands.length} weights; one per combination is ${COMBOS}`);
+		}
+		const mask = new Float64Array(COMBOS);
+		for (let combo = 0; combo < COMBOS; combo++) {
+			if (hands[combo] > 0 && !onBoard.has(COMBO_CARDS[combo * 2]) && !onBoard.has(COMBO_CARDS[combo * 2 + 1])) mask[combo] = 1;
+		}
+		return mask;
+	};
+	const reserves = [reserved(config.oopReserve, 'out-of-position'), reserved(config.ipReserve, 'in-position')];
 	const players: [PlayerIndex, PlayerIndex] = [
-		buildPlayerIndex(trim(config.oop, 'out-of-position')),
-		buildPlayerIndex(trim(config.ip, 'in-position')),
+		buildPlayerIndex(trim(config.oop, 'out-of-position'), reserves[0] ?? undefined),
+		buildPlayerIndex(trim(config.ip, 'in-position'), reserves[1] ?? undefined),
 	];
+	if (!holdable(players[0].weights, players[1].weights)) {
+		throw new Error('No hand of one range can be held against a hand of the other: every pair shares a card');
+	}
+	for (const player of players) {
+		if (config.maxCombos !== undefined && player.count > config.maxCombos) {
+			throw new Error(`A range and its reserve hold ${player.count} combinations, over the ${config.maxCombos} limit`);
+		}
+	}
 
-	// Symmetry needs the ranges, so the runouts come after them.
+	// Symmetry needs the ranges, so the runouts come after them. It must keep
+	// the stored hands in place too, so each reserve counts as a range here.
 	const symmetries =
 		config.isomorphism === false || board.length === 5
 			? undefined
-			: suitSymmetries(board, [players[0].weights, players[1].weights]);
+			: suitSymmetries(board, [players[0].weights, players[1].weights, ...reserves.filter((mask) => mask !== null)]);
 	const merge =
 		config.runoutBuckets && board.length < 5
 			? rangeRankMerge(players, config.runoutBuckets === true ? DEFAULT_BUCKET_GAP : config.runoutBuckets)
 			: undefined;
-	const runouts = enumerateRunouts(board, symmetries, merge);
+	const runouts = runoutsFor(board, symmetries, merge);
+	// Kept for `setRange`, which must not break a symmetry the runouts fold by.
+	const symmetryCombos = (symmetries ?? []).map((map) => {
+		const image = new Uint16Array(COMBOS);
+		for (let combo = 0; combo < COMBOS; combo++) image[combo] = comboIndex(map[COMBO_CARDS[combo * 2]], map[COMBO_CARDS[combo * 2 + 1]]);
+		return image;
+	}).filter((image) => image.some((combo, at) => combo !== at));
 	const tree = buildTree(treeConfig(config, rows), runouts);
 
 	const historyAlias = config.shareHistories ? shareHistories(tree, runouts, config, chipScale) : undefined;
@@ -643,7 +689,7 @@ export function defineSpot(config: SpotConfig): Spot {
 	};
 	if (!estimate.fits) throw new SpotTooLargeError(estimate, maxBytes);
 
-	return {
+	const spot: Spot = {
 		board,
 		tree,
 		runouts,
@@ -658,7 +704,107 @@ export function defineSpot(config: SpotConfig): Spot {
 			return resolveBoard(runouts, typeof cards === 'string' ? parseCards(cards) : cards);
 		},
 	};
+	spotSymmetries.set(spot, symmetryCombos);
+	return spot;
 }
+
+/**
+ * The iteration count a run resumes from after `SolveRun.setRange`, unless it
+ * was lower. Early enough that DCFR discounts the old range's average away
+ * within a few iterations, late enough that it does not flatten the regrets:
+ * from 0 a changed range took as long as from cold, from 5 it varied, and 10
+ * to 20 were alike.
+ */
+export const RANGE_RESUME = 10;
+
+/**
+ * The configuration a spot was defined with, once `setRange` has replaced its
+ * `source`. Defining that again gives the spot's own runouts and hand lists;
+ * its changed ranges may have symmetries the spot was not built to fold.
+ */
+const builtFrom = new WeakMap<Spot, SpotConfig>();
+
+/** The runouts last enumerated, and what they were enumerated from. */
+let keptRunouts: { key: string; runouts: Runouts } | null = null;
+
+/**
+ * `enumerateRunouts`, kept for the next spot on the same board with the same
+ * symmetries and buckets: a spot defined again with another pot, stack or
+ * betting, or with ranges that fold the same runouts, deals the same cards.
+ * One set is kept; `releaseSetupCache` lets it go.
+ */
+function runoutsFor(board: readonly number[], symmetries: readonly Uint8Array[] | undefined, merge: RunoutMerge | undefined): Runouts {
+	let key = `${board.join(',')}|${(symmetries ?? []).map((map) => map.join(',')).join(';')}|`;
+	if (merge) {
+		key += `${merge.maxGap}:`;
+		for (let a = 0; a < 13; a++) for (let b = 0; b < 13; b++) key += merge.ranks(a, b) ? '1' : '0';
+	}
+	if (keptRunouts?.key !== key) keptRunouts = { key, runouts: enumerateRunouts(board, symmetries, merge) };
+	return keptRunouts.runouts;
+}
+
+/** What a run looks up for every hand on every board, none of it depending on the tree. */
+interface SetupTables {
+	readonly showdown: ShowdownTable;
+	readonly active: ActiveLists;
+	readonly hands: HandSpace;
+}
+
+/** The tables last built, and the runouts and hands they were built for. */
+let keptTables: { runouts: Runouts; combos: readonly [Uint16Array, Uint16Array]; tables: SetupTables } | null = null;
+
+/**
+ * The showdown ranking, hand lists and hand-space maps of a spot. They
+ * depend on its runouts and on which hands each player stores, not on the
+ * tree, the weights or the storage, and building them is most of what a run
+ * costs before its first iteration; so the last set is kept, and a run on
+ * the same spot, or on one defined again with other betting or reweighted
+ * ranges, takes it as it is. Nothing writes to them. `releaseSetupCache`
+ * lets them go.
+ */
+function setupTables(spot: Spot, relevant: Uint8Array): SetupTables {
+	const [first, second] = [spot.players[0].combos, spot.players[1].combos];
+	const same = (a: Uint16Array, b: Uint16Array): boolean => a.length === b.length && a.every((combo, i) => combo === b[i]);
+	if (keptTables && keptTables.runouts === spot.runouts && same(keptTables.combos[0], first) && same(keptTables.combos[1], second)) {
+		return keptTables.tables;
+	}
+	// Let the old set go before the new one is built, so both are never held.
+	keptTables = null;
+	const showdown = buildShowdownTable(spot.runouts, relevant);
+	const active = buildActiveLists(spot.runouts, spot.players, showdown);
+	const hands = buildHandSpace(spot.runouts, spot.players, active);
+	keptTables = { runouts: spot.runouts, combos: [first, second], tables: { showdown, active, hands } };
+	return keptTables.tables;
+}
+
+/**
+ * Let go of what the last spot and run left for the next: the runouts, and
+ * the per-hand tables a run builds before its first iteration (a few MiB on
+ * narrow ranges, tens on wide ones). A spot defined or a run created
+ * afterwards builds its own again, which is all it costs. For a page that
+ * has finished solving and wants the memory back.
+ */
+export function releaseSetupCache(): void {
+	keptRunouts = null;
+	keptTables = null;
+}
+
+/** Whether some hand of `a` and some hand of `b` share no card. */
+function holdable(a: Float64Array, b: Float64Array): boolean {
+	for (let i = 0; i < COMBOS; i++) {
+		if (!(a[i] > 0)) continue;
+		const [c, d] = [COMBO_CARDS[i * 2], COMBO_CARDS[i * 2 + 1]];
+		for (let j = 0; j < COMBOS; j++) {
+			if (!(b[j] > 0)) continue;
+			const [e, f] = [COMBO_CARDS[j * 2], COMBO_CARDS[j * 2 + 1]];
+			if (c !== e && c !== f && d !== e && d !== f) return true;
+		}
+	}
+	return false;
+}
+
+/** Each suit symmetry a spot's runouts fold by, the identity aside, as the hand each hand maps to. */
+const spotSymmetries = new WeakMap<Spot, readonly Uint16Array[]>();
 
 /** `SpotConfig.shareHistories` resolved into each node's storage owner. */
 function shareHistories(tree: Tree, runouts: Runouts, config: SpotConfig, chipScale: number): Int32Array {
@@ -1159,6 +1305,28 @@ export interface StrategyView {
 	readonly probs: Float64Array;
 }
 
+/**
+ * `SolveRun.setRange` cannot take this range where the run stands, though
+ * the range itself is good: it holds a hand the spot keeps no storage for,
+ * or it breaks a suit symmetry the spot folds runouts by. A new run on a
+ * spot defined with the range can, warm-started from this one
+ * (`SolveOptions.warmStart`); `openLite`'s session does that by itself.
+ */
+export class RangeNotInPlaceError extends Error {}
+
+/** Settings for `SolveRun.setRange`. */
+export interface SetRangeOptions {
+	/**
+	 * The iteration count the run resumes from, unless it was lower; a CFR+
+	 * run keeps its count whatever this says. Default
+	 * `RANGE_RESUME`, 10, measured on exact solves. A chance-sampled solve
+	 * wants more: Lite's blueprint (p 0.35) swung 10 points of root play off
+	 * and back resuming from 10, and settled smoothly from 25 or 40; from 80
+	 * and 160 it was smooth and slower.
+	 */
+	readonly resume?: number;
+}
+
 /** An in-progress solve the caller drives. */
 export interface SolveRun {
 	readonly spot: Spot;
@@ -1172,6 +1340,54 @@ export interface SolveRun {
 	readonly warmStart: WarmStartReport | null;
 	/** Run `count` more iterations. */
 	step(count: number): void;
+	/**
+	 * Change a player's range in place and keep solving: what a range slider
+	 * calls on every move. Nothing is built or copied — the run keeps its
+	 * tree, its storage and every regret, as a warm start would carry them,
+	 * and only reads other weights from the next iteration on — so it costs
+	 * microseconds where a new run costs as much as a few iterations.
+	 *
+	 * A hand can be reweighted or dropped freely. One the range did not hold
+	 * when the spot was defined can be added only if `oopReserve` or
+	 * `ipReserve` kept storage for it. Board cards are dropped and
+	 * `minWeight` applied, as `defineSpot` does. The range must keep every
+	 * suit symmetry the spot folds runouts by (none with `isomorphism:
+	 * false`). `runoutBuckets` stand as they are: they were chosen by which
+	 * hands the spot stores, and that does not change.
+	 *
+	 * The average strategy is not cleared, since that would cost a pass over
+	 * the whole storage. Instead the iteration count resumes from
+	 * `RANGE_RESUME` (or stays, if lower), where DCFR's discounting is still
+	 * steep enough to shrink what the old range left behind while the regrets
+	 * keep the strategy where it was. Measured on the bench river, turn and
+	 * flop, adding or dropping about a tenth of a range, that reached 0.3%
+	 * of pot (0.5% on the flop) in as few iterations as a `warmStart` into a
+	 * new run or fewer — 40–50 against 60–85 cold on river and turn, 16–24
+	 * against 44 on the flop — where resuming from 0 or keeping the count
+	 * did no better than cold. `totalIterations` resumes with it. A run
+	 * with `algorithm: 'cfr+'`, which discounts nothing, keeps its count
+	 * and has its average cleared instead, a pass over the storage. On the
+	 * bench river and turn that reached 0.3% of pot in 25–100 iterations
+	 * against 105–185 from cold, for two hand classes or a third of the
+	 * range dropped. A range cut to a few hands is slower than from cold
+	 * under CFR+, whose regrets are never discounted.
+	 *
+	 * The spot is reweighted with the run: `spot.players` and `spot.source`
+	 * show the new range, for this run and any other built on the same spot,
+	 * which then solves and measures the new range too, its own count and
+	 * average left as they were.
+	 * A snapshot taken before the change is stale; take a fresh one.
+	 *
+	 * @param player 0 out of position, 1 in position
+	 * @param range the whole new range, as `SpotConfig.oop` takes one; an
+	 *   array of weights skips the parsing a string costs
+	 * @param options `resume`, the iteration count to resume from
+	 * @throws {RangeNotInPlaceError} if the range adds a hand without storage or breaks a
+	 *   symmetry: the range is good, but needs a new run. Or, a plain error, if
+	 *   it is empty or leaves no pair of hands the players can hold together.
+	 *   Nothing has changed in either case
+	 */
+	setRange(player: 0 | 1, range: string | Float64Array, options?: SetRangeOptions): void;
 	/** Distance from equilibrium as a percentage of the pot. */
 	exploitabilityPercent(): number;
 	/**
@@ -1232,14 +1448,24 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	for (const combo of spot.players[0].combos) relevant[combo] = 1;
 	for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
-	const showdown = buildShowdownTable(spot.runouts, relevant);
+	// Threads take as long to start as the tables below take to build, so
+	// the ones this run will use start now, beside that work. Judged as the
+	// engine and the split are below; where chance sampling's baselines then
+	// push the storage to 16 bits, threads started for nothing wait for the
+	// next run or end.
+	if (!options.analysisOnly && options.engine !== 'js' && options.simd !== false && (options.workers ?? 1) !== 1) {
+		const engineLikely =
+			(precision === 'f32' && !compact) ||
+			(options.wasmStorage !== undefined && precision !== 'f64' && (precision === 'i16' || compact !== null));
+		const asked = engineLikely ? resolveWorkers(options, true) : 1;
+		if (asked > 1 && planShards(spot.tree, spot.runouts, asked)) warmEngineThreads(asked - 1);
+	}
+	const { showdown, active, hands } = setupTables(spot, relevant);
 	const layoutAt = (at: Precision): Layout => buildLayout(
 		spot.tree, spot.runouts, spot.players, PRECISION_BYTES[at], spot.historyAlias, compact ?? undefined,
 	);
 	let layout = layoutAt(precision);
 	const weights = runoutWeights(spot.runouts);
-	const active = buildActiveLists(spot.runouts, spot.players, showdown);
-	const hands = buildHandSpace(spot.runouts, spot.players, active);
 	const samplingOptions = options.approximations?.chanceSampling;
 	// The plan reads only the layout's blocks, which do not depend on precision.
 	const samplingPlan = samplingOptions ? planSampling(spot.tree, spot.runouts, active, layout, samplingOptions) : undefined;
@@ -1424,7 +1650,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		if (warm && coarsePlan) coarseMs.set(solver, coarsePlan.elapsed);
 		// The engine runs its own threads; the JavaScript pool is for the rest.
 		pool = plan && !engine
-			? startPool(ctx, solver, plan, { config: spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd, compact }, requested)
+			? startPool(ctx, solver, plan, { config: builtFrom.get(spot) ?? spot.source, dcfr: ctx.dcfr, precision, approximations: options.approximations, simd: ctx.simd, compact }, requested)
 			: null;
 	} catch (error) {
 		// The engine's threads would otherwise stay parked on this run for good.
@@ -1435,6 +1661,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	if (engine) solver.useRoot(engine.root(ctx.dcfr));
 	const threadCount = pool ? pool.workers : engine ? engine.threads : 1;
 	let completed = 0;
+	const nextRange = new Float64Array(COMBOS);
 
 	return {
 		spot,
@@ -1452,6 +1679,90 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			if (count <= 0) return;
 			solver.iterate(count, offset + completed);
 			completed += count;
+		},
+		setRange(player, range, options = {}) {
+			if (options.resume !== undefined && !(Number.isInteger(options.resume) && options.resume >= 0)) {
+				throw new Error(`setRange: resume must be a whole number of iterations; got ${options.resume}`);
+			}
+			const given = typeof range === 'string' ? parseRange(range) : range;
+			if (given.length !== COMBOS) {
+				throw new Error(`setRange: the range has ${given.length} weights; one per combination is ${COMBOS}`);
+			}
+			const index = spot.players[player];
+			const floor = spot.source.minWeight ?? 0;
+			const [first, second, third] = spot.board;
+			const fourth = spot.board[3] ?? -1;
+			const fifth = spot.board[4] ?? -1;
+			const blocked = (card: number): boolean =>
+				card === first || card === second || card === third || card === fourth || card === fifth;
+			// The range is judged whole before it is said to need a new run:
+			// one that is no range at all must not be sent to get one.
+			let live = 0;
+			let unstored = -1;
+			for (let combo = 0; combo < COMBOS; combo++) {
+				let weight = given[combo];
+				if (!(weight >= 0)) throw new Error(`setRange: a weight is ${weight}; weights are zero or more`);
+				// The floor first, as `defineSpot` applies it: a hand under it was never stored.
+				if (weight < floor) weight = 0;
+				if (weight > 0 && index.slot[combo] < 0) {
+					if (blocked(COMBO_CARDS[combo * 2]) || blocked(COMBO_CARDS[combo * 2 + 1])) weight = 0;
+					else if (unstored < 0) unstored = combo;
+				}
+				if (weight > 0) live++;
+				nextRange[combo] = weight;
+			}
+			if (live === 0) throw new Error('setRange: the range is empty once the board is removed');
+			// Counted pair by pair: the mass, summed by inclusion-exclusion, leaves a rounding residue for none.
+			if (!holdable(nextRange, spot.players[1 - player].weights)) {
+				throw new Error('setRange: no hand of this range can be held against the other range');
+			}
+			if (unstored >= 0) {
+				throw new RangeNotInPlaceError(
+					`setRange: ${formatCards([COMBO_CARDS[unstored * 2], COMBO_CARDS[unstored * 2 + 1]])} has no storage; ` +
+						`a hand can be added only if the range or \`${player === 0 ? 'oopReserve' : 'ipReserve'}\` held it when the spot was defined`,
+				);
+			}
+			for (const image of spotSymmetries.get(spot) ?? []) {
+				for (let combo = 0; combo < COMBOS; combo++) {
+					if (nextRange[combo] !== nextRange[image[combo]]) {
+						throw new RangeNotInPlaceError(
+							'setRange: the range breaks a suit symmetry the spot folds runouts by; ' +
+								'keep mirrored hands at one weight, or define the spot with `isomorphism: false`',
+						);
+					}
+				}
+			}
+			index.weights.set(nextRange);
+			// The source names every stored hand as reserved, so a spot defined
+			// from it stores the hands this one does whatever the range dropped.
+			// The spot's own structure stays that of the configuration it was
+			// defined with, which is what a worker must rebuild.
+			if (!builtFrom.has(spot)) builtFrom.set(spot, spot.source);
+			const stored = Float64Array.from(index.slot, (slot) => (slot >= 0 ? 1 : 0));
+			(spot as { source: SpotConfig }).source = player === 0
+				? { ...spot.source, oop: nextRange.slice(), oopReserve: stored }
+				: { ...spot.source, ip: nextRange.slice(), ipReserve: stored };
+			// The count resumes early, so the discounting forgets the old range's average.
+			let resumed = offset + completed;
+			if (ctx.dcfr) {
+				resumed = Math.min(resumed, options.resume ?? RANGE_RESUME);
+				offset = resumed - completed;
+			} else if (ctx.regret.length > 0 || ctx.compactRegret) {
+				// CFR+ never discounts its average, so the old range's is
+				// cleared, a pass over the storage, and the count kept: its
+				// regrets carry the strategy, and scaled down or counted from
+				// an earlier iteration they did worse than from cold. Not on
+				// an analysis-only run, whose loaded average is all it has.
+				ctx.strategySum.fill(0);
+				ctx.sumScale?.fill(0);
+				ctx.compactSum?.forEach((sums) => sums.fill(0));
+				ctx.sumShift?.forEach((shifts) => shifts.fill(0));
+			}
+			// A shared block's last discount is an iteration the count will pass again.
+			ctx.discounted?.fill(0);
+			// Baselines were the old range's values; discounts are owed from the resumed count.
+			ctx.sampling?.lastWalk.fill(0);
+			ctx.sampling?.lastUpdate.fill(resumed);
 		},
 		close() {
 			// Snapshots stay usable afterwards, on this thread alone.
@@ -1718,25 +2029,42 @@ export function makeSumStore(precision: Precision, buffer: ArrayBuffer | SharedA
  * @param options solver tuning
  */
 export function solve(spot: Spot, options: SolveOptions = {}): Solution {
-	const iterations = options.iterations ?? 500;
-	const target = options.targetPercent ?? 0;
-	const fixed = options.exploitEvery ?? 0;
 	// Validated before any storage is taken.
-	const settle = options.settle ? settlePlan(options.settle) : null;
+	if (options.settle) settlePlan(options.settle);
 	const run = createRun(spot, options);
-	const history: Progress[] = [];
-	// A coarse start solves inside createRun, and that is solving time too.
-	const started = Date.now() - (coarseMs.get(run.solver) ?? 0);
-	// Where DCFR's count stands before this run's first iteration, for
-	// predicting the target; only a coarse start shifts it, as a warm start's
-	// checks were always scheduled from zero.
-	const before = coarseMs.has(run.solver) ? run.totalIterations : 0;
-
 	try {
-		return runAll();
+		return runToStop(run, options);
 	} finally {
 		run.close();
 	}
+}
+
+/**
+ * Run a live run as `solve` runs its own: `iterations` more, or until
+ * `targetPercent` or the `settle` rule stops it, reporting to `onProgress`.
+ * The run stays open. On a run that has iterations behind it (after
+ * `setRange`, say) the settle rule takes the play as it stands as its first
+ * reading, so its first check already measures a movement.
+ *
+ * @param run from {@link createRun}
+ * @param options `iterations`, `targetPercent`, `exploitEvery`, `settle` and `onProgress`; the rest set the run up and are not read here
+ * @returns a snapshot at the stop
+ */
+export function runToStop(run: SolveRun, options: SolveOptions = {}): Solution {
+	const { spot } = run;
+	const iterations = options.iterations ?? 500;
+	const target = options.targetPercent ?? 0;
+	const fixed = options.exploitEvery ?? 0;
+	const settle = options.settle ? settlePlan(options.settle) : null;
+	const history: Progress[] = [];
+	// A coarse start solves inside createRun, and that is solving time too.
+	const coarse = run.completed === 0 ? coarseMs.get(run.solver) : undefined;
+	const started = Date.now() - (coarse ?? 0);
+	// Where DCFR's count stands before this call's first iteration, for
+	// predicting the target; only a coarse start shifts it, as a warm start's
+	// checks were always scheduled from zero.
+	const before = coarse !== undefined ? run.totalIterations : 0;
+	return runAll();
 
 	function runAll(): Solution {
 		if (settle) return runSettled(settle);
@@ -1798,6 +2126,7 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 	/** `settle`'s loop: a cheap root-play check every `every` iterations. */
 	function runSettled(plan: Required<SettleOptions>): Solution {
 		const tracker = trackSettle(plan);
+		if (run.completed > 0) tracker.check(run.snapshot(), 0);
 		let stoppedAt: StopReason = 'iterations';
 		let done = 0;
 		while (done < iterations) {
@@ -2050,6 +2379,6 @@ function makeSolution(
 export { formatCards, parseCards };
 export { compressRanges } from './compress.ts';
 export type { CompressedRanges, CompressRangesOptions, RangeCompression } from './compress.ts';
-export { bettingFrom, checkedDown, exploitabilityInExact, keepWithin, liteConfig, litePreset, solveLite } from './lite.ts';
-export type { LiteOptions, LitePreset, LiteResolveOptions, LiteSolution, SolveLiteOptions } from './lite.ts';
+export { bettingFrom, checkedDown, exploitabilityInExact, keepWithin, liteConfig, litePreset, openLite, solveLite } from './lite.ts';
+export type { LiteOptions, LitePreset, LiteResolveOptions, LiteSession, LiteSolution, OpenLiteOptions, SolveLiteOptions } from './lite.ts';
 export type { PresetChanges, SettingChange, SizesCut, Street } from './presets.ts';

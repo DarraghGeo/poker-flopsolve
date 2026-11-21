@@ -19,7 +19,7 @@ import { compressRanges } from './compress.ts';
 import { linesWithin } from './hybrid.ts';
 import { activeCombos, parseRange } from './range.ts';
 import type { ShareHistories, Solution, SolveOptions, SolveRun, SpotConfig, SubgameBetting } from './index.ts';
-import { defineSpot, solve } from './index.ts';
+import { createRun, defineSpot, RangeNotInPlaceError, runToStop, solve } from './index.ts';
 import type { PresetChanges, SettingChange } from './presets.ts';
 import { presetChanges, samplingNote } from './presets.ts';
 import type { ResolvedSubgame, ResolveOptions } from './resolve.ts';
@@ -71,9 +71,10 @@ export interface LiteOptions {
 	/**
 	 * Compress both ranges before the blueprint is solved (`compressRanges`,
 	 * issue #156): each keeps the fewest of its combinations, re-weighted,
-	 * whose equity distributions on this flop's boards stay within
-	 * `tolerance` (default 0.01) of the full range's. Default off. True for
-	 * the defaults. A flop spot only.
+	 * whose equity distributions on this board and those that can follow it
+	 * stay within `tolerance` (default 0.01 on a flop, 0.005 on a spot that
+	 * starts later) of the full range's. Default off. True for the
+	 * defaults. On a river spot there is next to no time to save.
 	 *
 	 * It keeps how the range plays, not what one combination does: the
 	 * blueprint and its re-solves hold a strategy only for the combinations
@@ -351,10 +352,19 @@ function nearest(row: readonly BetSize[], target: number): BetSize[] {
  */
 export function solveLite(config: SpotConfig, options: SolveLiteOptions = {}): LiteSolution {
 	const preset = litePreset(config, options);
-	const blueprint = preset.config;
+	return liteSolution(solve(defineSpot(preset.config), preset.options), config, preset.config, preset.changes, options);
+}
+
+/** A blueprint's solution with the re-solver for its later streets. */
+function liteSolution(
+	solution: Solution,
+	config: SpotConfig,
+	blueprint: SpotConfig,
+	changes: PresetChanges,
+	options: SolveLiteOptions,
+): LiteSolution {
 	const share = blueprint.shareHistories;
 	const kept = typeof share === 'object' ? [...(share.keepLines ?? [])] : [];
-	const solution = solve(defineSpot(blueprint), preset.options);
 	const subgameSolve = pick(options, ['workers', 'precision', 'wasmStorage']);
 	const { tree } = solution.spot;
 	const scale = solution.spot.chipScale;
@@ -363,7 +373,7 @@ export function solveLite(config: SpotConfig, options: SolveLiteOptions = {}): L
 		blueprint,
 		kept,
 		source: config,
-		changes: preset.changes,
+		changes,
 		resolve(node, board, resolveOptions) {
 			const round = tree.round[node];
 			// The caller's cuts below the node, re-rooted there as `subgameAt`
@@ -384,6 +394,214 @@ export function solveLite(config: SpotConfig, options: SolveLiteOptions = {}): L
 				betting: { ...bettingFrom(config, round), removeActions, ...resolveOptions.betting },
 				solve: { ...subgameSolve, ...resolveOptions.solve },
 			});
+		},
+	};
+}
+
+/**
+ * The iteration count a session's blueprint resumes from after a change of
+ * range (`SetRangeOptions.resume`): more than an exact solve's 10, which
+ * chance sampling made unstable.
+ */
+const LITE_RESUME = 30;
+
+/** A Lite blueprint kept live, so its ranges can change without solving it again; see {@link openLite}. */
+export interface LiteSession {
+	/**
+	 * The blueprint as it stands. It reads the session's live storage, so it
+	 * is good until the next `setRange`, and after `close` on this thread.
+	 * Its `changes` are those of the blueprint as opened: under
+	 * `compressRanges` the counts they give are the opening ranges'.
+	 */
+	readonly current: LiteSolution;
+	/**
+	 * Change a player's range and settle the blueprint again from where it
+	 * stands. Any range is taken. Where every hand of it is stored and it
+	 * keeps the blueprint's suit symmetries, it changes in place
+	 * (`SolveRun.setRange`): the tree, the storage and every regret are
+	 * kept. Otherwise, and with `compressRanges`, which picks other hands
+	 * for every range, a new run is created on the new ranges and started
+	 * from this one's regrets (`SolveOptions.warmStart`), which costs a
+	 * run's setup and holds both blueprints for a moment. Either way it
+	 * settles in a fraction of the iterations a new `solveLite` takes. The
+	 * settle rule starts over, with `resettle` laid over the session's own.
+	 * Returns the new `current`; the one before it is stale.
+	 *
+	 * @param player 0 out of position, 1 in position
+	 * @param range the whole new range
+	 * @throws if the range is empty or cannot be held against the other,
+	 *   changing nothing; or from the settling after it (a throwing
+	 *   `onProgress`, a failed thread), with the range changed and
+	 *   `current` the blueprint as far as it got
+	 */
+	setRange(player: 0 | 1, range: string | Float64Array): LiteSolution;
+	/**
+	 * Run `iterations` more on the range as it stands, with no stop: what a
+	 * page does while the slider is at rest, since a blueprint goes on
+	 * improving past its settle point. Returns the new `current`.
+	 */
+	refine(iterations: number): LiteSolution;
+	/** Iterations run since the session opened, over every range. */
+	readonly iterations: number;
+	/** Release the threads. `current` stays readable. */
+	close(): void;
+}
+
+/** Settings for {@link openLite}. */
+export interface OpenLiteOptions extends SolveLiteOptions {
+	/**
+	 * Changes to `settle` for the stop after a `setRange`. Default none:
+	 * the same rule, which with the play before the move as its first
+	 * reading can stop after two checks, 40 iterations. With `settle:
+	 * false` it is the whole rule for the moves, the first solve running to
+	 * `iterations`.
+	 */
+	readonly resettle?: SettleOptions;
+}
+
+/**
+ * {@link solveLite}, kept live for a range slider: solve the blueprint until
+ * its root play settles, then let `setRange` move either range and settle it
+ * again from there.
+ *
+ * Measured (`bench/lite/slider.ts`) on issue #47's betting and the bench
+ * ranges, 4 threads in Node, out of position's range moved five times (two
+ * classes added, nine added, back, two dropped, a third dropped), nine
+ * classes in reserve:
+ *
+ * | flop | five moves | five `solveLite` | a move | iterations a move | less exploitable | first solve |
+ * |---|---|---|---|---|---|---|
+ * | As Kh 7d | 95 s | 163 s | 12–27 s against 28–44 | 120–260 against 400–420 | 4 moves of 5 | 46 s against 30 |
+ * | Ts 9s 4h | 69 s | 103 s | 11–20 s against 19–25 | 140–280 against 320 | 5 of 5 | 24 s against 18 |
+ * | Ks 9s 4s | 27 s | 52 s | 3–8 s against 9–14 | 80–240 against 340–380 | 2 of 5 | 12 s against 10 |
+ *
+ * Exploitability in the blueprint's own game: 2.97–4.66% of pot against
+ * `solveLite`'s 3.16–5.45 on the first two, lower in 9 moves of 10; on the
+ * monotone flop the three moves that dropped hands ended 0.6–1.8 higher. The range's root action
+ * frequencies were closer to a 1000-iteration blueprint's than `solveLite`'s
+ * in 11 moves of 15; hand by hand they were further in 10, by 0.5–8 points,
+ * the reserve's different buckets being part of it. The reserve cost 27–42%
+ * an iteration.
+ *
+ * `oopReserve` and `ipReserve` on `config` are optional. With the widest
+ * ranges the slider can reach in them, every move changes in place; a
+ * stored hand costs what a held one does, though (27–42% an iteration for
+ * nine classes). Without them the blueprint costs what `solveLite`'s does,
+ * and a move that adds a hand it does not store gets a new run started from
+ * the old one's regrets, which stores that hand and every hand stored
+ * before it. A range that breaks a suit symmetry gets one too, and the
+ * session then stays without that symmetry. The same five
+ * moves with no reserve took 27 s on Ks 9s 4s against 51 for `solveLite`,
+ * as the reserve's did.
+ *
+ * `compressRanges` compresses both ranges again at every move and gets a new
+ * run each time. `algorithm: 'cfr+'` clears its average at a move and keeps
+ * its count, and settles to half the tolerance unless `resettle` gives one.
+ *
+ * @param config the caller's spot, full betting
+ * @param options `solveLite`'s, and `resettle`
+ */
+export function openLite(config: SpotConfig, options: OpenLiteOptions = {}): LiteSession {
+	const preset = litePreset(config, options);
+	const { settle, ...rest } = preset.options;
+	// The stop after a move: `resettle` over the session's own, or alone where that is off.
+	const moved = settle || options.resettle ? { ...settle, ...options.resettle } : null;
+	// CFR+ clears its average at a move, and the fresh one stops moving
+	// before it is as good: half the tolerance unless one is given.
+	const resettle = moved && options.algorithm === 'cfr+' && options.resettle?.tolerance === undefined
+		? { ...moved, tolerance: settlePlan(moved).tolerance / 2 }
+		: moved;
+	// Validated before anything is solved.
+	if (resettle) settlePlan(resettle);
+	const compress = options.compressRanges ? (options.compressRanges === true ? {} : options.compressRanges) : null;
+	let run = createRun(defineSpot(preset.config), preset.options);
+	let source = config;
+	// Iterations of the runs before this one: a range that cannot change in place gets a new run.
+	let earlier = 0;
+	/** The blueprint as it stands. */
+	const reading = (solution: Solution): LiteSolution => liteSolution(solution, source, run.spot.source, preset.changes, options);
+	/** `solve`'s loop on the live run: to the cap, the target or the settle stop. */
+	const settleRun = (plan: SettleOptions | null | undefined): LiteSolution =>
+		reading(runToStop(run, plan ? { ...rest, settle: plan } : rest));
+	/** Where a changed range's count resumes: early under DCFR, kept under CFR+ (`SolveRun.setRange`). */
+	const resumed = (): number => (options.algorithm === 'cfr+' ? run.totalIterations : Math.min(run.totalIterations, LITE_RESUME));
+
+	let current: LiteSolution;
+	try {
+		current = settleRun(settle);
+	} catch (error) {
+		run.close();
+		throw error;
+	}
+	return {
+		get current() {
+			return current;
+		},
+		get iterations() {
+			return earlier + run.completed;
+		},
+		setRange(player, range) {
+			const next: SpotConfig = { ...source, [player === 0 ? 'oop' : 'ip']: typeof range === 'string' ? range : range.slice() };
+			let inPlace = false;
+			if (!compress) {
+				// In place where every hand is stored and the symmetries hold; a
+				// range that is none throws here, with nothing changed.
+				try {
+					run.setRange(player, range, { resume: LITE_RESUME });
+					inPlace = true;
+				} catch (error) {
+					if (!(error instanceof RangeNotInPlaceError)) throw error;
+				}
+			}
+			if (!inPlace) {
+				// A new run on the new ranges, started from this one's regrets.
+				// Under `compressRanges` always: both ranges are compressed again,
+				// each against the other, and keep other hands. Otherwise it
+				// stores what this one does as well, so a hand once stored stays
+				// stored and the way back is in place.
+				const ranges = compress ? compressRanges(next, compress) : next;
+				const stored = (index: { readonly slot: Int32Array }): Float64Array => Float64Array.from(index.slot, (slot) => (slot >= 0 ? 1 : 0));
+				const blueprint: SpotConfig = {
+					...preset.config,
+					oop: ranges.oop,
+					ip: ranges.ip,
+					...(compress ? {} : { oopReserve: stored(run.spot.players[0]), ipReserve: stored(run.spot.players[1]) }),
+				};
+				// Defined before anything is let go: a spot that cannot be throws here, with nothing changed.
+				const spot = defineSpot(blueprint);
+				// The old run's threads first, which the new one needs where
+				// threads are borrowed (a browser); its storage stays readable.
+				const count = resumed();
+				run.close();
+				let replacement: SolveRun;
+				try {
+					replacement = createRun(spot, { ...preset.options, warmStart: run, warmIteration: count });
+				} catch (error) {
+					// Back on the ranges it had: the same spot, so the average comes too.
+					run = createRun(run.spot, { ...preset.options, warmStart: run });
+					throw error;
+				}
+				earlier += run.completed;
+				run = replacement;
+			}
+			source = next;
+			try {
+				current = settleRun(resettle);
+			} catch (error) {
+				// The range has changed all the same: `current` must not read the new storage as the old range's.
+				current = reading(run.snapshot([], 'iterations'));
+				throw error;
+			}
+			return current;
+		},
+		refine(count) {
+			if (!(Number.isInteger(count) && count > 0)) throw new Error(`refine: iterations must be a positive whole number; got ${count}`);
+			run.step(count);
+			current = reading(run.snapshot([], 'iterations'));
+			return current;
+		},
+		close() {
+			run.close();
 		},
 	};
 }
@@ -463,7 +681,7 @@ export function litePreset(config: SpotConfig, options: SolveLiteOptions = {}): 
 	}
 	if (options.compressRanges) {
 		const count = (range: string | Float64Array): number => activeCombos(typeof range === 'string' ? parseRange(range) : range).length;
-		change('compressRanges', undefined, options.compressRanges, `compressed to ${count(blueprint.oop)} and ${count(blueprint.ip)} re-weighted combinations (out of position, in position) that keep each range's equity distribution on this flop's boards; approximate: the blueprint has no strategy for a combination left out, and what one combination does is not preserved`);
+		change('compressRanges', undefined, options.compressRanges, `compressed to ${count(blueprint.oop)} and ${count(blueprint.ip)} re-weighted combinations (out of position, in position) that keep each range's equity distribution on this board and those that can follow it; approximate: the blueprint has no strategy for a combination left out, and what one combination does is not preserved`);
 	}
 	if (sampling) change('approximations.chanceSampling', undefined, sampling, samplingNote(sampling));
 	if (settle) {

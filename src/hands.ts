@@ -87,7 +87,18 @@ export function buildHandSpace(
 
 	// Deals.
 	const upStart: Int32Array[] = [new Int32Array(0)];
-	const up: number[] = [];
+	// Sized first: this is filled at the start of every solve, one entry per
+	// hand per deal, and growing a plain array that far is most of its cost.
+	let upLength = 0;
+	for (let round = 1; round < runouts.rounds; round++) {
+		const orbitStart = runouts.orbitStart[round];
+		for (let child = 0; child < runouts.counts[round]; child++) {
+			const deals = orbitStart[child + 1] - orbitStart[child];
+			upLength += deals * (span(lists, round, child, 0)[1] + span(lists, round, child, 1)[1]);
+		}
+	}
+	const up = new Uint16Array(upLength);
+	let upAt = 0;
 	for (let round = 1; round < runouts.rounds; round++) {
 		const orbitStart = runouts.orbitStart[round];
 		const starts = new Int32Array(runouts.orbitMap[round].length * 2);
@@ -101,12 +112,12 @@ export function buildHandSpace(
 					// The member's map sends a real hand onto the stored board;
 					// its inverse sends a stored hand back to the real one.
 					const back = runouts.maps.combo[runouts.maps.inverse(runouts.orbitMap[round][m])];
-					starts[m * 2 + player] = up.length;
+					starts[m * 2 + player] = upAt;
 					for (let k = 0; k < childCount; k++) {
 						const real = back[lists.list[childFrom + k]];
 						const at = indexOf[real];
 						if (at < 0) throw new Error('A relabelled hand is not in its range; the relabelling must preserve both ranges');
-						up.push(at);
+						up[upAt++] = at;
 					}
 				}
 				markMembers(lists, parentFrom, parentCount, indexOf, true);
@@ -118,7 +129,8 @@ export function buildHandSpace(
 	// Folds.
 	const slots = lists.roundBase[runouts.rounds] * 2;
 	const sameStart = new Int32Array(slots + 1);
-	const same: number[] = [];
+	const same = new Int32Array(lists.list.length);
+	let sameAt = 0;
 	for (let round = 0; round < runouts.rounds; round++) {
 		for (let board = 0; board < runouts.counts[round]; board++) {
 			for (let player = 0; player < 2; player++) {
@@ -126,15 +138,15 @@ export function buildHandSpace(
 				const [otherFrom, otherCount] = span(lists, round, board, 1 - player);
 				markMembers(lists, otherFrom, otherCount, indexOf, false);
 				const [from, count] = span(lists, round, board, player);
-				sameStart[slot] = same.length;
-				for (let i = 0; i < count; i++) same.push(indexOf[lists.list[from + i]]);
+				sameStart[slot] = sameAt;
+				for (let i = 0; i < count; i++) same[sameAt++] = indexOf[lists.list[from + i]];
 				markMembers(lists, otherFrom, otherCount, indexOf, true);
 			}
 		}
 	}
-	sameStart[slots] = same.length;
+	sameStart[slots] = sameAt;
 
-	return { upStart, up: Uint16Array.from(up), sameStart, same: Int32Array.from(same) };
+	return { upStart, up, sameStart, same };
 }
 
 /**

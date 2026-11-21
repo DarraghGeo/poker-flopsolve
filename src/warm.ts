@@ -285,79 +285,153 @@ export function warmStart(
 	const keepsRegrets = (ctx: Context): boolean => ctx.regret.length > 0 || (ctx.compactRegret ?? null) !== null;
 	const hasRegret = keepsRegrets(to) && keepsRegrets(from);
 
-	// A combination's position in the old board's hand list, or -1.
-	const position = new Int32Array(COMBOS).fill(-1);
+	// The matched nodes of each round and owner, and which old action each of
+	// their actions continues. What follows is laid out board by board: a
+	// board is resolved once, and each player's hands on it placed in the old
+	// list once, for every node of the round, where doing both again for
+	// each node was most of a warm start's time.
+	const rounds = to.runouts.rounds;
+	const nodesOf: number[][] = Array.from({ length: rounds * 2 }, () => []);
+	const actionsOf = new Map<number, Int32Array>();
 	let matched = 0;
 	for (const node of tree.decisionNodes) {
 		const old = match[node];
 		if (old < 0) continue;
 		matched++;
-		const round = tree.round[node];
-		const owner = tree.player[node];
 		const actions = tree.numEdges[node];
-		const oldActions = from.tree.numEdges[old];
-
-		// Which old action each new one continues.
 		const actionOf = new Int32Array(actions).fill(-1);
 		for (let e = 0; e < actions; e++) {
 			const other = matchEdge(tree, tree.firstEdge[node] + e, node, from.tree, old, tolerance);
 			if (other >= 0) actionOf[e] = other - from.tree.firstEdge[old];
 		}
+		actionsOf.set(node, actionOf);
+		nodesOf[tree.round[node] * 2 + tree.player[node]].push(node);
+	}
 
+	// A combination's position in the old board's hand list, or -1.
+	const position = new Int32Array(COMBOS).fill(-1);
+	// For each hand a new entry stands for, in order, its position in the old list.
+	const sourceOf = new Int32Array(COMBOS);
+	const sourceEnd = new Int32Array(COMBOS);
+	for (let round = 0; round < rounds; round++) {
+		if (nodesOf[round * 2].length + nodesOf[round * 2 + 1].length === 0) continue;
 		for (let board = 0; board < to.runouts.counts[round]; board++) {
 			const resolved = resolveBoard(from.runouts, asSource(realCards(to.runouts, round, board)));
-			// Blocks are laid out by position in each board's hand list.
-			const oldSlot = (from.active.roundBase[round] + resolved.board) * 2 + owner;
-			const oldFrom = from.active.start[oldSlot];
-			const oldCount = from.active.count[oldSlot];
-			const oldBlock = from.layout.blockOffset[old] + resolved.board;
-			const oldBase = from.layout.offset[old] + oldActions * from.layout.rowStart[oldSlot];
-			const oldLength = oldActions * oldCount;
-			if (round >= from.layout.compactFrom) {
-				readCompactBlock(from, old, oldSlot, oldBlock, oldBase, oldActions, oldCount, hasRegret ? oldRegret : null, oldSum);
-			} else {
-				if (hasRegret) readBlock(from.regret, from.regretScale, oldBlock, oldBase, oldLength, oldRegret);
-				readBlock(from.strategySum, from.sumScale, oldBlock, oldBase, oldLength, oldSum);
-			}
-			// Every hand an old entry stands for is at that entry.
-			markMembers(from.active, oldFrom, oldCount, position, false);
+			for (let owner = 0; owner < 2; owner++) {
+				const nodes = nodesOf[round * 2 + owner];
+				if (nodes.length === 0) continue;
+				// Blocks are laid out by position in each board's hand list.
+				const oldSlot = (from.active.roundBase[round] + resolved.board) * 2 + owner;
+				const oldFrom = from.active.start[oldSlot];
+				const oldCount = from.active.count[oldSlot];
+				const newSlot = (to.active.roundBase[round] + board) * 2 + owner;
+				const newFrom = to.active.start[newSlot];
+				const count = to.active.count[newSlot];
+				// Every hand an old entry stands for is at that entry.
+				markMembers(from.active, oldFrom, oldCount, position, false);
+				let sources = 0;
+				for (let i = 0; i < count; i++) {
+					for (let m = to.active.memberStart[newFrom + i]; m < to.active.memberStart[newFrom + i + 1]; m++) {
+						sourceOf[sources++] = position[resolved.combos[comboOf[to.active.memberCombo[m]]]];
+					}
+					sourceEnd[i] = sources;
+				}
+				markMembers(from.active, oldFrom, oldCount, position, true);
 
-			const newSlot = (to.active.roundBase[round] + board) * 2 + owner;
-			const newFrom = to.active.start[newSlot];
-			const count = to.active.count[newSlot];
-			const length = actions * count;
-			newRegret.fill(0, 0, length);
-			newSum.fill(0, 0, length);
-			for (let i = 0; i < count; i++) {
-				// An entry stands for its mirror orbit here, which the old solve
-				// may have stored apart and not played alike: it takes their mean.
-				const firstMember = to.active.memberStart[newFrom + i];
-				const membersEnd = to.active.memberStart[newFrom + i + 1];
-				const share = 1 / (membersEnd - firstMember);
-				for (let m = firstMember; m < membersEnd; m++) {
-					const j = position[resolved.combos[comboOf[to.active.memberCombo[m]]]];
-					if (j < 0) continue;
+				// Plain storage on both sides and one old hand for each new one:
+				// the usual case, copied store to store.
+				const direct =
+					sources === count && round < from.layout.compactFrom && round < to.layout.compactFrom &&
+					from.regretScale === null && to.regretScale === null;
+
+				for (const node of nodes) {
+					const old = match[node];
+					const actions = tree.numEdges[node];
+					const oldActions = from.tree.numEdges[old];
+					const actionOf = actionsOf.get(node)!;
+					const oldBlock = from.layout.blockOffset[old] + resolved.board;
+					const oldBase = from.layout.offset[old] + oldActions * from.layout.rowStart[oldSlot];
+					const oldLength = oldActions * oldCount;
+					if (direct) {
+						const base = to.layout.offset[node] + actions * to.layout.rowStart[newSlot];
+						if (hasRegret) copyRows(to.regret, base, from.regret, oldBase, actionOf, count, oldCount, sourceOf);
+						if (averages) copyRows(to.strategySum, base, from.strategySum, oldBase, actionOf, count, oldCount, sourceOf);
+						continue;
+					}
+					if (round >= from.layout.compactFrom) {
+						readCompactBlock(from, old, oldSlot, oldBlock, oldBase, oldActions, oldCount, hasRegret ? oldRegret : null, oldSum);
+					} else {
+						if (hasRegret) readBlock(from.regret, from.regretScale, oldBlock, oldBase, oldLength, oldRegret);
+						if (averages) readBlock(from.strategySum, from.sumScale, oldBlock, oldBase, oldLength, oldSum);
+					}
+
+					const length = actions * count;
+					newRegret.fill(0, 0, length);
+					if (averages) newSum.fill(0, 0, length);
 					for (let e = 0; e < actions; e++) {
 						const action = actionOf[e];
 						if (action < 0) continue;
-						newRegret[e * count + i] += share * oldRegret[action * oldCount + j];
-						newSum[e * count + i] += share * oldSum[action * oldCount + j];
+						const row = e * count;
+						const oldRow = action * oldCount;
+						let first = 0;
+						for (let i = 0; i < count; i++) {
+							// An entry stands for its mirror orbit here, which the old solve
+							// may have stored apart and not played alike: it takes their mean.
+							const end = sourceEnd[i];
+							const share = 1 / (end - first);
+							for (let k = first; k < end; k++) {
+								const j = sourceOf[k];
+								if (j < 0) continue;
+								if (hasRegret) newRegret[row + i] += share * oldRegret[oldRow + j];
+								if (averages) newSum[row + i] += share * oldSum[oldRow + j];
+							}
+							first = end;
+						}
+					}
+
+					const block = to.layout.blockOffset[node] + board;
+					const base = to.layout.offset[node] + actions * to.layout.rowStart[newSlot];
+					if (round >= to.layout.compactFrom) {
+						writeCompactBlock(to, node, newSlot, block, base, actions, count, hasRegret ? newRegret : null, averages ? newSum : null);
+					} else {
+						if (hasRegret) writeBlock(to.regret, to.regretScale, REGRET_STEPS, block, base, length, newRegret);
+						if (averages) writeBlock(to.strategySum, to.sumScale, SUM_STEPS, block, base, length, newSum);
 					}
 				}
-			}
-			markMembers(from.active, oldFrom, oldCount, position, true);
-
-			const block = to.layout.blockOffset[node] + board;
-			const base = to.layout.offset[node] + actions * to.layout.rowStart[newSlot];
-			if (round >= to.layout.compactFrom) {
-				writeCompactBlock(to, node, newSlot, block, base, actions, count, hasRegret ? newRegret : null, averages ? newSum : null);
-			} else {
-				if (hasRegret) writeBlock(to.regret, to.regretScale, REGRET_STEPS, block, base, length, newRegret);
-				if (averages) writeBlock(to.strategySum, to.sumScale, SUM_STEPS, block, base, length, newSum);
 			}
 		}
 	}
 	return { matchedNodes: matched, decisionNodes: tree.decisionNodes.length, averages };
+}
+
+/**
+ * Copy a block between plain stores: each new action's row from the old
+ * action it continues, each hand from its place in the old list, and zero
+ * where there is none.
+ */
+function copyRows(
+	to: RegretStore | SumStore,
+	base: number,
+	from: RegretStore | SumStore,
+	oldBase: number,
+	actionOf: Int32Array,
+	count: number,
+	oldCount: number,
+	sourceOf: Int32Array,
+): void {
+	for (let e = 0; e < actionOf.length; e++) {
+		const action = actionOf[e];
+		const row = base + e * count;
+		if (action < 0) {
+			to.fill(0, row, row + count);
+			continue;
+		}
+		const oldRow = oldBase + action * oldCount;
+		for (let i = 0; i < count; i++) {
+			const j = sourceOf[i];
+			to[row + i] = j < 0 ? 0 : from[oldRow + j];
+		}
+	}
 }
 
 /** Throw unless `cards` is a permutation of the deck taking board `a` onto board `b`. */

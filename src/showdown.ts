@@ -95,6 +95,7 @@ export function buildShowdownTable(runouts: Runouts, relevant?: Uint8Array): Sho
 	const onBoard = new Uint8Array(DECK);
 	const strength = new Int32Array(COMBOS);
 	const live = new Uint16Array(COMBOS);
+	const keys = new Float64Array(COMBOS);
 
 	for (let board = 0; board < boards; board++) {
 		const base = board * width;
@@ -119,8 +120,13 @@ export function buildShowdownTable(runouts: Runouts, relevant?: Uint8Array): Sho
 			live[count++] = combo;
 		}
 
+		// By strength, ties in ascending order of combination. Sorted as plain
+		// numbers, strength above the combination, since a typed array sorts
+		// those natively and a comparator is called for every comparison.
+		for (let i = 0; i < count; i++) keys[i] = strength[live[i]] * 2048 + live[i];
+		keys.subarray(0, count).sort();
 		const slice = live.subarray(0, count);
-		slice.sort((x, y) => strength[x] - strength[y]);
+		for (let i = 0; i < count; i++) slice[i] = keys[i] % 2048;
 		order.set(slice, board * stride);
 		liveCount[board] = count;
 

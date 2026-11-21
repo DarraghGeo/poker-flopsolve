@@ -32,7 +32,7 @@ import { NodeKind } from './tree.ts';
 
 /** Which combinations a player holds, and where each sits in storage. */
 export interface PlayerIndex {
-	/** Combinations with any weight, ascending. */
+	/** Combinations with any weight, and any held in reserve, ascending. */
 	readonly combos: Uint16Array;
 	readonly count: number;
 	/** Combination to storage slot, or -1. */
@@ -41,12 +41,17 @@ export interface PlayerIndex {
 	readonly weights: Float64Array;
 }
 
-/** Build a player's index from their range weights. */
-export function buildPlayerIndex(weights: Float64Array): PlayerIndex {
+/**
+ * Build a player's index from their range weights.
+ *
+ * @param reserve combinations to index although they weigh nothing, so a
+ *   later change of range can give them weight without moving any storage
+ */
+export function buildPlayerIndex(weights: Float64Array, reserve?: Float64Array): PlayerIndex {
 	const combos: number[] = [];
 	const slot = new Int32Array(COMBOS).fill(-1);
 	for (let combo = 0; combo < COMBOS; combo++) {
-		if (weights[combo] > 0) {
+		if (weights[combo] > 0 || (reserve !== undefined && reserve[combo] > 0)) {
 			slot[combo] = combos.length;
 			combos.push(combo);
 		}
@@ -176,32 +181,7 @@ export function buildLayout(
 	alias?: Int32Array,
 	compact?: CompactPlan,
 ): Layout {
-	// How many of each player's hands each board leaves live: a block's rows.
-	const roundBase = new Int32Array(runouts.rounds + 1);
-	for (let round = 0; round < runouts.rounds; round++) roundBase[round + 1] = roundBase[round] + runouts.counts[round];
-	const rowStart = new Int32Array(roundBase[runouts.rounds] * 2);
-	const totals = new Int32Array(runouts.rounds * 2);
-	const onBoard = new Uint8Array(DECK);
-	for (let round = 0; round < runouts.rounds; round++) {
-		const width = runouts.width[round];
-		const cards = runouts.cards[round];
-		for (let board = 0; board < runouts.counts[round]; board++) {
-			onBoard.fill(0);
-			for (let i = 0; i < width; i++) onBoard[cards[board * width + i]] = 1;
-			for (let player = 0; player < 2; player++) {
-				const index = players[player];
-				let live = 0;
-				for (let i = 0; i < index.count; i++) {
-					const combo = index.combos[i];
-					if (onBoard[COMBO_CARDS[combo * 2]] || onBoard[COMBO_CARDS[combo * 2 + 1]]) continue;
-					if (!orbitLeader(runouts, round, board, combo)) continue;
-					live++;
-				}
-				rowStart[(roundBase[round] + board) * 2 + player] = totals[round * 2 + player];
-				totals[round * 2 + player] += live;
-			}
-		}
-	}
+	const { roundBase, rowStart, totals } = liveRows(runouts, players);
 
 	const offset = new Float64Array(tree.nodeCount).fill(-1);
 	const blockOffset = new Int32Array(tree.nodeCount).fill(-1);
@@ -280,6 +260,69 @@ export function buildLayout(
 		reachWeighted: shared ? sharedNodes(tree, alias!) : null,
 		compactFrom, compactSlots, handOffset, compactHands, compactChunk, chunkSlots, chunkHands, chunkStart,
 	};
+}
+
+/** `liveRows` of the players last asked about, per set of runouts. */
+const liveRowsOf = new WeakMap<Runouts, { players: readonly [PlayerIndex, PlayerIndex]; rows: LiveRows }>();
+
+interface LiveRows {
+	readonly roundBase: Int32Array;
+	/** Per list slot, how many of the player's hands earlier boards of the round hold. */
+	readonly rowStart: Int32Array;
+	/** Per round and player, the hands over all its boards. */
+	readonly totals: Int32Array;
+}
+
+/**
+ * How many of each player's hands each board leaves live: a block's rows.
+ *
+ * Every hand on every board, and the same for any tree and storage width, so
+ * it is kept for the spot's runouts and players: defining a spot lays its
+ * storage out up to three times, and each run once more.
+ */
+function liveRows(runouts: Runouts, players: readonly [PlayerIndex, PlayerIndex]): LiveRows {
+	const kept = liveRowsOf.get(runouts);
+	if (kept && kept.players[0] === players[0] && kept.players[1] === players[1]) return kept.rows;
+	const roundBase = new Int32Array(runouts.rounds + 1);
+	for (let round = 0; round < runouts.rounds; round++) roundBase[round + 1] = roundBase[round] + runouts.counts[round];
+	const rowStart = new Int32Array(roundBase[runouts.rounds] * 2);
+	const totals = new Int32Array(runouts.rounds * 2);
+	const onBoard = new Uint8Array(DECK);
+	const comboMaps = runouts.maps.combo;
+	for (let round = 0; round < runouts.rounds; round++) {
+		const width = runouts.width[round];
+		const cards = runouts.cards[round];
+		const stabStart = runouts.stabiliserStart[round];
+		const stabMap = runouts.stabiliserMap[round];
+		for (let board = 0; board < runouts.counts[round]; board++) {
+			onBoard.fill(0);
+			for (let i = 0; i < width; i++) onBoard[cards[board * width + i]] = 1;
+			const stabFrom = stabStart[board] + 1;
+			const stabTo = stabStart[board + 1];
+			for (let player = 0; player < 2; player++) {
+				const index = players[player];
+				let live = 0;
+				for (let i = 0; i < index.count; i++) {
+					const combo = index.combos[i];
+					if (onBoard[COMBO_CARDS[combo * 2]] || onBoard[COMBO_CARDS[combo * 2 + 1]]) continue;
+					// Only the lowest hand of a mirror orbit is stored; see `orbitLeader`.
+					let leader = 1;
+					for (let k = stabFrom; k < stabTo; k++) {
+						if (comboMaps[stabMap[k]][combo] < combo) {
+							leader = 0;
+							break;
+						}
+					}
+					live += leader;
+				}
+				rowStart[(roundBase[round] + board) * 2 + player] = totals[round * 2 + player];
+				totals[round * 2 + player] += live;
+			}
+		}
+	}
+	const rows = { roundBase, rowStart, totals };
+	liveRowsOf.set(runouts, { players, rows });
+	return rows;
 }
 
 /** 1 for every node whose storage more than one node uses, owner included. */
@@ -363,7 +406,10 @@ export interface Context {
 	 * counted once while one reaching showdown is counted once per runout.
 	 */
 	readonly runoutWeight: Float64Array;
-	/** Total weighted mass of legal matchups; divides raw values into chips. */
+	/**
+	 * Total weighted mass of legal matchups, as the ranges stood when the
+	 * run was made; the solver divides by the mass as they stand.
+	 */
 	readonly totalMass: number;
 	/** Discounted CFR in place of CFR+; see `DCFR_ALPHA`. */
 	readonly dcfr: boolean;
@@ -718,109 +764,121 @@ function buildActiveLists(
 	const start = new Int32Array(slots);
 	const count = new Uint16Array(slots);
 	const packedSlot = new Uint8Array(slots);
-	const entries: number[] = [];
-	const entrySlots: number[] = [];
-	const memberStart: number[] = [];
-	const members: number[] = [];
+	// This runs at the start of every solve, over every hand on every board,
+	// so it writes typed arrays sized once: no list can hold more than its
+	// player's whole range.
+	const capacity = roundBase[runouts.rounds] * (players[0].count + players[1].count);
+	const list = new Uint16Array(capacity);
+	const entrySlot = new Uint16Array(capacity);
+	const strength = new Int32Array(capacity);
+	const memberStart = new Int32Array(capacity + 1);
+	// An entry stands for itself and at most one image per symmetry.
+	let members = new Uint16Array(capacity);
 	const onBoard = new Uint8Array(DECK);
 	const seen = new Uint8Array(COMBOS);
+	const comboMaps = runouts.maps.combo;
+	const last = runouts.rounds - 1;
+	let entries = 0;
+	let memberCount = 0;
 
 	for (let round = 0; round < runouts.rounds; round++) {
 		const width = runouts.width[round];
 		const cards = runouts.cards[round];
 		const stabStart = runouts.stabiliserStart[round];
 		const stabMap = runouts.stabiliserMap[round];
+		// On a final board, hands in order of strength: a showdown is then one
+		// contiguous sweep. Order is free everywhere else.
+		const ranked = showdown !== null && round === last ? showdown : null;
 		for (let board = 0; board < runouts.counts[round]; board++) {
 			onBoard.fill(0);
 			for (let i = 0; i < width; i++) onBoard[cards[board * width + i]] = 1;
-			const symmetric = stabStart[board + 1] - stabStart[board] > 1;
+			const stabFrom = stabStart[board] + 1;
+			const stabTo = stabStart[board + 1];
+			const symmetric = stabTo > stabFrom;
+			if (memberCount + (players[0].count + players[1].count) * (stabTo - stabFrom + 1) > members.length) {
+				const grown = new Uint16Array(Math.max(members.length * 2, memberCount + (players[0].count + players[1].count) * (stabTo - stabFrom + 1)));
+				grown.set(members.subarray(0, memberCount));
+				members = grown;
+			}
 			for (let player = 0; player < 2; player++) {
 				const index = players[player];
 				const slot = (roundBase[round] + board) * 2 + player;
-				start[slot] = entries.length;
-				const here: number[] = [];
-				for (let i = 0; i < index.count; i++) {
-					const combo = index.combos[i];
-					if (onBoard[COMBO_CARDS[combo * 2]] || onBoard[COMBO_CARDS[combo * 2 + 1]]) continue;
-					if (symmetric && !orbitLeader(runouts, round, board, combo)) continue;
-					here.push(i);
-				}
-				// On a final board, hands in order of strength: a showdown is
-				// then one contiguous sweep. Order is free everywhere else.
-				if (showdown !== null && round === runouts.rounds - 1) {
-					const group = strengthOn(showdown, board);
-					here.sort((x, y) => group[index.combos[x]] - group[index.combos[y]] || x - y);
-				}
-				for (const i of here) {
-					const combo = index.combos[i];
-					entries.push(combo);
-					entrySlots.push(i);
-					memberStart.push(members.length);
-					members.push(combo);
-					if (!symmetric) continue;
-					// The rest of its orbit, which it stands for.
-					seen[combo] = 1;
-					for (let k = stabStart[board] + 1; k < stabStart[board + 1]; k++) {
-						const image = runouts.maps.combo[stabMap[k]][combo];
-						if (seen[image]) continue;
-						seen[image] = 1;
-						members.push(image);
-						packedSlot[slot] = 1;
+				start[slot] = entries;
+				// The showdown table already holds this board's hands by
+				// strength, ties in ascending order: the player's own, in that
+				// order, are their list. Elsewhere, their range in its order.
+				const candidates = ranked ? ranked.liveCount[board] : index.count;
+				const orderBase = ranked ? board * ranked.stride : 0;
+				const groupBase = ranked ? board * (ranked.stride + 1) : 0;
+				let group = 0;
+				for (let c = 0; c < candidates; c++) {
+					let combo: number;
+					let at: number;
+					if (ranked) {
+						while (c >= ranked.groupStart[groupBase + group + 1]) group++;
+						combo = ranked.order[orderBase + c];
+						at = index.slot[combo];
+						if (at < 0) continue;
+					} else {
+						at = c;
+						combo = index.combos[c];
+						if (onBoard[COMBO_CARDS[combo * 2]] || onBoard[COMBO_CARDS[combo * 2 + 1]]) continue;
 					}
-					for (let m = memberStart[memberStart.length - 1]; m < members.length; m++) seen[members[m]] = 0;
+					// Only the lowest hand of a mirror orbit is stored; see `orbitLeader`.
+					let leader = true;
+					for (let k = stabFrom; k < stabTo; k++) {
+						if (comboMaps[stabMap[k]][combo] < combo) {
+							leader = false;
+							break;
+						}
+					}
+					if (!leader) continue;
+					list[entries] = combo;
+					entrySlot[entries] = at;
+					strength[entries] = group;
+					memberStart[entries] = memberCount;
+					members[memberCount++] = combo;
+					if (symmetric) {
+						// The rest of its orbit, which it stands for.
+						const first = memberCount - 1;
+						seen[combo] = 1;
+						for (let k = stabFrom; k < stabTo; k++) {
+							const image = comboMaps[stabMap[k]][combo];
+							if (seen[image]) continue;
+							seen[image] = 1;
+							members[memberCount++] = image;
+							packedSlot[slot] = 1;
+						}
+						for (let m = first; m < memberCount; m++) seen[members[m]] = 0;
+					}
+					entries++;
 				}
-				count[slot] = entries.length - start[slot];
+				count[slot] = entries - start[slot];
 			}
 		}
 	}
-	memberStart.push(members.length);
+	memberStart[entries] = memberCount;
 
-	const list = Uint16Array.from(entries);
-	const cardA = new Uint8Array(list.length);
-	const cardB = new Uint8Array(list.length);
-	const multiplicity = new Float64Array(list.length);
-	for (let e = 0; e < list.length; e++) {
+	const cardA = new Uint8Array(entries);
+	const cardB = new Uint8Array(entries);
+	const multiplicity = new Float64Array(entries);
+	for (let e = 0; e < entries; e++) {
 		cardA[e] = COMBO_CARDS[list[e] * 2];
 		cardB[e] = COMBO_CARDS[list[e] * 2 + 1];
 		multiplicity[e] = memberStart[e + 1] - memberStart[e];
 	}
-	const memberCombo = Uint16Array.from(members);
-	const memberA = new Uint8Array(members.length);
-	const memberB = new Uint8Array(members.length);
-	for (let m = 0; m < members.length; m++) {
-		memberA[m] = COMBO_CARDS[members[m] * 2];
-		memberB[m] = COMBO_CARDS[members[m] * 2 + 1];
-	}
-	// Each entry's strength on its final board, for the showdown sweep.
-	const strength = new Int32Array(list.length);
-	if (showdown !== null) {
-		const last = runouts.rounds - 1;
-		for (let board = 0; board < runouts.counts[last]; board++) {
-			const group = strengthOn(showdown, board);
-			for (let player = 0; player < 2; player++) {
-				const slot = (roundBase[last] + board) * 2 + player;
-				for (let e = start[slot]; e < start[slot] + count[slot]; e++) strength[e] = group[list[e]];
-			}
-		}
+	const memberCombo = members.slice(0, memberCount);
+	const memberA = new Uint8Array(memberCount);
+	const memberB = new Uint8Array(memberCount);
+	for (let m = 0; m < memberCount; m++) {
+		memberA[m] = COMBO_CARDS[memberCombo[m] * 2];
+		memberB[m] = COMBO_CARDS[memberCombo[m] * 2 + 1];
 	}
 	return {
-		start, count, list, slot: Uint16Array.from(entrySlots), roundBase,
-		cardA, cardB, strength, packed: packedSlot, multiplicity, memberStart: Int32Array.from(memberStart), memberCombo, memberA, memberB,
+		start, count, list: list.slice(0, entries), slot: entrySlot.slice(0, entries), roundBase,
+		cardA, cardB, strength: strength.slice(0, entries), packed: packedSlot, multiplicity,
+		memberStart: memberStart.slice(0, entries + 1), memberCombo, memberA, memberB,
 	};
-}
-
-const strengthScratch = new Int32Array(COMBOS);
-
-/** Each combination's tie-group index on a final board: higher is stronger. Shared scratch. */
-function strengthOn(table: ShowdownTable, board: number): Int32Array {
-	const orderBase = board * table.stride;
-	const groupBase = board * (table.stride + 1);
-	for (let g = 0; g < table.groupCount[board]; g++) {
-		for (let i = table.groupStart[groupBase + g]; i < table.groupStart[groupBase + g + 1]; i++) {
-			strengthScratch[table.order[orderBase + i]] = g;
-		}
-	}
-	return strengthScratch;
 }
 
 /** Per-depth buffers, so the hot loop never allocates. */
@@ -1903,7 +1961,9 @@ export function makeSolver(ctx: Context): Solver {
 		const [from, count] = listOf(0, 0, traverser);
 		let sum = 0;
 		for (let i = 0; i < count; i++) sum += weights[lists.list[from + i]] * lists.multiplicity[from + i] * values[i];
-		return sum / ctx.totalMass;
+		// The mass as the ranges stand, not as they stood when the run was
+		// made: `SolveRun.setRange` reweights them, for every run on the spot.
+		return sum / (matchupMass(ctx.players[0].weights, ctx.players[1].weights) * ctx.runoutWeight[0]);
 	};
 
 	return {

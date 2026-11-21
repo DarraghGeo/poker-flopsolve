@@ -84,6 +84,13 @@ export function spawnWorker(_setup: WorkerSetup, _onError: (error: Error) => voi
 }
 
 /**
+ * Nothing to do in a browser, whose engine threads `prepareThreads` started
+ * and keeps; Node starts a run's threads here, ahead of its need for them.
+ * @param _count idle engine threads wanted
+ */
+export function warmEngineThreads(_count: number): void {}
+
+/**
  * Hand one idle engine thread a solve's setup.
  * @param setup what the thread needs to join the solve
  * @param onError called if the thread dies, so the solve can stop waiting on it

@@ -1,0 +1,36 @@
+
+given (Td 9d 6h 2c), 4 threads
+variant            combos     storage  iterations   time    root play apart
+lite               350/437      11 MiB      280      1.6 s   
+again (tighter)    350/437      11 MiB      340      1.9 s   0.57 pts
+compress 0.005     127/119       4 MiB      260      0.6 s   1.23 pts
+compress 0.01      98/93         3 MiB      280      0.5 s   3.63 pts
+compress 0.02      67/66         2 MiB      260      0.4 s   4.09 pts
+root play of lite: 94.3 / 5.7 / 0.0 / 0.0 / 0.0   |   50.2 / 0.2 / 1.2 / 48.4 / 0.0
+
+given (As 7d 2c 7h), 4 threads
+variant            combos     storage  iterations   time    root play apart
+lite               270/475      10 MiB      440      2.4 s   
+again (tighter)    270/475      10 MiB      600      3.2 s   2.64 pts
+compress 0.005     87/123        3 MiB      360      0.7 s   1.35 pts
+compress 0.01      70/95         3 MiB      280      0.5 s   7.84 pts
+compress 0.02      53/60         2 MiB      360      0.4 s   2.80 pts
+root play of lite: 97.8 / 2.1 / 0.0 / 0.0 / 0.0   |   70.9 / 6.5 / 0.1 / 22.6 / 0.0
+
+given (Qs 8s 4s 2h), 4 threads
+variant            combos     storage  iterations   time    root play apart
+lite               343/481       6 MiB      320      1.3 s   
+again (tighter)    343/481       6 MiB      420      1.7 s   0.56 pts
+compress 0.005     158/190       3 MiB      320      0.7 s   1.66 pts
+compress 0.01      128/153       2 MiB      320      0.6 s   1.11 pts
+compress 0.02      96/117        2 MiB      280      0.4 s   0.76 pts
+root play of lite: 97.7 / 1.7 / 0.5 / 0.0 / 0.0   |   57.9 / 0.8 / 20.3 / 21.0 / 0.0
+
+given (8h 8d 3c Kc), 4 threads
+variant            combos     storage  iterations   time    root play apart
+lite               366/497       7 MiB      360      1.6 s   
+again (tighter)    366/497       7 MiB      540      2.3 s   1.69 pts
+compress 0.005     147/194       3 MiB      380      0.8 s   1.92 pts
+compress 0.01      124/149       2 MiB      380      0.6 s   3.74 pts
+compress 0.02      86/102        2 MiB      320      0.4 s   1.76 pts
+root play of lite: 99.9 / 0.0 / 0.0 / 0.0 / 0.0   |   49.6 / 5.8 / 21.9 / 22.7 / 0.0
