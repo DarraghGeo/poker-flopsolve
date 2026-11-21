@@ -622,7 +622,7 @@ tried and left out, with its numbers and issue, is in [docs/APPROXIMATIONS.md](d
 
 What stands between a call and solving: defining the spot, creating the run, and whatever the
 first iteration costs over an ordinary one. Measured in new Node processes on the bench spots
-(`bench/startup/measure.ts`; milliseconds, medians; "before" is 0.5.0-beta.2):
+(`bench/startup/measure.ts`; milliseconds, medians; "before" is the same build without this work):
 
 | spot | cold, before | cold | hot, before | hot |
 |---|---|---|---|---|
