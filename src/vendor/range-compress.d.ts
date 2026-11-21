@@ -20,7 +20,8 @@ declare const RangeCompress: {
 	compressBoth(options: {
 		readonly oop: readonly WeightedHand[];
 		readonly ip: readonly WeightedHand[];
-		readonly flop: string;
+		/** Where the spot starts: three, four or five cards, e.g. "Td9d6h2c". */
+		readonly board: string;
 		readonly tolerance?: number;
 		readonly sizeOop?: number;
 		readonly sizeIp?: number;
