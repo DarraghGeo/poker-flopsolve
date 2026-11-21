@@ -310,19 +310,32 @@ warm start into a new run. It then solves as that warm start does, or faster:
 | Flop, hands added | 44 | 16 | 16 |
 | Flop, hands dropped | 44 | 24 | 24 |
 
-Hands can be reweighted or dropped freely. A hand can be added only where the spot kept
-storage for it: `oopReserve` and `ipReserve` name the hands a range may gain, and each costs
-what a held hand does, in memory and per iteration. The new range must keep the suit symmetries
-the spot folds runouts by (define the spot with `isomorphism: false` to be free of that).
-`runoutBuckets` stand as they are, since they were chosen by the hands the spot stores. The
-average strategy is not cleared, which would cost a pass over the storage; the iteration count
-resumes from 10 instead (`{ resume }` to choose), where DCFR's discounting shrinks the old
-range's share within a few iterations. A run with `algorithm: 'cfr+'`, which discounts nothing,
-keeps its count and has its average cleared: 25–100 iterations to 0.3% of pot against 105–185
-from cold on the bench river and turn. A range that adds a hand without storage, or breaks a
-symmetry, throws `RangeNotInPlaceError`: start a new run on it with `warmStart`. Every run built
-on the same spot object is reweighted with it. For Lite, [`openLite`](#a-range-slider-on-lite-openlite) wraps this with the
-settle rule.
+Hands can be reweighted or dropped freely, and a hand the spot stores can be added in place.
+For a hand it does not store, or a range that breaks a suit symmetry the spot folds runouts by,
+the run grows: behind the same `run` object it becomes a run on a spot that stores every hand
+it did and the new ones, started from its regrets, and goes on. So nothing needs reserving
+ahead. Growing costs a run's setup and a copy once; storing hands ahead (`oopReserve`,
+`ipReserve`) costs every iteration. Two hand classes added on the bench spots, one thread:
+
+| | grow: the change, then the re-solve | every hand stored ahead: the re-solve | first solve, grow against every hand |
+|---|---|---|---|
+| River, to 0.3% | 7 ms, then under 10 ms | under 10 ms | under 10 ms against 20 |
+| Turn, to 0.3% | 15 ms, then 0.29 s | 2.6 s | 0.66 s against 4.2 |
+| Flop, to 0.5% | 0.3 s, then 3.5 s | 10.8 s | 14 s against 90 |
+
+A reserve still saves that one pause where the hands a range will gain are few and known.
+`{ grow: false }` throws `RangeNotInPlaceError` instead of growing. After growing, `run.spot`
+and `run.solver` are the new run's, both runs' storage is held for the moment of the copy, and
+a symmetry once broken stays broken.
+
+`runoutBuckets` stand as they are in place, since they were chosen by the hands the spot
+stores. The average strategy is not cleared, which would cost a pass over the storage; the
+iteration count resumes from 10 instead (`{ resume }` to choose), where DCFR's discounting
+shrinks the old range's share within a few iterations. A run with `algorithm: 'cfr+'`, which
+discounts nothing, keeps its count and has its average cleared: 25–100 iterations to 0.3% of
+pot against 105–185 from cold on the bench river and turn. Every run built on the same spot
+object is reweighted with it. For Lite, [`openLite`](#a-range-slider-on-lite-openlite) wraps
+this with the settle rule.
 
 ## Re-solving from a node
 

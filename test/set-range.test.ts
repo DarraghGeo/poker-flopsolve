@@ -258,8 +258,8 @@ describe('setRange', () => {
 	it('says a range that needs a new run from one that is no range', () => {
 		const run = createRun(defineSpot(flop), ONE);
 		try {
-			expect(() => run.setRange(0, `${flop.oop as string},JJ`)).toThrow(RangeNotInPlaceError);
-			expect(() => run.setRange(0, 'AA,KK,QQ,AKs,AQs,KQs,76s,6d5d')).toThrow(RangeNotInPlaceError);
+			expect(() => run.setRange(0, `${flop.oop as string},JJ`, { grow: false })).toThrow(RangeNotInPlaceError);
+			expect(() => run.setRange(0, 'AA,KK,QQ,AKs,AQs,KQs,76s,6d5d', { grow: false })).toThrow(RangeNotInPlaceError);
 			let caught: unknown;
 			try {
 				run.setRange(0, 'Ts9s');
@@ -279,7 +279,7 @@ describe('setRange', () => {
 		try {
 			run.setRange(0, 'AA,QQ:0.01,JTs');
 			expect(run.spot.players[0].weights[combo('QsQh')]).toBe(0);
-			expect(() => run.setRange(0, 'AA,QQ:0.5,JTs')).toThrow(/no storage/);
+			expect(() => run.setRange(0, 'AA,QQ:0.5,JTs', { grow: false })).toThrow(/no storage/);
 		} finally {
 			run.close();
 		}
@@ -297,6 +297,94 @@ describe('setRange', () => {
 		}
 	});
 
+});
+
+describe('a run that grows', () => {
+	it.each([
+		['one thread, 64-bit', ONE],
+		['the default engine', {}],
+		['two threads', { workers: 2 }],
+		['16-bit storage', { workers: 1, precision: 'i16' }],
+		['CFR+', { workers: 1, algorithm: 'cfr+' }],
+	] as const)('takes hands it had no storage for, and solves them sooner than a new run: %s', (_, given) => {
+		const options: SolveOptions = given;
+		const turn: SpotConfig = { ...river, board: 'AsKh7d2c', maxRaises: 1 };
+		const run = createRun(defineSpot(turn), options);
+		const cold = createRun(defineSpot({ ...turn, oop: WIDE }), options);
+		try {
+			iterationsTo(run, 0.5);
+			const before = { solver: run.solver, spot: run.spot, completed: run.completed, total: run.totalIterations };
+			run.setRange(0, WIDE);
+			// A new run behind the same object, on a spot that stores the wider range.
+			expect(run.solver).not.toBe(before.solver);
+			expect(run.spot).not.toBe(before.spot);
+			expect(Array.from(run.spot.players[0].weights)).toEqual(Array.from(cold.spot.players[0].weights));
+			expect(run.spot.players[0].count).toBe(cold.spot.players[0].count);
+			expect(run.completed).toBe(before.completed);
+			expect(run.totalIterations).toBe(options.algorithm === 'cfr+' ? before.total : Math.min(before.total, RANGE_RESUME));
+			expect(run.warmStart?.averages).toBe(false);
+			const warm = iterationsTo(run, 0.5);
+			expect(warm).toBeLessThan(iterationsTo(cold, 0.5));
+			expect(run.completed).toBe(before.completed + warm);
+			// The way back is in place: everything it stored is still stored.
+			const grown = run.solver;
+			run.setRange(0, OOP);
+			expect(run.solver).toBe(grown);
+			expect(iterationsTo(run, 0.5)).toBeLessThan(100);
+		} finally {
+			run.close();
+			cold.close();
+		}
+	});
+
+	it('grows for a range that breaks a symmetry, and solves the game that range makes', () => {
+		const lopsided = `${flop.oop as string},AdQc`;
+		const run = createRun(defineSpot(flop), ONE);
+		const cold = createRun(defineSpot({ ...flop, oop: lopsided }), ONE);
+		try {
+			run.step(40);
+			const boards = run.spot.runouts.counts[2];
+			run.setRange(0, lopsided);
+			expect(run.spot.runouts.counts[2]).toBeGreaterThan(boards);
+			run.step(150);
+			cold.step(150);
+			expect(Math.abs(run.snapshot().ev(0) - cold.snapshot().ev(0))).toBeLessThan(0.3);
+			expect(run.exploitabilityPercent()).toBeLessThan(1);
+		} finally {
+			run.close();
+			cold.close();
+		}
+	});
+
+	it('changes nothing for a range that is none, or a spot that cannot be', () => {
+		const run = createRun(defineSpot({ ...river, maxCombos: 400 }), ONE);
+		try {
+			run.step(10);
+			const { solver } = run;
+			const before = run.exploitabilityPercent();
+			// Nothing off the board: refused as a range, not grown for.
+			expect(() => run.setRange(0, 'As7d')).toThrow(/empty/);
+			// Every hand at once is over the spot's own limit: the wider spot cannot be defined.
+			expect(() => run.setRange(0, new Float64Array(1326).fill(1))).toThrow(/limit/);
+			expect(run.solver).toBe(solver);
+			expect(run.exploitabilityPercent()).toBe(before);
+			expect(run.completed).toBe(10);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('leaves an analysis-only run as it is', () => {
+		const run = createRun(defineSpot(river), { analysisOnly: true });
+		try {
+			expect(() => run.setRange(0, WIDE)).toThrow(RangeNotInPlaceError);
+		} finally {
+			run.close();
+		}
+	});
+});
+
+describe('setRange, continued', () => {
 	it('follows a slider back and forth', () => {
 		const run = createRun(defineSpot({ ...river, oopReserve: WIDE }), ONE);
 		try {
@@ -403,8 +491,8 @@ describe('setRange', () => {
 			run.step(10);
 			const before = run.exploitabilityPercent();
 			const weights = Array.from(run.spot.players[0].weights);
-			expect(() => run.setRange(0, WIDE)).toThrow(/has no storage.*oopReserve/);
-			expect(() => run.setRange(1, `${IP},65s`)).toThrow(/ipReserve/);
+			expect(() => run.setRange(0, WIDE, { grow: false })).toThrow(/has no storage.*oopReserve/);
+			expect(() => run.setRange(1, `${IP},65s`, { grow: false })).toThrow(/ipReserve/);
 			expect(() => run.setRange(0, '7d7h')).toThrow(/empty/);
 			expect(() => run.setRange(0, new Float64Array(10))).toThrow(/10 weights/);
 			expect(() => run.setRange(0, parseRange(OOP).fill(-1, 0, 1))).toThrow(/zero or more/);
@@ -413,7 +501,7 @@ describe('setRange', () => {
 			run.setRange(1, IP);
 			expect(run.exploitabilityPercent()).toBe(before);
 
-			expect(() => symmetric.setRange(0, 'AA,KK,QQ,AKs,AQs,KQs,76s,6d5d')).toThrow(/symmetry/);
+			expect(() => symmetric.setRange(0, 'AA,KK,QQ,AKs,AQs,KQs,76s,6d5d', { grow: false })).toThrow(/symmetry/);
 			symmetric.setRange(0, 'AA,KK,AKs,AQs,76s');
 
 			// Nothing to play once both players hold only the very same hand.

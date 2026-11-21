@@ -19,7 +19,7 @@ import { compressRanges } from './compress.ts';
 import { linesWithin } from './hybrid.ts';
 import { activeCombos, parseRange } from './range.ts';
 import type { ShareHistories, Solution, SolveOptions, SolveRun, SpotConfig, SubgameBetting } from './index.ts';
-import { createRun, defineSpot, RangeNotInPlaceError, runToStop, solve } from './index.ts';
+import { createRun, defineSpot, runToStop, solve } from './index.ts';
 import type { PresetChanges, SettingChange } from './presets.ts';
 import { presetChanges, samplingNote } from './presets.ts';
 import type { ResolvedSubgame, ResolveOptions } from './resolve.ts';
@@ -416,13 +416,13 @@ export interface LiteSession {
 	readonly current: LiteSolution;
 	/**
 	 * Change a player's range and settle the blueprint again from where it
-	 * stands. Any range is taken. Where every hand of it is stored and it
-	 * keeps the blueprint's suit symmetries, it changes in place
-	 * (`SolveRun.setRange`): the tree, the storage and every regret are
-	 * kept. Otherwise, and with `compressRanges`, which picks other hands
-	 * for every range, a new run is created on the new ranges and started
-	 * from this one's regrets (`SolveOptions.warmStart`), which costs a
-	 * run's setup and holds both blueprints for a moment. Either way it
+	 * stands. Any range is taken: in place where every hand of it is stored
+	 * and it keeps the blueprint's suit symmetries, and otherwise on a
+	 * wider run the blueprint's run grows into (`SetRangeOptions.grow`).
+	 * With `compressRanges`, which picks other hands for every range, a new
+	 * run is created on the new ranges and started from this one's regrets.
+	 * A new run costs a run's setup and holds both blueprints for a moment.
+	 * Either way it
 	 * settles in a fraction of the iterations a new `solveLite` takes. The
 	 * settle rule starts over, with `resettle` laid over the session's own.
 	 * Returns the new `current`; the one before it is stale.
@@ -542,47 +542,32 @@ export function openLite(config: SpotConfig, options: OpenLiteOptions = {}): Lit
 		},
 		setRange(player, range) {
 			const next: SpotConfig = { ...source, [player === 0 ? 'oop' : 'ip']: typeof range === 'string' ? range : range.slice() };
-			let inPlace = false;
 			if (!compress) {
-				// In place where every hand is stored and the symmetries hold; a
-				// range that is none throws here, with nothing changed.
-				try {
-					run.setRange(player, range, { resume: LITE_RESUME });
-					inPlace = true;
-				} catch (error) {
-					if (!(error instanceof RangeNotInPlaceError)) throw error;
-				}
-			}
-			if (!inPlace) {
-				// A new run on the new ranges, started from this one's regrets.
-				// Under `compressRanges` always: both ranges are compressed again,
-				// each against the other, and keep other hands. Otherwise it
-				// stores what this one does as well, so a hand once stored stays
-				// stored and the way back is in place.
-				const ranges = compress ? compressRanges(next, compress) : next;
-				const stored = (index: { readonly slot: Int32Array }): Float64Array => Float64Array.from(index.slot, (slot) => (slot >= 0 ? 1 : 0));
-				const blueprint: SpotConfig = {
-					...preset.config,
-					oop: ranges.oop,
-					ip: ranges.ip,
-					...(compress ? {} : { oopReserve: stored(run.spot.players[0]), ipReserve: stored(run.spot.players[1]) }),
-				};
+				// In place where every hand is stored and the symmetries hold, and
+				// on a wider run of its own making where not (`SetRangeOptions.grow`).
+				// A range that is none throws here, with nothing changed.
+				run.setRange(player, range, { resume: LITE_RESUME });
+			} else {
+				// A new run on the new ranges, started from this one's regrets:
+				// both ranges are compressed again, each against the other, and
+				// keep other hands.
+				const ranges = compressRanges(next, compress);
+				const blueprint: SpotConfig = { ...preset.config, oop: ranges.oop, ip: ranges.ip };
 				// Defined before anything is let go: a spot that cannot be throws here, with nothing changed.
 				const spot = defineSpot(blueprint);
 				// The old run's threads first, which the new one needs where
 				// threads are borrowed (a browser); its storage stays readable.
 				const count = resumed();
-				run.close();
-				let replacement: SolveRun;
+				const old = run;
+				old.close();
+				earlier += old.completed;
 				try {
-					replacement = createRun(spot, { ...preset.options, warmStart: run, warmIteration: count });
+					run = createRun(spot, { ...preset.options, warmStart: old, warmIteration: count });
 				} catch (error) {
 					// Back on the ranges it had: the same spot, so the average comes too.
-					run = createRun(run.spot, { ...preset.options, warmStart: run });
+					run = createRun(old.spot, { ...preset.options, warmStart: old });
 					throw error;
 				}
-				earlier += run.completed;
-				run = replacement;
 			}
 			source = next;
 			try {

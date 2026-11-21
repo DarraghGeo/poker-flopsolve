@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### A run grows for the hands a range adds
+
+- `run.setRange` no longer needs hands reserved ahead. For a hand the spot does not store, or a
+  range that breaks a suit symmetry it folds, the run becomes one on a wider spot, started from
+  its own regrets, behind the same `run` object. On the bench turn two classes added took 15 ms
+  and then 0.29 s to 0.3% of pot, where storing every hand ahead made the re-solve 2.6 s and the
+  first solve 4.2 s for 0.66; on the flop 0.3 s and 3.5 s, against 10.8 s and 90 s for 14.
+- `{ grow: false }` keeps the old behaviour and throws `RangeNotInPlaceError`.
+- `openLite` uses it, so a session's `setRange` is the run's own.
+
+### Measured and not kept: Lite without its first full walk (issue #164)
+
+- Under chance sampling the first iteration walks every deal. Letting it sample like any other
+  cut it from 190–450 ms to 40–65 ms and left the blueprint more exploitable throughout: 3.9–4.0%
+  of pot against 3.6–3.7 on Ks 9s 4s and 4.9 against 4.8 on Ts 9s 4h at the plateau, at two
+  sampling rates. The first walk stays.
+
 ## 0.5.0-beta.2
 
 The third beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.1.
