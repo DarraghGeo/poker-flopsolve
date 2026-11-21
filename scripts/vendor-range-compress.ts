@@ -2,10 +2,11 @@
  * Copy the range compressor in from its own repository.
  *
  * Purpose: `src/vendor/range-compress.js` is poker-rangecompress's
- * `dist/range-compress.js` made an ES module, without its worker pool and
- * editing session (this package calls only the synchronous `compressBoth`,
- * and has workers of its own), and indented with tabs as `npm run lint`
- * asks. Run this after that library changes:
+ * `dist/range-compress.js` made an ES module, without its worker pool,
+ * editing session and `rebuild` helper (this package calls only the
+ * synchronous `compressBoth`, has workers of its own, and rebuilds ranges
+ * on its own weights in `src/compress.ts`), and indented with tabs as
+ * `npm run lint` asks. Run this after that library changes:
  *
  *   node --import tsx scripts/vendor-range-compress.ts <path to poker-rangecompress>
  */
@@ -29,7 +30,7 @@ function cut(text: string, start: string, end: string): string {
 // The wrapper that picks CommonJS or a global becomes a plain function.
 const head = source.slice(source.indexOf('(function (root, factory) {'), source.indexOf("'use strict';") + "'use strict';".length);
 source = source.replace(head, 'function factory() {');
-// Workers and the editing session go; so does what the public surface says of them.
+// Workers, the editing session and the rebuild helper go; so does what the public surface says of them.
 source = cut(source, '  // ------------------------------------------------------------------ parallel versions', '  return {\n    compress, compressBoth,');
 const surface = source.slice(source.lastIndexOf('  return {\n    compress, compressBoth,'));
 source = source.replace(surface, [

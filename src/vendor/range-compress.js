@@ -681,6 +681,33 @@ function factory() {
 		return { path, ob, curve };
 	}
 
+	/** For every hand of the range, the surviving hands that play most like it, nearest first: the smallest
+	 *  weighted RMS difference in equity over the boards one card on (every turn of a flop spot, every river of a
+	 *  turn spot, the board itself on the river). A surviving hand is its own nearest. Measured against the
+	 *  difference over every river board, this picks stand-ins that rebuild a turn range just as well (9.99%
+	 *  against 9.91% of the weight on the wrong hands), at a fraction of the cost. */
+	function nearestKept(P, reps, top) {
+		const { n } = P, T = P.states.turns.length, byTurn = T > 0 && P.et && P.et.length === T * n; const arr = byTurn ? P.et : P.E, rows = byTurn ? T : P.R;
+		if (!arr) throw new Error('stand-ins need the equities of the next boards');
+		const w = new Float64Array(rows); for (let k = 0; k < rows; k++) w[k] = byTurn ? P.states.turns[k].w : P.states.rivers[k][2];
+		// one row of board equities per hand, side by side
+		const V = new Float32Array(n * rows); for (let k = 0; k < rows; k++) { const o = k * n; for (let i = 0; i < n; i++) V[i * rows + k] = arr[o + i]; }
+		const m = reps.length, kept = new Uint8Array(n); for (const r of reps) kept[r] = 1; const d = new Float64Array(m), idx = new Array(n), dist = new Array(n), want = Math.min(top, m);
+		for (let i = 0; i < n; i++) {
+			if (kept[i] && want === 1) { idx[i] = [i]; dist[i] = [0]; continue; }
+			const oi = i * rows;
+			for (let q = 0; q < m; q++) {
+				const oj = reps[q] * rows; let sum = 0, c = 0;
+				for (let k = 0; k < rows; k++) { const a = V[oi + k], b = V[oj + k]; if (a === a && b === b) { const x = a - b; sum += w[k] * x * x; c += w[k]; } }
+				d[q] = reps[q] === i ? -1 : c ? Math.sqrt(sum / c) : 1;
+			}
+			const ii = [], dd = [];
+			for (let t = 0; t < want; t++) { let bq = -1, bv = Infinity; for (let q = 0; q < m; q++) if (d[q] < bv) { bv = d[q]; bq = q; } ii.push(reps[bq]); dd.push(+Math.max(0, bv).toFixed(5)); d[bq] = Infinity; }
+			idx[i] = ii; dist[i] = dd;
+		}
+		return { idx, dist };
+	}
+
 	/** Turns a snapshot into a normal range (weights scaled so the largest is 1). With `top`, also lists for every
 	 *  original combo the surviving combos that stand in for it (nearest first). */
 	function materialize(P, snap, ob, opts = {}) {
@@ -688,6 +715,10 @@ function factory() {
 		hero.forEach((h, i) => { const x = snap.w[ob.orb[i]]; if (x > 0) { hands.push({ a: h.a, b: h.b, w: x }); reps.push(i); } });
 		let mx = 0; for (const h of hands) if (h.w > mx) mx = h.w; for (const h of hands) h.w /= mx;
 		if (!opts.top) return { hands, prefs: null, err: snap.err, scale: 1 / mx };
+		if (!opts.transport && !opts.sameClass && !opts.allRivers) {
+			const near = nearestKept(P, reps, opts.top);
+			return { hands, prefs: hero.map((h, i) => [hid(h), near.idx[i].map((r) => hid(hero[r])), near.dist[i]]), err: snap.err, scale: 1 / mx };
+		}
 		const D = distances(P);
 		const key = (i, r) => D[i * n + r] + (opts.sameClass && cls(hero[i]) !== cls(hero[r]) ? 10 : 0);
 		const prefs = hero.map((h, i) => { const top = reps.slice().sort((x, y) => key(i, x) - key(i, y)).slice(0, opts.top); return [hid(h), top.map((r) => hid(hero[r])), top.map((r) => +key(i, r).toFixed(5))]; });
@@ -778,7 +809,8 @@ function factory() {
 	 * @param {boolean} [o.exact]          run the elimination on the whole range at once (slower, same quality)
 	 * @param {number} [o.riverSample]     match on every n-th river board (default: automatic, at most every third;
 	 *                                     1 uses all of them). Turn and flop are always matched in full.
-	 * @param {number} [o.standIns]       also return, for every original combo, this many nearest surviving combos (slower)
+	 * @param {number} [o.standIns]       also return, for every original combo, this many surviving combos that play
+	 *                                     most like it, nearest first (itself, if it survived). `rebuild` uses them.
 	 * @returns {{range:string, pio:string, hands:Array, size:number, originalSize:number, mismatch:number, expectedFrequencyError:number, standIns:Object}}
 	 */
 	function compress(o) {

@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.5.0-beta.3
+
+The fourth beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.2.
+
+### A run grows for the hands a range adds
+
+- `run.setRange` no longer needs hands reserved ahead. For a hand the spot does not store, or a
+  range that breaks a suit symmetry it folds, the run becomes one on a wider spot, started from
+  its own regrets, behind the same `run` object. On the bench turn two classes added took 15 ms
+  and then 0.29 s to 0.3% of pot, where storing every hand ahead made the re-solve 2.6 s and the
+  first solve 4.2 s for 0.66; on the flop 0.3 s and 3.5 s, against 10.8 s and 90 s for 14.
+- Changed from 0.5.0-beta.2, where such a range threw `RangeNotInPlaceError`: `{ grow: false }`
+  keeps that. After a run grows, `run.spot` and `run.solver` are the wider run's, so code that
+  kept either should read it again.
+- `openLite` uses it, so a session's `setRange` is the run's own.
+
+### Measured and not kept: Lite without its first full walk (issue #164)
+
+- Under chance sampling the first iteration walks every deal. Letting it sample like any other
+  cut it from 190–450 ms to 40–65 ms and left the blueprint more exploitable throughout: 3.9–4.0%
+  of pot against 3.6–3.7 on Ks 9s 4s and 4.9 against 4.8 on Ts 9s 4h at the plateau, at two
+  sampling rates. The first walk stays.
+
+### A compressed blueprint's re-solves cover every hand again (issue #173)
+
+- `LiteSolution.resolve` on a blueprint solved with `compressRanges` now solves the subgame for
+  the caller's own ranges, every combination back in, where it solved for the kept
+  combinations alone and left 22–54% of the range without a turn strategy. Each combination
+  takes the play of the kept one nearest to it up to the street re-solved, and is solved in its
+  own right from there. `rebuild: false` gives the old re-solve; `measure` keeps it, since it
+  compares against the blueprint on its own ranges.
+- Against the same turn re-solve from a blueprint of the full ranges (three flops, wide ranges,
+  tolerance 0.01), a hand's root play differs by 5.3–6.9 points and 3–5% of the range is more
+  than 25 points off, where two plain blueprints are 1.8–3.1 points and 0% apart. The re-solve
+  takes what one from a full blueprint does.
+- A combination's play before that street is still borrowed: the blueprint's flop strategy has
+  nothing of its own for a hand it left out.
+- So the whole strategy is not hard to exploit, though it loses little to sound play. On another
+  solver, one flop, the full hand played this way gave up 0.06% of the pot against a reference
+  opponent, less than a solve of the full ranges to 1% of pot (0.19%), and was 6.3% exploitable,
+  more than one stopped at 5%.
+- `rebuildRanges(source, compressed, solution, node, board)` is the step on its own;
+  `compressRanges(spot, { standIns: true })` gives the map it needs (about 15 ms more), and
+  `resolveSubgame` takes `ranges`.
+- The vendored compressor is poker-rangecompress 0.3.0.
+
 ## 0.5.0-beta.2
 
 The third beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.1.

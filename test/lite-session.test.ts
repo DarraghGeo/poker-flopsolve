@@ -139,6 +139,7 @@ describe('openLite', () => {
 			const warm = session.setRange(0, WIDE);
 			const cold = solveLite({ ...small, oop: WIDE }, { ...ONE, sampling: false });
 			expect(warm.solution.spot.players[0].count).toBeGreaterThan(stored);
+			expect(warm.solution.iterations).toBe(session.iterations);
 			expect(warm.solution.stoppedAt).toBe('settled');
 			expect(warm.source.oop).toBe(WIDE);
 			expect(session.iterations).toBeGreaterThan(opened);
@@ -221,6 +222,7 @@ describe('openLite', () => {
 			const warm = session.setRange(0, next);
 			const cold = solveLite({ ...wide, oop: next }, options);
 			expect(warm.solution.stoppedAt).toBe('settled');
+			expect(warm.solution.iterations).toBe(session.iterations);
 			// The blueprint holds the new range compressed, as a new solveLite's does.
 			expect(Array.from(warm.solution.spot.players[0].weights)).toEqual(Array.from(cold.solution.spot.players[0].weights));
 			expect(Array.from(warm.solution.spot.players[1].weights)).toEqual(Array.from(cold.solution.spot.players[1].weights));
