@@ -284,6 +284,44 @@ const seven = solve(defineSpot({ ...config, board: 'As Kh 7d' }), {
 On the bench flop that reaches 0.5% of pot in 8 iterations instead of 52 (from AsQh7d,
 20). It needs the whole old solve: seeding only the flop's decisions saved at most 15%.
 
+### Changing a range in place
+
+A warm start builds a new run, which costs about two iterations of the spot before the first
+one runs: around a second on the bench flop. A range slider, which changes nothing but one
+player's weights, needs none of that. `run.setRange` reweights the live run where it stands:
+
+```ts
+const run = createRun(defineSpot({ ...config, oopReserve: widest }));   // every hand the slider can reach
+run.step(50);
+run.setRange(0, weights);   // a Float64Array of 1326 weights, or a range string
+run.step(20);               // keeps solving, from the regrets it had
+```
+
+Nothing is built or copied, so a call takes about 0.02 ms on any of the bench spots (0.04 ms
+given a string to parse), against 3–110 ms on river and turn and about 1.1 s on the flop for a
+warm start into a new run. It then solves as that warm start does, or faster:
+
+| To 0.3% of pot (flop: 0.5%) | From scratch | `warmStart` | `setRange` |
+|---|---|---|---|
+| River, hands added | 60 iterations | 40 | 40 |
+| River, hands dropped | 70 | 45 | 45 |
+| Turn, hands added | 85 | 60 | 50 |
+| Turn, hands dropped | 85 | 60 | 50 |
+| Flop, hands added | 44 | 16 | 16 |
+| Flop, hands dropped | 44 | 24 | 24 |
+
+Hands can be reweighted or dropped freely. A hand can be added only where the spot kept
+storage for it: `oopReserve` and `ipReserve` name the hands a range may gain, and each costs
+what a held hand does, in memory and per iteration. The new range must keep the suit symmetries
+the spot folds runouts by (define the spot with `isomorphism: false` to be free of that).
+`runoutBuckets` stand as they are, since they were chosen by the hands the spot stores. The
+average strategy is not cleared, which would cost a pass over the storage; the iteration count
+resumes from 10 instead (`{ resume }` to choose), where DCFR's discounting shrinks the old
+range's share within a few iterations. A run with `algorithm: 'cfr+'` is refused, since it
+discounts nothing and would stay with the old range. Every run built on the same spot object is
+reweighted with it. For Lite, [`openLite`](#a-range-slider-on-lite-openlite) wraps this with the
+settle rule.
+
 ## Re-solving from a node
 
 Solve the whole spot with a coarse tree, then re-solve the street you are looking at
@@ -567,6 +605,8 @@ against the exact solve at equal iterations, root loss OOP / IP in % of pot (the
 | `approximations.currentProfileEv` | advanced | both | `analysisOnly` | no more than reading EVs; per-hand EVs often 2–4× closer at equal iterations |
 | `analysisOnly` | advanced | both, at 32 bits | `compactStorage`, `currentProfileEv` | loads a saved strategy; keeps no regrets |
 | `warmStart`, `warmCards` | advanced | both | — | see [Warm starts](#warm-starts) |
+| `oopReserve`, `ipReserve` | advanced | both | — | storage for hands `run.setRange` may add; see [Changing a range in place](#changing-a-range-in-place) |
+| `openLite` | preset | both | — | `solveLite` kept live for a range slider: a changed range settled again in 0.52–0.68× the time of a new `solveLite` over five moves, 0.31–0.61× for a two-class move, about as exploitable; the reserve costs 27–42% an iteration ([A range slider on Lite](#a-range-slider-on-lite-openlite)) |
 | `minWeight` | advanced | both | — | edits the ranges: 2–5% less storage, up to 15% less time on napkinpoker's spots |
 | `engine: 'js'` | advanced | JavaScript | — | the reference engine, about 2.4× slower; `precision: 'f64'` runs on it |
 | `isomorphism: false`, `simd: false`, `algorithm: 'cfr+'` | advanced | both | — | exact; off switches for comparison |
@@ -877,6 +917,56 @@ blueprint, and `resolve`, hold a strategy only for the combinations kept, each c
 weight of those dropped, and `exploitabilityInExact` covers only those: a combination left out
 keeps `exact`'s play. `compressRanges(spot)` gives the two compressed ranges on their own.
 `minWeight` is applied to the ranges as given, before compressing.
+
+#### A range slider on Lite (`openLite`)
+
+`solveLite` solves one pair of ranges and lets go of the run, so a page with a range slider
+solves the blueprint again from nothing on every move. `openLite` keeps the blueprint live:
+
+```ts
+import { openLite } from 'poker-flopsolve';
+
+const session = openLite({ ...spot, oopReserve: widest }, { workers: 4 });  // solves as solveLite does
+session.current;                              // a LiteSolution: .solution, .resolve(...)
+const next = session.setRange(0, range);      // settles again from where it stands
+session.refine(40);                           // more iterations while the slider is at rest
+session.close();
+```
+
+`setRange` changes the range in place (`run.setRange`, above), resumes the iteration count
+from 30 and runs the same settle rule, with the play before the move as its first reading.
+Measured on issue #47's betting and the bench ranges, 4 threads in Node, with out of position's
+range moved five times: two hand classes added, nine added, back to the start, two dropped, and a
+third of the range dropped (`bench/lite/slider.ts`):
+
+| flop | five moves, `setRange` | five `solveLite` | a move | iterations a move | less exploitable than `solveLite` | first solve |
+|---|---|---|---|---|---|---|
+| As Kh 7d | 95 s | 163 s | 12–27 s against 28–44 | 120–260 against 400–420 | 4 moves of 5 | 46 s against 30 |
+| Ts 9s 4h | 69 s | 103 s | 11–20 s against 19–25 | 140–280 against 320 | 5 of 5 | 24 s against 18 |
+| Ks 9s 4s | 27 s | 52 s | 3–8 s against 9–14 | 80–240 against 340–380 | 2 of 5 | 12 s against 10 |
+
+So a slider move settles in 0.52–0.68× the time of a new solve over the five, the two-class
+moves in 0.31–0.61× and the largest, a third of the range dropped, in 0.66–0.92×. What it
+settles on is about as good. Its exploitability in the blueprint's own game was 2.97–4.66% of
+pot against `solveLite`'s 3.16–5.45 on As Kh 7d and Ts 9s 4h, lower in 9 moves of 10, and
+3.64–6.38 against 3.63–4.63 on the monotone flop, where the three moves that dropped hands
+ended 0.6–1.8 higher. Against the new range's blueprint run to 1000 iterations, how often the
+range takes each root action was closer than `solveLite`'s in 11 moves of 15 (1.6–6.9 points off
+against 2.6–8.2). Hand by hand it was further off in 10 of 15, by 0.5–8 points. Part of that is
+the reserve, which changes the hands stored and so the runouts bucketed together: `solveLite`
+given the same reserve was itself further off than without it, by 0.1–6.6 points, in all 12
+moves where the reserve held more than the range.
+
+`oopReserve` and `ipReserve` name the widest ranges the slider can reach. A hand can be added
+only where the blueprint stores it, and a stored hand costs what a held one does: with the nine
+classes above in reserve an iteration cost 27–42% more and the first solve took 20–52% longer,
+which the first move repays. The
+runout buckets are chosen by the hands stored, so they hold for every range the session can
+take. Under the blueprint's shared river histories a reserved hand's river play is not trained
+until it has weight, so a move that adds hands has that to settle too. `compressRanges` is
+refused, as it picks its combinations for one range, and so is `algorithm: 'cfr+'`. Each
+`setRange` or `refine` makes the `LiteSolution` before it stale: it reads the session's live
+storage.
 
 A spot that starts on the turn or the river compresses too (issue #158): give the board's four or
 five cards and the ranges the players hold there. A turn is matched on its board and each river

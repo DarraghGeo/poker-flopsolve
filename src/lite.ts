@@ -19,7 +19,7 @@ import { compressRanges } from './compress.ts';
 import { linesWithin } from './hybrid.ts';
 import { activeCombos, parseRange } from './range.ts';
 import type { ShareHistories, Solution, SolveOptions, SolveRun, SpotConfig, SubgameBetting } from './index.ts';
-import { defineSpot, solve } from './index.ts';
+import { createRun, defineSpot, runToStop, solve } from './index.ts';
 import type { PresetChanges, SettingChange } from './presets.ts';
 import { presetChanges, samplingNote } from './presets.ts';
 import type { ResolvedSubgame, ResolveOptions } from './resolve.ts';
@@ -352,10 +352,19 @@ function nearest(row: readonly BetSize[], target: number): BetSize[] {
  */
 export function solveLite(config: SpotConfig, options: SolveLiteOptions = {}): LiteSolution {
 	const preset = litePreset(config, options);
-	const blueprint = preset.config;
+	return liteSolution(solve(defineSpot(preset.config), preset.options), config, preset.config, preset.changes, options);
+}
+
+/** A blueprint's solution with the re-solver for its later streets. */
+function liteSolution(
+	solution: Solution,
+	config: SpotConfig,
+	blueprint: SpotConfig,
+	changes: PresetChanges,
+	options: SolveLiteOptions,
+): LiteSolution {
 	const share = blueprint.shareHistories;
 	const kept = typeof share === 'object' ? [...(share.keepLines ?? [])] : [];
-	const solution = solve(defineSpot(blueprint), preset.options);
 	const subgameSolve = pick(options, ['workers', 'precision', 'wasmStorage']);
 	const { tree } = solution.spot;
 	const scale = solution.spot.chipScale;
@@ -364,7 +373,7 @@ export function solveLite(config: SpotConfig, options: SolveLiteOptions = {}): L
 		blueprint,
 		kept,
 		source: config,
-		changes: preset.changes,
+		changes,
 		resolve(node, board, resolveOptions) {
 			const round = tree.round[node];
 			// The caller's cuts below the node, re-rooted there as `subgameAt`
@@ -385,6 +394,155 @@ export function solveLite(config: SpotConfig, options: SolveLiteOptions = {}): L
 				betting: { ...bettingFrom(config, round), removeActions, ...resolveOptions.betting },
 				solve: { ...subgameSolve, ...resolveOptions.solve },
 			});
+		},
+	};
+}
+
+/**
+ * The iteration count a session's blueprint resumes from after a change of
+ * range (`SetRangeOptions.resume`): more than an exact solve's 10, which
+ * chance sampling made unstable.
+ */
+const LITE_RESUME = 30;
+
+/** A Lite blueprint kept live, so its ranges can change without solving it again; see {@link openLite}. */
+export interface LiteSession {
+	/**
+	 * The blueprint as it stands. It reads the session's live storage, so it
+	 * is good until the next `setRange`, and after `close` on this thread.
+	 */
+	readonly current: LiteSolution;
+	/**
+	 * Change a player's range and settle the blueprint again from where it
+	 * stands (`SolveRun.setRange`): the tree, the storage and every regret
+	 * are kept, so it settles in a fraction of the iterations a new
+	 * `solveLite` takes. The settle rule starts over, with `resettle` laid
+	 * over the session's own. Returns the new `current`; the one before it
+	 * is stale.
+	 *
+	 * @param player 0 out of position, 1 in position
+	 * @param range the whole new range; every hand of it must be in the
+	 *   range or the reserve the session was opened with
+	 * @throws as `SolveRun.setRange` does, changing nothing; or from the
+	 *   settling after it (a throwing `onProgress`, a failed thread), with
+	 *   the range changed and `current` the blueprint as far as it got
+	 */
+	setRange(player: 0 | 1, range: string | Float64Array): LiteSolution;
+	/**
+	 * Run `iterations` more on the range as it stands, with no stop: what a
+	 * page does while the slider is at rest, since a blueprint goes on
+	 * improving past its settle point. Returns the new `current`.
+	 */
+	refine(iterations: number): LiteSolution;
+	/** Iterations run since the session opened, over every range. */
+	readonly iterations: number;
+	/** Release the threads. `current` stays readable. */
+	close(): void;
+}
+
+/** Settings for {@link openLite}. */
+export interface OpenLiteOptions extends SolveLiteOptions {
+	/**
+	 * Changes to `settle` for the stop after a `setRange`. Default none:
+	 * the same rule, which with the play before the move as its first
+	 * reading can stop after two checks, 40 iterations. With `settle:
+	 * false` it is the whole rule for the moves, the first solve running to
+	 * `iterations`.
+	 */
+	readonly resettle?: SettleOptions;
+}
+
+/**
+ * {@link solveLite}, kept live for a range slider: solve the blueprint until
+ * its root play settles, then let `setRange` move either range and settle it
+ * again from there.
+ *
+ * Measured (`bench/lite/slider.ts`) on issue #47's betting and the bench
+ * ranges, 4 threads in Node, out of position's range moved five times (two
+ * classes added, nine added, back, two dropped, a third dropped), nine
+ * classes in reserve:
+ *
+ * | flop | five moves | five `solveLite` | a move | iterations a move | less exploitable | first solve |
+ * |---|---|---|---|---|---|---|
+ * | As Kh 7d | 95 s | 163 s | 12–27 s against 28–44 | 120–260 against 400–420 | 4 moves of 5 | 46 s against 30 |
+ * | Ts 9s 4h | 69 s | 103 s | 11–20 s against 19–25 | 140–280 against 320 | 5 of 5 | 24 s against 18 |
+ * | Ks 9s 4s | 27 s | 52 s | 3–8 s against 9–14 | 80–240 against 340–380 | 2 of 5 | 12 s against 10 |
+ *
+ * Exploitability in the blueprint's own game: 2.97–4.66% of pot against
+ * `solveLite`'s 3.16–5.45 on the first two, lower in 9 moves of 10; on the
+ * monotone flop the three moves that dropped hands ended 0.6–1.8 higher. The range's root action
+ * frequencies were closer to a 1000-iteration blueprint's than `solveLite`'s
+ * in 11 moves of 15; hand by hand they were further in 10, by 0.5–8 points,
+ * the reserve's different buckets being part of it. The reserve cost 27–42%
+ * an iteration.
+ *
+ * Give the widest ranges the slider can reach as `oopReserve` and
+ * `ipReserve` on `config`: a hand can be added only where the blueprint
+ * stores it, and a stored hand costs what a held one does. The runout
+ * buckets are chosen by the hands stored, so they hold for every range the
+ * session can take. `compressRanges` is refused, as it picks its
+ * combinations for one range, and `algorithm: 'cfr+'`, which `setRange`
+ * cannot move.
+ *
+ * @param config the caller's spot, full betting
+ * @param options `solveLite`'s, and `resettle`
+ * @throws with `compressRanges` or `algorithm: 'cfr+'`
+ */
+export function openLite(config: SpotConfig, options: OpenLiteOptions = {}): LiteSession {
+	if (options.compressRanges) {
+		throw new Error('openLite: compressRanges picks its combinations for one range, so a session whose ranges change cannot use it');
+	}
+	if (options.algorithm === 'cfr+') {
+		throw new Error("openLite: a range changes in place only under the default algorithm, 'dcfr' (`SolveRun.setRange`)");
+	}
+	const preset = litePreset(config, options);
+	const { settle, ...rest } = preset.options;
+	// The stop after a move: `resettle` over the session's own, or alone where that is off.
+	const resettle = settle || options.resettle ? { ...settle, ...options.resettle } : null;
+	// Validated before anything is solved.
+	if (resettle) settlePlan(resettle);
+	const run = createRun(defineSpot(preset.config), preset.options);
+	let source = config;
+	/** The blueprint as it stands. */
+	const reading = (solution: Solution): LiteSolution => liteSolution(solution, source, run.spot.source, preset.changes, options);
+	/** `solve`'s loop on the live run: to the cap, the target or the settle stop. */
+	const settleRun = (plan: SettleOptions | null | undefined): LiteSolution =>
+		reading(runToStop(run, plan ? { ...rest, settle: plan } : rest));
+
+	let current: LiteSolution;
+	try {
+		current = settleRun(settle);
+	} catch (error) {
+		run.close();
+		throw error;
+	}
+	return {
+		get current() {
+			return current;
+		},
+		get iterations() {
+			return run.completed;
+		},
+		setRange(player, range) {
+			run.setRange(player, range, { resume: LITE_RESUME });
+			source = { ...source, [player === 0 ? 'oop' : 'ip']: typeof range === 'string' ? range : range.slice() };
+			try {
+				current = settleRun(resettle);
+			} catch (error) {
+				// The range has changed all the same: `current` must not read the new storage as the old range's.
+				current = reading(run.snapshot([], 'iterations'));
+				throw error;
+			}
+			return current;
+		},
+		refine(count) {
+			if (!(Number.isInteger(count) && count > 0)) throw new Error(`refine: iterations must be a positive whole number; got ${count}`);
+			run.step(count);
+			current = reading(run.snapshot([], 'iterations'));
+			return current;
+		},
+		close() {
+			run.close();
 		},
 	};
 }

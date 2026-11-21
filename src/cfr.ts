@@ -32,7 +32,7 @@ import { NodeKind } from './tree.ts';
 
 /** Which combinations a player holds, and where each sits in storage. */
 export interface PlayerIndex {
-	/** Combinations with any weight, ascending. */
+	/** Combinations with any weight, and any held in reserve, ascending. */
 	readonly combos: Uint16Array;
 	readonly count: number;
 	/** Combination to storage slot, or -1. */
@@ -41,12 +41,17 @@ export interface PlayerIndex {
 	readonly weights: Float64Array;
 }
 
-/** Build a player's index from their range weights. */
-export function buildPlayerIndex(weights: Float64Array): PlayerIndex {
+/**
+ * Build a player's index from their range weights.
+ *
+ * @param reserve combinations to index although they weigh nothing, so a
+ *   later change of range can give them weight without moving any storage
+ */
+export function buildPlayerIndex(weights: Float64Array, reserve?: Float64Array): PlayerIndex {
 	const combos: number[] = [];
 	const slot = new Int32Array(COMBOS).fill(-1);
 	for (let combo = 0; combo < COMBOS; combo++) {
-		if (weights[combo] > 0) {
+		if (weights[combo] > 0 || (reserve !== undefined && reserve[combo] > 0)) {
 			slot[combo] = combos.length;
 			combos.push(combo);
 		}
@@ -363,7 +368,10 @@ export interface Context {
 	 * counted once while one reaching showdown is counted once per runout.
 	 */
 	readonly runoutWeight: Float64Array;
-	/** Total weighted mass of legal matchups; divides raw values into chips. */
+	/**
+	 * Total weighted mass of legal matchups, as the ranges stood when the
+	 * run was made; the solver divides by the mass as they stand.
+	 */
 	readonly totalMass: number;
 	/** Discounted CFR in place of CFR+; see `DCFR_ALPHA`. */
 	readonly dcfr: boolean;
@@ -1903,7 +1911,9 @@ export function makeSolver(ctx: Context): Solver {
 		const [from, count] = listOf(0, 0, traverser);
 		let sum = 0;
 		for (let i = 0; i < count; i++) sum += weights[lists.list[from + i]] * lists.multiplicity[from + i] * values[i];
-		return sum / ctx.totalMass;
+		// The mass as the ranges stand, not as they stood when the run was
+		// made: `SolveRun.setRange` reweights them, for every run on the spot.
+		return sum / (matchupMass(ctx.players[0].weights, ctx.players[1].weights) * ctx.runoutWeight[0]);
 	};
 
 	return {
