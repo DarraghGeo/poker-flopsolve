@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.5.0-beta.2
+
+The third beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.1.
 
 ### Startup
 
