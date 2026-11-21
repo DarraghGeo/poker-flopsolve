@@ -19,7 +19,9 @@ import type { RunoutMerge } from './runouts.ts';
 import { boardAtRound, enumerateRunouts, rankSwap, resolveBoard } from './runouts.ts';
 import { suitSymmetries } from './abstraction.ts';
 import { activeCombos, parseRange } from './range.ts';
+import type { ShowdownTable } from './showdown.ts';
 import { buildShowdownTable } from './showdown.ts';
+import type { HandSpace } from './hands.ts';
 import { buildHandSpace } from './hands.ts';
 import { createEngine, threadProfiles } from './engine.ts';
 import type { WasmStorage } from './engine.ts';
@@ -31,8 +33,8 @@ import { aliasHistories } from './history-merge.ts';
 import { betRows, DEFAULT_CHIP_SCALE, treeConfig } from './betting.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
-import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit } from './platform/node.ts';
-import type { CompactPlan, Context, Layout, PlayerIndex, RegretStore, RootValues, SamplingOptions, Solver, SumStore } from './cfr.ts';
+import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit, warmEngineThreads } from './platform/node.ts';
+import type { ActiveLists, CompactPlan, Context, Layout, PlayerIndex, RegretStore, RootValues, SamplingOptions, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
 	buildLayout,
@@ -636,7 +638,7 @@ export function defineSpot(config: SpotConfig): Spot {
 		config.runoutBuckets && board.length < 5
 			? rangeRankMerge(players, config.runoutBuckets === true ? DEFAULT_BUCKET_GAP : config.runoutBuckets)
 			: undefined;
-	const runouts = enumerateRunouts(board, symmetries, merge);
+	const runouts = runoutsFor(board, symmetries, merge);
 	// Kept for `setRange`, which must not break a symmetry the runouts fold by.
 	const symmetryCombos = (symmetries ?? []).map((map) => {
 		const image = new Uint16Array(COMBOS);
@@ -718,6 +720,71 @@ export const RANGE_RESUME = 10;
  * its changed ranges may have symmetries the spot was not built to fold.
  */
 const builtFrom = new WeakMap<Spot, SpotConfig>();
+
+/** The runouts last enumerated, and what they were enumerated from. */
+let keptRunouts: { key: string; runouts: Runouts } | null = null;
+
+/**
+ * `enumerateRunouts`, kept for the next spot on the same board with the same
+ * symmetries and buckets: a spot defined again with another pot, stack or
+ * betting, or with ranges that fold the same runouts, deals the same cards.
+ * One set is kept; `releaseSetupCache` lets it go.
+ */
+function runoutsFor(board: readonly number[], symmetries: readonly Uint8Array[] | undefined, merge: RunoutMerge | undefined): Runouts {
+	let key = `${board.join(',')}|${(symmetries ?? []).map((map) => map.join(',')).join(';')}|`;
+	if (merge) {
+		key += `${merge.maxGap}:`;
+		for (let a = 0; a < 13; a++) for (let b = 0; b < 13; b++) key += merge.ranks(a, b) ? '1' : '0';
+	}
+	if (keptRunouts?.key !== key) keptRunouts = { key, runouts: enumerateRunouts(board, symmetries, merge) };
+	return keptRunouts.runouts;
+}
+
+/** What a run looks up for every hand on every board, none of it depending on the tree. */
+interface SetupTables {
+	readonly showdown: ShowdownTable;
+	readonly active: ActiveLists;
+	readonly hands: HandSpace;
+}
+
+/** The tables last built, and the runouts and hands they were built for. */
+let keptTables: { runouts: Runouts; combos: readonly [Uint16Array, Uint16Array]; tables: SetupTables } | null = null;
+
+/**
+ * The showdown ranking, hand lists and hand-space maps of a spot. They
+ * depend on its runouts and on which hands each player stores, not on the
+ * tree, the weights or the storage, and building them is most of what a run
+ * costs before its first iteration; so the last set is kept, and a run on
+ * the same spot, or on one defined again with other betting or reweighted
+ * ranges, takes it as it is. Nothing writes to them. `releaseSetupCache`
+ * lets them go.
+ */
+function setupTables(spot: Spot, relevant: Uint8Array): SetupTables {
+	const [first, second] = [spot.players[0].combos, spot.players[1].combos];
+	const same = (a: Uint16Array, b: Uint16Array): boolean => a.length === b.length && a.every((combo, i) => combo === b[i]);
+	if (keptTables && keptTables.runouts === spot.runouts && same(keptTables.combos[0], first) && same(keptTables.combos[1], second)) {
+		return keptTables.tables;
+	}
+	// Let the old set go before the new one is built, so both are never held.
+	keptTables = null;
+	const showdown = buildShowdownTable(spot.runouts, relevant);
+	const active = buildActiveLists(spot.runouts, spot.players, showdown);
+	const hands = buildHandSpace(spot.runouts, spot.players, active);
+	keptTables = { runouts: spot.runouts, combos: [first, second], tables: { showdown, active, hands } };
+	return keptTables.tables;
+}
+
+/**
+ * Let go of what the last spot and run left for the next: the runouts, and
+ * the per-hand tables a run builds before its first iteration (a few MiB on
+ * narrow ranges, tens on wide ones). A spot defined or a run created
+ * afterwards builds its own again, which is all it costs. For a page that
+ * has finished solving and wants the memory back.
+ */
+export function releaseSetupCache(): void {
+	keptRunouts = null;
+	keptTables = null;
+}
 
 /** Whether some hand of `a` and some hand of `b` share no card. */
 function holdable(a: Float64Array, b: Float64Array): boolean {
@@ -1339,6 +1406,14 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	if (options.analysisOnly && options.approximations?.currentProfileEv) {
 		throw new Error('approximations.currentProfileEv needs regrets, and an analysisOnly run has none');
 	}
+	// Threads take as long to start as the tables below take to build, so the
+	// ones the engine is likely to want start now, beside that work. Whether
+	// it runs, and on how many, is settled further down; a thread started for
+	// nothing waits for the next run.
+	if (options.workers !== undefined && options.workers !== 1 && !options.analysisOnly && options.engine !== 'js' && options.simd !== false && options.precision !== 'f64') {
+		const likely = Math.min(options.workers === 'auto' ? defaultWorkerCount() : options.workers, threadLimit(true));
+		if (likely > 1 && Number.isInteger(likely)) warmEngineThreads(likely - 1);
+	}
 	// A saved strategy is loaded as float32 sums, so analysis stays there.
 	const maxBytes = spot.source.maxBytes ?? DEFAULT_MAX_BYTES;
 	const { bytes } = spot.estimate;
@@ -1365,14 +1440,12 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	for (const combo of spot.players[0].combos) relevant[combo] = 1;
 	for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
-	const showdown = buildShowdownTable(spot.runouts, relevant);
+	const { showdown, active, hands } = setupTables(spot, relevant);
 	const layoutAt = (at: Precision): Layout => buildLayout(
 		spot.tree, spot.runouts, spot.players, PRECISION_BYTES[at], spot.historyAlias, compact ?? undefined,
 	);
 	let layout = layoutAt(precision);
 	const weights = runoutWeights(spot.runouts);
-	const active = buildActiveLists(spot.runouts, spot.players, showdown);
-	const hands = buildHandSpace(spot.runouts, spot.players, active);
 	const samplingOptions = options.approximations?.chanceSampling;
 	// The plan reads only the layout's blocks, which do not depend on precision.
 	const samplingPlan = samplingOptions ? planSampling(spot.tree, spot.runouts, active, layout, samplingOptions) : undefined;

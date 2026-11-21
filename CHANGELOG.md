@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Startup
+
+- Less stands between a call and solving. Defining the spot, creating the run and the first
+  iteration's extra cost took 827 ms on the bench flop on 4 threads and take 254, or 45 for a
+  later solve of the same board and hands; 618 and 156 (87) on one thread; 1644 and 620 (442)
+  for the Lite blueprint on As Kh 7d. Results are the same, bit for bit.
+- The per-hand tables are built about five times faster, and the last set is kept for a spot
+  defined again on the same board with the same hands. `releaseSetupCache()` lets it go.
+- In Node a run's threads start beside its setup and wait 30 seconds for the next run when it
+  closes; `enableThreads(n)` starts them ahead and keeps them.
+- The engine's storage is written once before the first iteration, a share a thread, instead
+  of being mapped by every thread at once during it.
+
 ## 0.5.0-beta.2
 
 The third beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.1.
