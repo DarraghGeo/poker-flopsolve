@@ -122,7 +122,7 @@ let generation = Atomics.load(control, CONTROL.generation);
 Atomics.add(control, CONTROL.ready, 1);
 Atomics.notify(control, CONTROL.ready);
 
-let latest = 0;
+let latest = -1;
 for (;;) {
 	Atomics.wait(control, CONTROL.generation, generation);
 	generation = Atomics.load(control, CONTROL.generation);
@@ -134,8 +134,10 @@ for (;;) {
 	// The count went back (`SolveRun.setRange`), so a shared block's last
 	// discount is an iteration it will pass again.
 	if (mode === Mode.Train) {
-		if (iterWeight < latest) ctx.discounted?.fill(0);
-		latest = iterWeight;
+		// A solve's traversals only ever count up: an iteration's two, then the next's.
+		const order = iterWeight * 2 + traverser;
+		if (order <= latest) ctx.discounted?.fill(0);
+		latest = order;
 	}
 
 	try {

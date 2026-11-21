@@ -317,8 +317,10 @@ the spot folds runouts by (define the spot with `isomorphism: false` to be free 
 `runoutBuckets` stand as they are, since they were chosen by the hands the spot stores. The
 average strategy is not cleared, which would cost a pass over the storage; the iteration count
 resumes from 10 instead (`{ resume }` to choose), where DCFR's discounting shrinks the old
-range's share within a few iterations. For Lite, [`openLite`](#a-range-slider-on-lite-openlite)
-wraps this with the settle rule.
+range's share within a few iterations. A run with `algorithm: 'cfr+'` is refused, since it
+discounts nothing and would stay with the old range. Every run built on the same spot object is
+reweighted with it. For Lite, [`openLite`](#a-range-slider-on-lite-openlite) wraps this with the
+settle rule.
 
 ## Re-solving from a node
 
@@ -960,7 +962,9 @@ only where the blueprint stores it, and a stored hand costs what a held one does
 classes above in reserve an iteration cost 27–42% more and the first solve took 20–52% longer,
 which the first move repays. The
 runout buckets are chosen by the hands stored, so they hold for every range the session can
-take. `compressRanges` is refused, as it picks its combinations for one range. Each
+take. Under the blueprint's shared river histories a reserved hand's river play is not trained
+until it has weight, so a move that adds hands has that to settle too. `compressRanges` is
+refused, as it picks its combinations for one range, and so is `algorithm: 'cfr+'`. Each
 `setRange` or `refine` makes the `LiteSolution` before it stale: it reads the session's live
 storage.
 

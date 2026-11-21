@@ -23,6 +23,9 @@ The third beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0
   costs about two iterations of the spot. It keeps the regrets and resumes the iteration count
   (from 10, `RANGE_RESUME`; `openLite` resumes from 30, as chance sampling was unstable at 10).
   The range must keep the suit symmetries the spot folds runouts by; runout buckets stand.
+  A CFR+ run is refused.
+- `runToStop(run, options)` runs a live run as `solve` runs its own: to the iteration cap, the
+  target or the settle stop.
 
 ### `compressRanges` on a spot that starts on the turn or the river (issue #158)
 

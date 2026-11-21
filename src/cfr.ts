@@ -368,8 +368,11 @@ export interface Context {
 	 * counted once while one reaching showdown is counted once per runout.
 	 */
 	readonly runoutWeight: Float64Array;
-	/** Total weighted mass of legal matchups; divides raw values into chips. */
-	totalMass: number;
+	/**
+	 * Total weighted mass of legal matchups, as the ranges stood when the
+	 * run was made; the solver divides by the mass as they stand.
+	 */
+	readonly totalMass: number;
 	/** Discounted CFR in place of CFR+; see `DCFR_ALPHA`. */
 	readonly dcfr: boolean;
 	/**
@@ -1908,7 +1911,9 @@ export function makeSolver(ctx: Context): Solver {
 		const [from, count] = listOf(0, 0, traverser);
 		let sum = 0;
 		for (let i = 0; i < count; i++) sum += weights[lists.list[from + i]] * lists.multiplicity[from + i] * values[i];
-		return sum / ctx.totalMass;
+		// The mass as the ranges stand, not as they stood when the run was
+		// made: `SolveRun.setRange` reweights them, for every run on the spot.
+		return sum / (matchupMass(ctx.players[0].weights, ctx.players[1].weights) * ctx.runoutWeight[0]);
 	};
 
 	return {

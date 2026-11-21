@@ -100,7 +100,9 @@ export interface SpotConfig {
 	 * building anything: a range, of which only the hands matter, not their
 	 * weights. Every hand a range slider can reach belongs here. A reserved
 	 * hand costs what a held one does, in memory and per iteration, and is
-	 * solved all along, so it has a strategy the moment it gets weight.
+	 * solved all along, so it has a strategy the moment it gets weight;
+	 * except at nodes that share storage (`shareHistories`), whose updates
+	 * are weighted by the hand's own reach, so there it starts from nothing.
 	 * Unset, only the range's own hands are stored, and `setRange` can
 	 * reweight or drop them but add none.
 	 */
@@ -717,6 +719,20 @@ export const RANGE_RESUME = 10;
  */
 const builtFrom = new WeakMap<Spot, SpotConfig>();
 
+/** Whether some hand of `a` and some hand of `b` share no card. */
+function holdable(a: Float64Array, b: Float64Array): boolean {
+	for (let i = 0; i < COMBOS; i++) {
+		if (!(a[i] > 0)) continue;
+		const [c, d] = [COMBO_CARDS[i * 2], COMBO_CARDS[i * 2 + 1]];
+		for (let j = 0; j < COMBOS; j++) {
+			if (!(b[j] > 0)) continue;
+			const [e, f] = [COMBO_CARDS[j * 2], COMBO_CARDS[j * 2 + 1]];
+			if (c !== e && c !== f && d !== e && d !== f) return true;
+		}
+	}
+	return false;
+}
+
 /** Each suit symmetry a spot's runouts fold by, the identity aside, as the hand each hand maps to. */
 const spotSymmetries = new WeakMap<Spot, readonly Uint16Array[]>();
 
@@ -1268,17 +1284,23 @@ export interface SolveRun {
 	 * of pot (0.5% on the flop) in as few iterations as a `warmStart` into a
 	 * new run or fewer — 40–50 against 60–85 cold on river and turn, 16–24
 	 * against 44 on the flop — where resuming from 0 or keeping the count
-	 * did no better than cold. `totalIterations` resumes with it.
+	 * did no better than cold. `totalIterations` resumes with it. A run
+	 * with `algorithm: 'cfr+'` is refused: it discounts nothing, and
+	 * measured, 400 iterations of one range held it near that range's play
+	 * (3.7% of pot exploitable 200 iterations after the change, where a new
+	 * solve was at 0.03%).
 	 *
 	 * The spot is reweighted with the run: `spot.players` and `spot.source`
-	 * show the new range, for this run and any other built on the same spot.
+	 * show the new range, for this run and any other built on the same spot,
+	 * which then solves and measures the new range too, its own count and
+	 * average left as they were.
 	 * A snapshot taken before the change is stale; take a fresh one.
 	 *
 	 * @param player 0 out of position, 1 in position
 	 * @param range the whole new range, as `SpotConfig.oop` takes one; an
 	 *   array of weights skips the parsing a string costs
 	 * @param options `resume`, the iteration count to resume from
-	 * @throws if the range is empty, adds a hand without storage, breaks a
+	 * @throws on a CFR+ run, or if the range is empty, adds a hand without storage, breaks a
 	 *   symmetry, or leaves no pair of hands the players can hold together;
 	 *   nothing has changed then
 	 */
@@ -1569,6 +1591,12 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			if (options.resume !== undefined && !(Number.isInteger(options.resume) && options.resume >= 0)) {
 				throw new Error(`setRange: resume must be a whole number of iterations; got ${options.resume}`);
 			}
+			if (!ctx.dcfr) {
+				throw new Error(
+					"setRange: algorithm 'cfr+' discounts neither its regrets nor its average, so it would stay with the old range; " +
+						"use the default 'dcfr', or solve the new range in a new run",
+				);
+			}
 			const given = typeof range === 'string' ? parseRange(range) : range;
 			if (given.length !== COMBOS) {
 				throw new Error(`setRange: the range has ${given.length} weights; one per combination is ${COMBOS}`);
@@ -1584,6 +1612,8 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			for (let combo = 0; combo < COMBOS; combo++) {
 				let weight = given[combo];
 				if (!(weight >= 0)) throw new Error(`setRange: a weight is ${weight}; weights are zero or more`);
+				// The floor first, as `defineSpot` applies it: a hand under it was never stored.
+				if (weight < floor) weight = 0;
 				if (weight > 0 && index.slot[combo] < 0) {
 					if (!blocked(COMBO_CARDS[combo * 2]) && !blocked(COMBO_CARDS[combo * 2 + 1])) {
 						throw new Error(
@@ -1591,8 +1621,6 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 								`a hand can be added only if the range or \`${player === 0 ? 'oopReserve' : 'ipReserve'}\` held it when the spot was defined`,
 						);
 					}
-					weight = 0;
-				} else if (weight < floor) {
 					weight = 0;
 				}
 				if (weight > 0) live++;
@@ -1609,12 +1637,11 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 					}
 				}
 			}
-			const mass = player === 0
-				? matchupMass(nextRange, spot.players[1].weights)
-				: matchupMass(spot.players[0].weights, nextRange);
-			if (!(mass > 0)) throw new Error('setRange: no hand of this range can be held against the other range');
+			// Counted pair by pair: the mass, summed by inclusion-exclusion, leaves a rounding residue for none.
+			if (!holdable(nextRange, spot.players[1 - player].weights)) {
+				throw new Error('setRange: no hand of this range can be held against the other range');
+			}
 			index.weights.set(nextRange);
-			ctx.totalMass = mass * weights[0];
 			// The source names every stored hand as reserved, so a spot defined
 			// from it stores the hands this one does whatever the range dropped.
 			// The spot's own structure stays that of the configuration it was
@@ -1625,8 +1652,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 				? { ...spot.source, oop: nextRange.slice(), oopReserve: stored }
 				: { ...spot.source, ip: nextRange.slice(), ipReserve: stored };
 			// The count resumes early, so the discounting forgets the old range's average.
-			const resume = options.resume ?? RANGE_RESUME;
-			const resumed = Math.min(offset + completed, resume);
+			const resumed = Math.min(offset + completed, options.resume ?? RANGE_RESUME);
 			offset = resumed - completed;
 			// A shared block's last discount is an iteration the count will pass again.
 			ctx.discounted?.fill(0);
@@ -1899,25 +1925,42 @@ export function makeSumStore(precision: Precision, buffer: ArrayBuffer | SharedA
  * @param options solver tuning
  */
 export function solve(spot: Spot, options: SolveOptions = {}): Solution {
-	const iterations = options.iterations ?? 500;
-	const target = options.targetPercent ?? 0;
-	const fixed = options.exploitEvery ?? 0;
 	// Validated before any storage is taken.
-	const settle = options.settle ? settlePlan(options.settle) : null;
+	if (options.settle) settlePlan(options.settle);
 	const run = createRun(spot, options);
-	const history: Progress[] = [];
-	// A coarse start solves inside createRun, and that is solving time too.
-	const started = Date.now() - (coarseMs.get(run.solver) ?? 0);
-	// Where DCFR's count stands before this run's first iteration, for
-	// predicting the target; only a coarse start shifts it, as a warm start's
-	// checks were always scheduled from zero.
-	const before = coarseMs.has(run.solver) ? run.totalIterations : 0;
-
 	try {
-		return runAll();
+		return runToStop(run, options);
 	} finally {
 		run.close();
 	}
+}
+
+/**
+ * Run a live run as `solve` runs its own: `iterations` more, or until
+ * `targetPercent` or the `settle` rule stops it, reporting to `onProgress`.
+ * The run stays open. On a run that has iterations behind it (after
+ * `setRange`, say) the settle rule takes the play as it stands as its first
+ * reading, so its first check already measures a movement.
+ *
+ * @param run from {@link createRun}
+ * @param options `iterations`, `targetPercent`, `exploitEvery`, `settle` and `onProgress`; the rest set the run up and are not read here
+ * @returns a snapshot at the stop
+ */
+export function runToStop(run: SolveRun, options: SolveOptions = {}): Solution {
+	const { spot } = run;
+	const iterations = options.iterations ?? 500;
+	const target = options.targetPercent ?? 0;
+	const fixed = options.exploitEvery ?? 0;
+	const settle = options.settle ? settlePlan(options.settle) : null;
+	const history: Progress[] = [];
+	// A coarse start solves inside createRun, and that is solving time too.
+	const coarse = run.completed === 0 ? coarseMs.get(run.solver) : undefined;
+	const started = Date.now() - (coarse ?? 0);
+	// Where DCFR's count stands before this call's first iteration, for
+	// predicting the target; only a coarse start shifts it, as a warm start's
+	// checks were always scheduled from zero.
+	const before = coarse !== undefined ? run.totalIterations : 0;
+	return runAll();
 
 	function runAll(): Solution {
 		if (settle) return runSettled(settle);
@@ -1979,6 +2022,7 @@ export function solve(spot: Spot, options: SolveOptions = {}): Solution {
 	/** `settle`'s loop: a cheap root-play check every `every` iterations. */
 	function runSettled(plan: Required<SettleOptions>): Solution {
 		const tracker = trackSettle(plan);
+		if (run.completed > 0) tracker.check(run.snapshot(), 0);
 		let stoppedAt: StopReason = 'iterations';
 		let done = 0;
 		while (done < iterations) {

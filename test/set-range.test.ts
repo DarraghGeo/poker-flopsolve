@@ -185,6 +185,58 @@ describe('setRange', () => {
 		}
 	});
 
+	it('reweights every run on the spot, each measuring the new range', () => {
+		const spot = defineSpot(river);
+		const a = createRun(spot, ONE);
+		const b = createRun(spot, ONE);
+		try {
+			a.step(30);
+			b.step(30);
+			a.setRange(0, TIGHT);
+			// The same storage and the same ranges: the same reading.
+			expect(Object.is(b.exploitabilityPercent(), a.exploitabilityPercent())).toBe(true);
+			expect(Object.is(b.snapshot().ev(0), a.snapshot().ev(0))).toBe(true);
+		} finally {
+			a.close();
+			b.close();
+		}
+	});
+
+	it('refuses a CFR+ run, which would stay with the old range', () => {
+		const run = createRun(defineSpot(river), { ...ONE, algorithm: 'cfr+' });
+		try {
+			run.step(5);
+			expect(() => run.setRange(0, TIGHT)).toThrow(/cfr\+/);
+			expect(run.totalIterations).toBe(5);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('drops a hand under minWeight as defineSpot dropped it', () => {
+		const config: SpotConfig = { ...river, oop: 'AA,QQ:0.01,JTs', minWeight: 0.05 };
+		const run = createRun(defineSpot(config), ONE);
+		try {
+			run.setRange(0, 'AA,QQ:0.01,JTs');
+			expect(run.spot.players[0].weights[combo('QsQh')]).toBe(0);
+			expect(() => run.setRange(0, 'AA,QQ:0.5,JTs')).toThrow(/no storage/);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('tells an unholdable pair of ranges whatever the weights', () => {
+		const run = createRun(defineSpot(river), ONE);
+		try {
+			run.setRange(0, 'TdTc:0.37');
+			expect(() => run.setRange(1, 'TdTc:0.11,Td9d:0.73,Tc9c:0.29')).toThrow(/held against/);
+			run.setRange(1, 'TdTc:0.11,9d8d:0.3');
+			expect(Number.isFinite(run.exploitabilityPercent())).toBe(true);
+		} finally {
+			run.close();
+		}
+	});
+
 	it('follows a slider back and forth', () => {
 		const run = createRun(defineSpot({ ...river, oopReserve: WIDE }), ONE);
 		try {

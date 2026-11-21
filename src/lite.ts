@@ -18,14 +18,14 @@ import type { CompressRangesOptions } from './compress.ts';
 import { compressRanges } from './compress.ts';
 import { linesWithin } from './hybrid.ts';
 import { activeCombos, parseRange } from './range.ts';
-import type { Progress, ShareHistories, Solution, SolveOptions, SolveRun, SpotConfig, StopReason, SubgameBetting } from './index.ts';
-import { createRun, defineSpot, solve } from './index.ts';
+import type { ShareHistories, Solution, SolveOptions, SolveRun, SpotConfig, SubgameBetting } from './index.ts';
+import { createRun, defineSpot, runToStop, solve } from './index.ts';
 import type { PresetChanges, SettingChange } from './presets.ts';
 import { presetChanges, samplingNote } from './presets.ts';
 import type { ResolvedSubgame, ResolveOptions } from './resolve.ts';
 import { resolveSubgame } from './resolve.ts';
 import type { SettleOptions } from './settle.ts';
-import { settlePlan, trackSettle } from './settle.ts';
+import { settlePlan } from './settle.ts';
 import type { BetSize, PerPlayer, RaiseSizes } from './tree.ts';
 import { mapPlayers, perRound, raisesPerRound } from './tree.ts';
 import { warmStart } from './warm.ts';
@@ -423,7 +423,9 @@ export interface LiteSession {
 	 * @param player 0 out of position, 1 in position
 	 * @param range the whole new range; every hand of it must be in the
 	 *   range or the reserve the session was opened with
-	 * @throws as `SolveRun.setRange` does, changing nothing
+	 * @throws as `SolveRun.setRange` does, changing nothing; or from the
+	 *   settling after it (a throwing `onProgress`, a failed thread), with
+	 *   the range changed and `current` the blueprint as far as it got
 	 */
 	setRange(player: 0 | 1, range: string | Float64Array): LiteSolution;
 	/**
@@ -443,7 +445,9 @@ export interface OpenLiteOptions extends SolveLiteOptions {
 	/**
 	 * Changes to `settle` for the stop after a `setRange`. Default none:
 	 * the same rule, which with the play before the move as its first
-	 * reading can stop after two checks, 40 iterations.
+	 * reading can stop after two checks, 40 iterations. With `settle:
+	 * false` it is the whole rule for the moves, the first solve running to
+	 * `iterations`.
 	 */
 	readonly resettle?: SettleOptions;
 }
@@ -477,68 +481,37 @@ export interface OpenLiteOptions extends SolveLiteOptions {
  * stores it, and a stored hand costs what a held one does. The runout
  * buckets are chosen by the hands stored, so they hold for every range the
  * session can take. `compressRanges` is refused, as it picks its
- * combinations for one range.
+ * combinations for one range, and `algorithm: 'cfr+'`, which `setRange`
+ * cannot move.
  *
  * @param config the caller's spot, full betting
  * @param options `solveLite`'s, and `resettle`
- * @throws with `compressRanges`
+ * @throws with `compressRanges` or `algorithm: 'cfr+'`
  */
 export function openLite(config: SpotConfig, options: OpenLiteOptions = {}): LiteSession {
 	if (options.compressRanges) {
 		throw new Error('openLite: compressRanges picks its combinations for one range, so a session whose ranges change cannot use it');
 	}
+	if (options.algorithm === 'cfr+') {
+		throw new Error("openLite: a range changes in place only under the default algorithm, 'dcfr' (`SolveRun.setRange`)");
+	}
 	const preset = litePreset(config, options);
-	const { iterations = 2000, settle, targetPercent = 0, onProgress } = preset.options;
-	const resettle = settle ? { ...settle, ...options.resettle } : null;
+	const { settle, ...rest } = preset.options;
+	// The stop after a move: `resettle` over the session's own, or alone where that is off.
+	const resettle = settle || options.resettle ? { ...settle, ...options.resettle } : null;
+	// Validated before anything is solved.
+	if (resettle) settlePlan(resettle);
 	const run = createRun(defineSpot(preset.config), preset.options);
 	let source = config;
-
-	/** `solve`'s loops, on the live run: to `iterations`, or until settled or on target. */
-	const settleRun = (plan: SettleOptions | null): LiteSolution => {
-		const started = Date.now();
-		const history: Progress[] = [];
-		let stoppedAt: StopReason = 'iterations';
-		if (!plan) {
-			run.step(iterations);
-		} else {
-			const every = settlePlan(plan).every;
-			const tracker = trackSettle(plan);
-			// After a change of range the play it had is the first reading, so
-			// the first check already measures how far the new range moved it.
-			if (run.completed > 0) tracker.check(run.snapshot(), 0);
-			let done = 0;
-			while (done < iterations) {
-				const until = Math.min(done + every, iterations);
-				// A short last step moves the play less; it is not a check.
-				const full = until - done === every;
-				run.step(until - done);
-				done = until;
-				const measured = run.snapshot();
-				const settled = full && tracker.check(measured, done);
-				const info: Progress = {
-					iteration: done,
-					exploitability: targetPercent > 0 ? measured.exploitability() : Number.NaN,
-					elapsedMs: Date.now() - started,
-					movement: full ? tracker.movement : Number.NaN,
-				};
-				history.push(info);
-				onProgress?.(info);
-				if (targetPercent > 0 && measured.exploitabilityPercent() <= targetPercent) {
-					stoppedAt = 'target';
-					break;
-				}
-				if (settled) {
-					stoppedAt = 'settled';
-					break;
-				}
-			}
-		}
-		return liteSolution(run.snapshot(history, stoppedAt), source, run.spot.source, preset.changes, options);
-	};
+	/** The blueprint as it stands. */
+	const reading = (solution: Solution): LiteSolution => liteSolution(solution, source, run.spot.source, preset.changes, options);
+	/** `solve`'s loop on the live run: to the cap, the target or the settle stop. */
+	const settleRun = (plan: SettleOptions | null | undefined): LiteSolution =>
+		reading(runToStop(run, plan ? { ...rest, settle: plan } : rest));
 
 	let current: LiteSolution;
 	try {
-		current = settleRun(settle || null);
+		current = settleRun(settle);
 	} catch (error) {
 		run.close();
 		throw error;
@@ -553,13 +526,19 @@ export function openLite(config: SpotConfig, options: OpenLiteOptions = {}): Lit
 		setRange(player, range) {
 			run.setRange(player, range, { resume: LITE_RESUME });
 			source = { ...source, [player === 0 ? 'oop' : 'ip']: typeof range === 'string' ? range : range.slice() };
-			current = settleRun(resettle);
+			try {
+				current = settleRun(resettle);
+			} catch (error) {
+				// The range has changed all the same: `current` must not read the new storage as the old range's.
+				current = reading(run.snapshot([], 'iterations'));
+				throw error;
+			}
 			return current;
 		},
 		refine(count) {
 			if (!(Number.isInteger(count) && count > 0)) throw new Error(`refine: iterations must be a positive whole number; got ${count}`);
 			run.step(count);
-			current = liteSolution(run.snapshot([], 'iterations'), source, run.spot.source, preset.changes, options);
+			current = reading(run.snapshot([], 'iterations'));
 			return current;
 		},
 		close() {

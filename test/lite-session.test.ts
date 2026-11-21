@@ -145,7 +145,55 @@ describe('openLite', () => {
 		}
 	});
 
-	it('refuses compressRanges', () => {
+	it('stops on a target and reports progress without a settle rule, as solveLite does', () => {
+		const seen: number[] = [];
+		const options = { workers: 1, settle: false, iterations: 300, targetPercent: 50, onProgress: (info: { iteration: number }) => seen.push(info.iteration) } as const;
+		const session = openLite(small, options);
+		try {
+			const lite = solveLite(small, { ...options, onProgress: undefined });
+			expect(session.current.solution.stoppedAt).toBe('target');
+			expect(session.iterations).toBe(lite.solution.iterations);
+			expect(seen.length).toBeGreaterThan(0);
+			const before = session.iterations;
+			expect(session.setRange(0, 'AA,KK,QQ,AKs,AQs,KQs,76s').solution.stoppedAt).toBe('target');
+			expect(session.iterations - before).toBeLessThan(300);
+		} finally {
+			session.close();
+		}
+	});
+
+	it('settles the moves by resettle alone when the first solve runs to a cap', () => {
+		const session = openLite(small, { workers: 1, settle: false, iterations: 300, resettle: { every: 10 } });
+		try {
+			expect(session.current.solution.stoppedAt).toBe('iterations');
+			expect(session.iterations).toBe(300);
+			expect(session.setRange(0, 'AA,KK,QQ,AKs,AQs,KQs,76s').solution.stoppedAt).toBe('settled');
+			expect(session.iterations).toBeLessThan(600);
+		} finally {
+			session.close();
+		}
+	});
+
+	it('refuses a bad resettle before solving, and keeps current true to the range if settling fails', () => {
+		expect(() => openLite(small, { ...ONE, resettle: { every: 0 } })).toThrow(/settle.every/);
+		let fail = false;
+		const session = openLite(small, { ...ONE, onProgress: () => {
+			if (fail) throw new Error('stopped by the page');
+		} });
+		try {
+			const before = session.current;
+			fail = true;
+			expect(() => session.setRange(0, 'AA,KK,QQ')).toThrow(/stopped by the page/);
+			expect(session.current).not.toBe(before);
+			expect(session.current.source.oop).toBe('AA,KK,QQ');
+			expect(Array.from(session.current.solution.spot.players[0].weights)).toEqual(Array.from(parseRange('AA,KK,QQ')));
+		} finally {
+			session.close();
+		}
+	});
+
+	it('refuses compressRanges and CFR+', () => {
 		expect(() => openLite(small, { ...ONE, compressRanges: true })).toThrow(/compressRanges/);
+		expect(() => openLite(small, { ...ONE, algorithm: 'cfr+' })).toThrow(/dcfr/);
 	});
 });
