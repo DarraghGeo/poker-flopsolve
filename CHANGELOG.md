@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### `compressRanges` on a spot that starts on the turn or the river (issue #158)
+
+- `compressRanges(spot)`, and Lite's option of the same name, take a board of four or five cards
+  with the ranges the players hold there; before, any board but a flop was refused. A turn is
+  matched on its board and each river that can follow. A river is also matched on what the other
+  player's hands face: how much of the range beats each, ties it and loses to it.
+- The default tolerance past the flop is 0.005. Under Lite on four turns (270–497 combinations a
+  side, 4 threads) that settled in 0.6–0.8 s against 1.3–2.4, in 3–4 MiB against 6–11, the root
+  play 1.2–1.9 points from Lite's on the full ranges, where two Lite solves were 0.6–2.6 apart.
+  At 0.01 it was 1.1–7.8 points off.
+- On a river there is nothing to save: Lite took 0.1 s on the full ranges.
+- The vendored compressor is poker-rangecompress 0.2.0. A flop compresses as before.
+
 ## 0.5.0-beta.1
 
 The second beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.0.

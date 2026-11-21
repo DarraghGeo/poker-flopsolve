@@ -1,7 +1,10 @@
 /**
  * Range compression (issue #156): replace each player's range by a smaller,
  * re-weighted subset of its combinations that keeps the range's distribution
- * of equity on the flop, on every turn and on the river boards.
+ * of equity on the board and on every board that can follow it. A spot that
+ * starts on the river has no board to follow, and there the subset also
+ * keeps what each of the other player's hands faces: how much of the range
+ * beats it, ties it and loses to it (issue #158).
  *
  * Purpose: a solve's time and memory grow with the combinations in play, and
  * a range can lose a third to a half of them before the range as a whole
@@ -25,10 +28,12 @@ export interface CompressRangesOptions {
 	/**
 	 * The most mismatch allowed: each range keeps the fewest combinations
 	 * whose equity distributions stay this close to the original's, as a
-	 * fraction of it. Default 0.01, which measured about one percentage
-	 * point of difference in how often the range takes an action; 0.005 was
-	 * indistinguishable from solving the full range again, 0.02 about two
-	 * points.
+	 * fraction of it. Default 0.01 on a flop, which measured about one
+	 * percentage point of difference in how often the range takes an
+	 * action; 0.005 was indistinguishable from solving the full range
+	 * again, 0.02 about two points. Default 0.005 on a spot that starts on
+	 * the turn or the river: under Lite the root play was 0.5–2.6 points
+	 * off there at 0.005 and up to 7.8 at 0.01 (`bench/range-compress`).
 	 */
 	readonly tolerance?: number;
 	/** Keep this many combinations of each range (or `[oop, ip]`) instead of working to `tolerance`. */
@@ -55,21 +60,23 @@ export interface CompressedRanges {
 }
 
 /**
- * Compress both ranges of a flop spot, each against the other's full range.
+ * Compress both ranges of a spot, each against the other's full range. The
+ * board is where the spot starts: a flop, a flop and turn, or all five cards.
+ * Give the ranges the players hold there.
  *
  * Combinations on the board and those under `minWeight` are left out first,
- * as `defineSpot` would. Ranges that are the same in every suit the flop
+ * as `defineSpot` would. Ranges that are the same in every suit the board
  * treats alike stay so, so the solver's suit symmetry still applies.
  *
- * @throws if the board is not a flop, or a range is empty
+ * @throws if the board is not 3, 4 or 5 cards, or a range is empty
  */
 export function compressRanges(
 	config: { readonly board: string; readonly oop: string | Float64Array; readonly ip: string | Float64Array; readonly minWeight?: number },
 	options: CompressRangesOptions = {},
 ): CompressedRanges {
 	const board = parseCards(config.board);
-	if (board.length !== 3) throw new Error(`Ranges are compressed for a flop; the board ${config.board} has ${board.length} cards`);
-	const tolerance = options.tolerance ?? 0.01;
+	if (board.length < 3 || board.length > 5) throw new Error(`A board has 3, 4 or 5 cards; got ${config.board}`);
+	const tolerance = options.tolerance ?? (board.length === 3 ? 0.01 : 0.005);
 	if (!(tolerance > 0 && tolerance < 1)) throw new Error(`tolerance must be above 0 and under 1; got ${tolerance}`);
 	const sizes = options.size === undefined ? undefined : typeof options.size === 'number' ? ([options.size, options.size] as const) : options.size;
 	if (sizes && !sizes.every((n) => Number.isInteger(n) && n >= 2)) throw new Error(`size must be whole numbers of at least 2; got ${String(options.size)}`);
@@ -101,7 +108,7 @@ export function compressRanges(
 		result = RangeCompress.compressBoth({
 			oop,
 			ip,
-			flop: board.map(formatCard).join(''),
+			board: board.map(formatCard).join(''),
 			...(sizes ? { sizeOop: Math.min(sizes[0], oop.length), sizeIp: Math.min(sizes[1], ip.length) } : { tolerance }),
 		});
 	} finally {

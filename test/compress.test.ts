@@ -1,6 +1,7 @@
 /**
  * Range compression (issue #156): `compressRanges` on its own, and as
- * `solveLite`'s `compressRanges` option.
+ * `solveLite`'s `compressRanges` option; on a flop, and on a spot that
+ * starts on the turn or the river (issue #158).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -72,8 +73,50 @@ describe('compressRanges', () => {
 		expect(compressRanges(spot).oop).toEqual(compressRanges(spot).oop);
 	});
 
-	it('refuses a turn or river board and bad settings', () => {
-		expect(() => compressRanges({ ...spot, board: 'Ts 9s 4h 2c' })).toThrow(/flop/);
+	it.each([
+		['turn', 'Ts 9s 4h 2c'],
+		['river', 'Ts 9s 4h 2c 2d'],
+	])('compresses the ranges of a spot that starts on the %s', (_street, cards) => {
+		const board = new Set(parseCards(cards));
+		const { oop, ip, report } = compressRanges({ ...spot, board: cards });
+		// Past the flop the default tolerance is 0.005.
+		expect(oop).toEqual(compressRanges({ ...spot, board: cards }, { tolerance: 0.005 }).oop);
+		[OOP, IP].forEach((text, p) => {
+			const before = parseRange(text);
+			const after = [oop, ip][p];
+			expect(report[p].from).toBe(live(before).filter((c) => !board.has(COMBO_CARDS[c * 2]) && !board.has(COMBO_CARDS[c * 2 + 1])).length);
+			expect(report[p].to).toBe(live(after).length);
+			expect(report[p].to).toBeLessThan(report[p].from);
+			expect(report[p].mismatch).toBeLessThanOrEqual(0.00505);
+			for (const combo of live(after)) {
+				expect(before[combo]).toBeGreaterThan(0);
+				expect(board.has(COMBO_CARDS[combo * 2]) || board.has(COMBO_CARDS[combo * 2 + 1])).toBe(false);
+			}
+			expect(Math.max(...after)).toBeCloseTo(1, 12);
+		});
+		// A looser tolerance keeps fewer, and a size is met.
+		const loose = compressRanges({ ...spot, board: cards }, { tolerance: 0.03 });
+		expect(loose.report[0].to).toBeLessThanOrEqual(report[0].to);
+		const sized = compressRanges({ ...spot, board: cards }, { size: [40, 30] }).report;
+		expect(sized[0].to).toBeLessThanOrEqual(40);
+		expect(sized[1].to).toBeLessThanOrEqual(30);
+		// The order the board's cards are written in changes nothing.
+		const shuffled = cards.split(' ').reverse().join(' ');
+		expect(compressRanges({ ...spot, board: shuffled }).oop).toEqual(oop);
+		expect(compressRanges({ ...spot, board: shuffled }).ip).toEqual(ip);
+	});
+
+	it('gives a river spot more to keep than its equity histogram', () => {
+		// Sixteen bins on one board would be met by a few dozen combinations at
+		// any tolerance; what the other player's hands face asks for more.
+		const tight = compressRanges({ ...spot, board: 'Ts 9s 4h 2c 2d' }, { tolerance: 0.0005 });
+		expect(tight.report[0].to).toBeGreaterThan(64);
+		expect(tight.report[1].to).toBeGreaterThan(64);
+	});
+
+	it('refuses a board that is not 3, 4 or 5 cards and bad settings', () => {
+		expect(() => compressRanges({ ...spot, board: 'Ts 9s' })).toThrow(/3, 4 or 5 cards/);
+		expect(() => compressRanges({ ...spot, board: 'Ts 9s 4h 2c 2d 2h' })).toThrow(/3, 4 or 5 cards/);
 		expect(() => compressRanges(spot, { tolerance: 0 })).toThrow(/tolerance/);
 		expect(() => compressRanges(spot, { size: 1 })).toThrow(/size/);
 		expect(() => compressRanges({ ...spot, oop: 'TsTh' })).toThrow(/empty/);
@@ -112,6 +155,16 @@ describe('solveLite with compressRanges', () => {
 		const exploitable = exploitabilityInExact(lite.solution, exact);
 		expect(exploitable).toBeGreaterThan(0);
 		expect(Number.isFinite(exploitable)).toBe(true);
+	});
+
+	it('compresses a turn spot under Lite and solves it', () => {
+		const turn: SpotConfig = { ...spot, board: 'Ts 9s 4h 2c', pot: 60, stack: 60, betSizes: [[1]], maxRaises: 1 };
+		const direct = compressRanges(turn, { tolerance: 0.03 });
+		expect(liteConfig(turn, { compressRanges: { tolerance: 0.03 } }).oop).toEqual(direct.oop);
+		const lite = solveLite(turn, { compressRanges: { tolerance: 0.03 }, iterations: 20, settle: false, sampling: false });
+		expect(lite.solution.spot.players[0].count).toBe(direct.report[0].to);
+		expect(lite.solution.spot.players[1].count).toBe(direct.report[1].to);
+		expect([...lite.solution.strategyAt(0, 0).combos].sort((a, b) => a - b)).toEqual(live(direct.oop));
 	});
 
 	it('takes a range on any scale', () => {

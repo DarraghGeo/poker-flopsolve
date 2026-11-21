@@ -554,7 +554,7 @@ against the exact solve at equal iterations, root loss OOP / IP in % of pot (the
 | `solveLite` / `litePreset` | preset | both | — | settled at 2.6× the iterations: 0.22× storage, 0.30× time, root 0.052 / 0.068, turn nodes 0.127, 1.89% exploitable ([Lite mode](#lite-mode-solvelite)) |
 | `largeTree` | preset | WebAssembly | — | at 4× the iterations: 0.38× storage, 0.58× time, root 0.057 / 0.289 (IP's cut 0.33 bet), 0.39% exploitable in its own tree ([Fitting a large tree](#fitting-a-large-tree-largetree)) |
 | `shareHistories` | preset-internal (lite) | both | — | 0.40× storage, 1.00× time, root 0.061 / 0.068, 1.89% exploitable |
-| `compressRanges` (`solveLite`, or on its own) | advanced (a lite option) | both | a board that is not a flop | edits the ranges. Wide weighted ranges: 0.42–0.72× storage, 0.46–0.60× time, root play 1.2–2.7 points off where two Lite solves were 1.8–3.0 apart. Narrow ranges: little, and slower on a monotone flop ([Lite mode](#lite-mode-solvelite)) |
+| `compressRanges` (`solveLite`, or on its own) | advanced (a lite option) | both | — | edits the ranges. Wide weighted ranges on a flop: 0.42–0.72× storage, 0.46–0.60× time, root play 1.2–2.7 points off where two Lite solves were 1.8–3.0 apart. Narrow ranges: little, and slower on a monotone flop. A spot that starts on the turn: 0.29–0.54× time, 1.2–1.9 points off (0.6–2.6); on the river, nothing to save ([Lite mode](#lite-mode-solvelite)) |
 | `keepBudget` (`solveLite`), `shareHistories.keepLines`, `linesWithin` | advanced (a lite option) | both | — | turn re-solve gain within 0.1–0.8% of the subgame pot of an unshared blueprint's, against 3.0–4.2% from plain sharing ([History sharing](#history-sharing)) |
 | `runoutBuckets` | preset-internal (lite) | both | — | folds nothing on napkinpoker's weighted ranges. Bench ranges, gap 3: 0.61× time, true exploitability 0.302 against 0.271 ([Runout buckets](#runout-buckets-and-coarse-start)) |
 | `approximations.chanceSampling` | preset-internal (both) | both, threaded | — | at 4× the iterations: 0.69× time, root 0.057 / 0.056, 0.60% exploitable |
@@ -877,6 +877,26 @@ blueprint, and `resolve`, hold a strategy only for the combinations kept, each c
 weight of those dropped, and `exploitabilityInExact` covers only those: a combination left out
 keeps `exact`'s play. `compressRanges(spot)` gives the two compressed ranges on their own.
 `minWeight` is applied to the ranges as given, before compressing.
+
+A spot that starts on the turn or the river compresses too (issue #158): give the board's four or
+five cards and the ranges the players hold there. A turn is matched on its board and each river
+that can follow. A river has no board to follow, so there each range also keeps what the other
+player's hands face: how much of it beats each, ties it and loses to it. The default tolerance
+is 0.005 past the flop. On four turns, with the ranges a flop solve arrives with after check, bet
+a third, call (270–497 combinations a side, issue #47's betting, 4 threads in Node):
+
+| board | Lite | tolerance 0.005 | tolerance 0.01 | two Lite solves apart |
+|---|---|---|---|---|
+| Td 9d 6h 2c | 1.6 s, 11 MiB | 0.6 s, 4 MiB, 127 / 119 combinations, root play 1.2 points off | 0.5 s, 98 / 93, 3.6 | 0.6 |
+| As 7d 2c 7h | 2.4 s, 10 MiB | 0.7 s, 3 MiB, 87 / 123, 1.4 | 0.5 s, 70 / 95, 7.8 | 2.6 |
+| Qs 8s 4s 2h | 1.3 s, 6 MiB | 0.7 s, 3 MiB, 158 / 190, 1.7 | 0.6 s, 128 / 153, 1.1 | 0.6 |
+| 8h 8d 3c Kc | 1.6 s, 7 MiB | 0.8 s, 3 MiB, 147 / 194, 1.9 | 0.6 s, 124 / 149, 3.7 | 1.7 |
+
+On the four rivers that follow (149–431 combinations) Lite took 0.1 s with the full ranges, so
+there is nothing to save; the root play was 0.5–2.6 points off at 0.005, where two Lite solves
+were 0.5–1.5 apart, and 1.6–4.6 at 0.01. The compressor's own comparison, on another solver with
+one bet size and averaged over every decision, put the range 0.5–0.8 points off on turns and
+0.1–0.5 on rivers at 0.005.
 
 Measured on that spot's betting, in headless Chromium. The time counts solving and the settle
 checks. Root play loss is what OOP's root mix and IP's mix after a check lose at the

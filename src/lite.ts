@@ -71,9 +71,10 @@ export interface LiteOptions {
 	/**
 	 * Compress both ranges before the blueprint is solved (`compressRanges`,
 	 * issue #156): each keeps the fewest of its combinations, re-weighted,
-	 * whose equity distributions on this flop's boards stay within
-	 * `tolerance` (default 0.01) of the full range's. Default off. True for
-	 * the defaults. A flop spot only.
+	 * whose equity distributions on this board and those that can follow it
+	 * stay within `tolerance` (default 0.01 on a flop, 0.005 on a spot that
+	 * starts later) of the full range's. Default off. True for the
+	 * defaults. On a river spot there is next to no time to save.
 	 *
 	 * It keeps how the range plays, not what one combination does: the
 	 * blueprint and its re-solves hold a strategy only for the combinations
@@ -463,7 +464,7 @@ export function litePreset(config: SpotConfig, options: SolveLiteOptions = {}): 
 	}
 	if (options.compressRanges) {
 		const count = (range: string | Float64Array): number => activeCombos(typeof range === 'string' ? parseRange(range) : range).length;
-		change('compressRanges', undefined, options.compressRanges, `compressed to ${count(blueprint.oop)} and ${count(blueprint.ip)} re-weighted combinations (out of position, in position) that keep each range's equity distribution on this flop's boards; approximate: the blueprint has no strategy for a combination left out, and what one combination does is not preserved`);
+		change('compressRanges', undefined, options.compressRanges, `compressed to ${count(blueprint.oop)} and ${count(blueprint.ip)} re-weighted combinations (out of position, in position) that keep each range's equity distribution on this board and those that can follow it; approximate: the blueprint has no strategy for a combination left out, and what one combination does is not preserved`);
 	}
 	if (sampling) change('approximations.chanceSampling', undefined, sampling, samplingNote(sampling));
 	if (settle) {

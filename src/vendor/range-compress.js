@@ -156,8 +156,18 @@ function factory() {
 	}
 
 	// ------------------------------------------------------------------ boards
-	/** Boards the solver will deal, with multiplicities. blankMask = suits dealt as one representative per rank. */
+	/** Boards the solver will deal, with multiplicities. `flop` is the starting board: a flop, a flop and turn, or
+	 *  all five cards. Every entry of `rivers` is a complete board, written as the two cards that follow the first
+	 *  three of the starting board; `base` is those first three and `fixed` the starting board's other cards.
+	 *  blankMask = suits dealt as one representative per rank (flops only). */
 	function deckStates(flop, blankMask = 0) {
+		if (flop.length > 3) {
+			if (blankMask) throw new Error('blankSuits is only for a three-card flop');
+			const base = flop.slice(0, 3), fixed = flop.slice(3), rivers = [];
+			if (fixed.length === 2) rivers.push([Math.min(fixed[0], fixed[1]), Math.max(fixed[0], fixed[1]), 1]);
+			else for (let y = 0; y < 52; y++) if (!flop.includes(y)) rivers.push([Math.min(fixed[0], y), Math.max(fixed[0], y), 1]);
+			return { rivers, turns: [], blankMask: 0, base, fixed };
+		}
 		const fm = new Set(flop); const blank = (s) => (blankMask >> s) & 1;
 		const fc = [0, 0, 0, 0]; flop.forEach((c) => fc[c & 3]++);
 		const pri = [0, 1, 2, 3].filter(blank).sort((x, y) => fc[x] - fc[y] || x - y);
@@ -176,7 +186,13 @@ function factory() {
 			}
 			turns.push({ card: t, w: wt, rivs });
 		}
-		return { rivers, turns, blankMask };
+		return { rivers, turns, blankMask, base: flop, fixed: [] };
+	}
+	/** Names board k of `st.rivers` by the cards dealt after the starting board, after the suit relabelling p. */
+	function dealtKey(st, k, p) {
+		const r = st.rivers[k], fx = st.fixed; let a = -1, b = -1;
+		for (let q = 0; q < 2; q++) { let c = r[q]; if (fx.length && fx.includes(c)) continue; if (p) c = (c & ~3) | p[c & 3]; if (a < 0) a = c; else b = c; }
+		return b < 0 ? a : a < b ? a * 52 + b + 52 : b * 52 + a + 52;
 	}
 
 	// ------------------------------------------------------------------ equities for both players in one pass
@@ -203,10 +219,10 @@ function factory() {
 		// mirrored board are those of the original with the hands relabelled, so only one board of each set is worked out.
 		const mir = [];
 		if (perms && perms.length > 1) {
-			const ridx = new Map(states.rivers.map((r, k) => [r[0] * 52 + r[1], k]));
+			const ridx = new Map(states.rivers.map((r, k) => [dealtKey(states, k), k]));
 			for (const p of perms) {
 				if (p[0] === 0 && p[1] === 1 && p[2] === 2 && p[3] === 3) continue;
-				const bmap = mk(Int32Array, R); for (let k = 0; k < R; k++) { let a = (states.rivers[k][0] & ~3) | p[states.rivers[k][0] & 3], b = (states.rivers[k][1] & ~3) | p[states.rivers[k][1] & 3]; if (a > b) { const t = a; a = b; b = t; } bmap[k] = ridx.get(a * 52 + b); }
+				const bmap = mk(Int32Array, R); for (let k = 0; k < R; k++) bmap[k] = ridx.get(dealtKey(states, k, p));
 				const hmap = S.map((s) => { const idx = new Map(s.hands.map((h, i) => [hid(h), i])); const out = mk(Int32Array, s.n); s.hands.forEach((h, i) => { let a = (h.a & ~3) | p[h.a & 3], b = (h.b & ~3) | p[h.b & 3]; if (a > b) { const t = a; a = b; b = t; } out[i] = idx.get(a * 52 + b); }); return out; });
 				mir.push({ bmap, hmap });
 			}
@@ -219,7 +235,7 @@ function factory() {
 		const t1 = mk(Int32Array, R).fill(-1), t2 = mk(Int32Array, R).fill(-1), u1 = mk(Float64Array, R, true), u2 = mk(Float64Array, R, true);
 		states.turns.forEach((t, ti) => { for (const [k, wu] of t.rivs) { if (t1[k] < 0) { t1[k] = ti; u1[k] = wu; } else { t2[k] = ti; u2[k] = wu; } } });
 		const fl = [0, 0, 0, 0]; let f1 = 0, f2 = 0, f3 = 0, f4 = 0;
-		for (const c of flop) { const bit = 1 << (c >> 2); fl[c & 3] |= bit; if (f3 & bit) f4 |= bit; else if (f2 & bit) f3 |= bit; else if (f1 & bit) f2 |= bit; else f1 |= bit; }
+		for (const c of states.base || flop) { const bit = 1 << (c >> 2); fl[c & 3] |= bit; if (f3 & bit) f4 |= bit; else if (f2 & bit) f3 |= bit; else if (f1 & bit) f2 |= bit; else f1 |= bit; }
 		const cv = mk(Int32Array, 91), keys = mk(Float64Array, DCAP), denseOf = mk(Uint8Array, DCAP);
 		const fStamp = mk(Int32Array, 8192).fill(-1), fSlot = mk(Uint8Array, 8192), lane = new Int32Array(4), ltC = mk(Float64Array, 52, true), eqC = mk(Float64Array, 52, true);
 		if (arena && WK.ex.equityPass) {
@@ -363,8 +379,8 @@ function factory() {
 		const perms = states.blankMask ? [[0, 1, 2, 3]] : flopPerms(flop);
 		const sym = perms.length > 1 && isSymmetric(hA, perms) && isSymmetric(hB, perms);
 		const eq = equitiesBoth(hA, hB, flop, states, wantA, wantB, sym ? perms : null, only);
-		const one = (h, e) => e && { hero: h, flop, states, n: h.length, R: states.rivers.length, E: e.E, ef: e.ef, et: e.et, boardSym: sym, perms, sums: e };
-		return [one(hA, eq[0]), one(hB, eq[1])];
+		const one = (h, e, v) => e && { hero: h, villain: v, flop, states, n: h.length, R: states.rivers.length, E: e.E, ef: e.ef, et: e.et, boardSym: sym, perms, sums: e };
+		return [one(hA, eq[0], hB), one(hB, eq[1], hA)];
 	}
 	let lastPair = null;
 	/** One range against the other (kept for the experiment scripts; the pair is computed once and reused). */
@@ -401,10 +417,10 @@ function factory() {
 		// river boards (optionally every rs-th one, weights rescaled); mirrored boards contribute the same thing at
 		// orbit level, so one of each mirrored set is used and scaled
 		const rws = [], rks = []; const mirrored = symmetric && P.boardSym && ob.perms.length > 1;
-		const done = new Uint8Array(R), ridx = mirrored ? new Map(states.rivers.map((r, k) => [r[0] * 52 + r[1], k])) : null, repQ = new Int32Array(R);
+		const done = new Uint8Array(R), ridx = mirrored ? new Map(states.rivers.map((r, k) => [dealtKey(states, k), k])) : null, repQ = new Int32Array(R);
 		for (let k = 0; k < R; k++) {
 			if (done[k]) continue; let wsum = states.rivers[k][2]; repQ[k] = rks.length;
-			if (mirrored) { wsum = 0; for (const p of ob.perms) { let a = (states.rivers[k][0] & ~3) | p[states.rivers[k][0] & 3], b = (states.rivers[k][1] & ~3) | p[states.rivers[k][1] & 3]; if (a > b) { const t = a; a = b; b = t; } const j = ridx.get(a * 52 + b); if (!done[j]) { done[j] = 1; repQ[j] = rks.length; wsum += states.rivers[j][2]; } } }
+			if (mirrored) { wsum = 0; for (const p of ob.perms) { const j = ridx.get(dealtKey(states, k, p)); if (!done[j]) { done[j] = 1; repQ[j] = rks.length; wsum += states.rivers[j][2]; } } }
 			rks.push(k); rws.push(wsum);
 		}
 		// 'auto' keeps at least about 300 distinct river boards
@@ -454,8 +470,46 @@ function factory() {
 	/** The whole Gram matrix. */
 	function gram(P, opts = {}) {
 		const W = walker(P, opts); if (P.gramKey === W.key) return P.gramRes;
-		const a = accumulate(P, W, W.fixed.concat(W.rivers));
-		P.gramKey = W.key; P.gramRes = { Go: symmetrize(a.U, a.diag, W.m), ob: W.ob, m: W.m }; return P.gramRes;
+		const a = accumulate(P, W, W.fixed.concat(W.rivers)); const Go = symmetrize(a.U, a.diag, W.m);
+		if (P.states.fixed && P.states.fixed.length === 2 && P.villain) addOpponentSide(P, W, Go);
+		P.gramKey = W.key; P.gramRes = { Go, ob: W.ob, m: W.m }; return P.gramRes;
+	}
+
+	/** River spots only. With no cards to come, a histogram of equity on the one board says too little: what the
+	 *  other player's hands face is what matters. This adds features from their side: for every hand they hold,
+	 *  how much of the range beats it, ties it and loses to it, leaving out the hands that share a card with it.
+	 *  Go (the histograms' matrix, orbit level) becomes the sum of both, each scaled to weigh the same.
+	 *
+	 *  Two hands of the range fall in the same group against an opponent hand when it is weaker than both,
+	 *  stronger than both, or tied with both. So each pair's entry is the opponent weight in those strength
+	 *  bands, less the hands holding one of the pair's cards (running sums per card, by strength). */
+	function addOpponentSide(P, W, Go) {
+		const { hero, villain, n } = P, bd = P.states.base.concat(P.states.fixed), m = W.m, orb = W.ob.orb, nv = villain.length;
+		const hv = hero.map((h) => eval7(h.a, h.b, bd[0], bd[1], bd[2], bd[3], bd[4])), vv = villain.map((h) => eval7(h.a, h.b, bd[0], bd[1], bd[2], bd[3], bd[4]));
+		const vals = Array.from(new Set(hv.concat(vv))).sort((x, y) => x - y), rank = new Map(vals.map((v, d) => [v, d])), D = vals.length, D1 = D + 1;
+		const cumT = new Float64Array(D1), cumC = new Float64Array(52 * D1), at = new Int32Array(52 * 52).fill(-1), vr = new Int32Array(nv), vw = new Float64Array(nv);
+		let vt = 0; for (const v of villain) vt += v.w; if (!(vt > 0)) return;
+		villain.forEach((v, j) => { const d = rank.get(vv[j]), w = v.w / vt; vr[j] = d; vw[j] = w; cumT[d + 1] += w; cumC[v.a * D1 + d + 1] += w; cumC[v.b * D1 + d + 1] += w; at[v.a * 52 + v.b] = j; at[v.b * 52 + v.a] = j; });
+		for (let d = 1; d <= D; d++) cumT[d] += cumT[d - 1];
+		for (let c = 0; c < 52; c++) { const o = c * D1; for (let d = 1; d <= D; d++) cumC[o + d] += cumC[o + d - 1]; }
+		const hr = Int32Array.from(hv, (v) => rank.get(v)), Gv = new Float64Array(m * m), U = [0, 0, 0, 0];
+		for (let i = 0; i < n; i++) {
+			const a = hero[i].a, b = hero[i].b, ri = hr[i], oi = orb[i];
+			for (let j = i; j < n; j++) {
+				const a2 = hero[j].a, b2 = hero[j].b, rj = hr[j], x = ri < rj ? ri : rj, y = ri < rj ? rj : ri, tie = x === y;
+				let nu = 2; U[0] = a; U[1] = b; if (a2 !== a && a2 !== b) U[nu++] = a2; if (b2 !== a && b2 !== b) U[nu++] = b2;
+				let g = cumT[x] + cumT[D] - cumT[y + 1] + (tie ? cumT[x + 1] - cumT[x] : 0);
+				for (let q = 0; q < nu; q++) {
+					const o = U[q] * D1; g -= cumC[o + x] + cumC[o + D] - cumC[o + y + 1] + (tie ? cumC[o + x + 1] - cumC[o + x] : 0);
+					for (let r = q + 1; r < nu; r++) { const k = at[U[q] * 52 + U[r]]; if (k >= 0) { const d = vr[k]; if (d < x || d > y || (tie && d === x)) g += vw[k]; } }
+				}
+				Gv[oi * m + orb[j]] += g; if (j !== i) Gv[orb[j] * m + oi] += g;
+			}
+		}
+		const w0 = new Float64Array(m); W.ob.list.forEach((mem, o) => { let t = 0; for (const i of mem) t += hero[i].w; w0[o] = t / mem.length; });
+		const quad = (M) => { let t = 0; for (let x = 0; x < m; x++) { let r = 0; const o = x * m; for (let y = 0; y < m; y++) r += M[o + y] * w0[y]; t += w0[x] * r; } return t; };
+		const cv = quad(Gv), ch = quad(Go); if (!(cv > 0) || !(ch > 0)) return;
+		for (let q = 0; q < m * m; q++) Go[q] = Go[q] / ch + Gv[q] / cv;
 	}
 
 	/** Inverse of a symmetric positive definite matrix; only the lower triangle of the result is filled. */
@@ -659,7 +713,14 @@ function factory() {
 
 	// ------------------------------------------------------------------ public API
 	const asHands = (r) => (typeof r === 'string' ? parseRange(r) : r.map((h) => { if (!h.hand) return h; let a = cardFromStr(h.hand.slice(0, 2)), b = cardFromStr(h.hand.slice(2, 4)); if (a > b) { const t = a; a = b; b = t; } return { a, b, w: h.weight }; }));
-	const asFlop = (f) => (typeof f === 'string' ? f.match(/../g).map(cardFromStr) : f);
+	/** The starting board as card numbers: three, four or five different cards. */
+	const asFlop = (f) => {
+		const txt = typeof f === 'string' ? f.replace(/[\s,]/g, '') : null;
+		const b = txt !== null ? (/^([2-9TJQKA][cdhs])*$/.test(txt) ? (txt.match(/../g) || []).map(cardFromStr) : []) : Array.isArray(f) ? f.slice() : [];
+		if (b.length < 3 || b.length > 5 || b.some((c) => !(c >= 0 && c < 52) || c !== Math.floor(c)) || new Set(b).size !== b.length) throw new Error('The board must be three, four or five different cards, like "Td9d6h" or "Td9d6h2c"; got ' + JSON.stringify(f));
+		return b;
+	};
+	const boardOf = (o) => asFlop(o.board !== undefined ? o.board : o.flop);
 	const asMask = (b) => (!b ? 0 : typeof b === 'number' ? b : b.reduce((m, s) => m | (1 << (typeof s === 'string' ? SUITS.indexOf(s) : s)), 0));
 	const liveHands = (hands, flop) => hands.filter((h) => h.w > 0 && !flop.includes(h.a) && !flop.includes(h.b));
 
@@ -675,7 +736,9 @@ function factory() {
 	const expectedFrequencyError = (mismatch) => 0.6 + 60 * mismatch;
 
 	// upper bound on the WebAssembly memory one call needs: the equities, then one range's matrices at a time
-	const arenaBytes = (nA, nB, st) => { const n = Math.max(nA, nB); return (4 * (st.rivers.length + st.turns.length + 2) + 16 * st.turns.length + 96) * (nA + nB) + 56 * n * n + 16 * 16 * n + 12 * st.rivers.length * 8 + (4 << 20); };
+	/** Histogram bins: 16, or 64 on a river spot, whose one board has to say more. */
+	const binsFor = (o, st) => o.bins || (st.fixed.length === 2 ? 64 : 16);
+	const arenaBytes = (nA, nB, st, bins) => { const n = Math.max(nA, nB); return (4 * (st.rivers.length + st.turns.length + 2) + 16 * st.turns.length + 96) * (nA + nB) + 56 * n * n + 16 * (bins || 16) * n + 12 * st.rivers.length * 8 + (4 << 20); };
 	const elimOpts = (o, n, sym) => {
 		const opts = { symmetric: o.symmetric !== false && sym, bins: o.bins, streetWeights: o.streetWeights, exact: o.exact, riverSample: o.riverSample || 'auto' };
 		if (o.size) opts.sizes = [Math.min(o.size, n)]; else opts.tolerance = o.tolerance === undefined ? 0.01 : o.tolerance;
@@ -685,7 +748,8 @@ function factory() {
 	/** The work for one range: returns plain data (so it can cross a worker boundary). */
 	function solveOne(P, o) {
 		// suit orbits are only used when both ranges are suit-symmetric on this flop (or the flop has no symmetry)
-		const el = eliminate(P, elimOpts(o, P.n, P.boardSym || P.perms.length === 1)); const m = materialize(P, el.path[0], el.ob, { top: o.standIns || 0 });
+		const eo = elimOpts(o, P.n, P.boardSym || P.perms.length === 1); eo.bins = binsFor(o, P.states);
+		const el = eliminate(P, eo); const m = materialize(P, el.path[0], el.ob, { top: o.standIns || 0 });
 		return { hands: m.hands, prefs: m.prefs, err: m.err, scale: m.scale, n: P.n, curve: o.curve ? el.curve : undefined };
 	}
 	function present(r, states) {
@@ -705,10 +769,11 @@ function factory() {
 	 * @param {object} o
 	 * @param {string|Array} o.range      range to compress: "[50.00]AhKd, ...[/50.00], AsKs, ..." or [{hand:'AhKd', weight:0.5}]
 	 * @param {string|Array} o.opponent   the opponent's (uncompressed) range, same formats
-	 * @param {string|number[]} o.flop    e.g. "Td9d6h"
+	 * @param {string|number[]} o.flop    the starting board, e.g. "Td9d6h"; four cards for a spot that starts on the
+	 *                                     turn, five for the river. `o.board` is the same option.
 	 * @param {number} [o.size]           number of combos to keep
 	 * @param {number} [o.tolerance]      instead of size: keep the fewest combos whose mismatch stays below this (default 0.01)
-	 * @param {string[]|number} [o.blankSuits]  only for a solver that deals these suits as one card per rank (see README)
+	 * @param {string[]|number} [o.blankSuits]  only for a solver that deals these suits as one card per rank (see README); flops only
 	 * @param {boolean} [o.symmetric=true]  keep the flop's suit symmetry so the solver's isomorphism still applies
 	 * @param {boolean} [o.exact]          run the elimination on the whole range at once (slower, same quality)
 	 * @param {number} [o.riverSample]     match on every n-th river board (default: automatic, at most every third;
@@ -717,17 +782,17 @@ function factory() {
 	 * @returns {{range:string, pio:string, hands:Array, size:number, originalSize:number, mismatch:number, expectedFrequencyError:number, standIns:Object}}
 	 */
 	function compress(o) {
-		const flop = asFlop(o.flop); const hero = liveHands(asHands(o.range), flop), villain = liveHands(asHands(o.opponent), flop);
+		const flop = boardOf(o); const hero = liveHands(asHands(o.range), flop), villain = liveHands(asHands(o.opponent), flop);
 		const states = deckStates(flop, asMask(o.blankSuits));
-		return present(withArena(arenaBytes(hero.length, 0, states), () => solveOne(prepareBoth(hero, villain, flop, states, true, false)[0], o)), states);
+		return present(withArena(arenaBytes(hero.length, 0, states, binsFor(o, states)), () => solveOne(prepareBoth(hero, villain, flop, states, true, false)[0], o)), states);
 	}
 
 	/** Compress both players' ranges for one flop in one pass. Each is matched against the other's full range.
 	 *  Takes `oop` and `ip` instead of `range` and `opponent`; `sizeOop` / `sizeIp` override `size`. */
 	function compressBoth(o) {
-		const flop = asFlop(o.flop); const a = liveHands(asHands(o.oop), flop), b = liveHands(asHands(o.ip), flop);
+		const flop = boardOf(o); const a = liveHands(asHands(o.oop), flop), b = liveHands(asHands(o.ip), flop);
 		const states = deckStates(flop, asMask(o.blankSuits));
-		const r = withArena(arenaBytes(a.length, b.length, states), () => {
+		const r = withArena(arenaBytes(a.length, b.length, states, binsFor(o, states)), () => {
 			const P = prepareBoth(a, b, flop, states); const mark = arena ? WK.top : 0;
 			const x = solveOne(P[0], Object.assign({}, o, { size: o.sizeOop || o.size })); if (arena) WK.top = mark;
 			return [x, solveOne(P[1], Object.assign({}, o, { size: o.sizeIp || o.size }))];
