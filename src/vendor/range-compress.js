@@ -90,6 +90,9 @@ function factory() {
 		}
 		return WK;
 	}
+	/** Lets go of the WebAssembly memory (tens of megabytes after a large call). The next call sets it up again,
+	 *  which takes about a millisecond. For memory-tight callers; workers keep their own. */
+	function releaseMemory() { if (!arena) { WK = null; wasmP = null; } }
 	/** Resolves to true once the WebAssembly kernels are usable on this thread (false if they are not supported). */
 	function ready() { const w = wasm(); return w ? Promise.resolve(true) : wasmP || Promise.resolve(false); }
 	/** Runs fn with the big arrays placed in WebAssembly memory (so the kernels can work on them in place). The
@@ -735,7 +738,7 @@ function factory() {
 	return {
 		compress, compressBoth, blankSuitsFor, expectedFrequencyError, parseRange, rangeToString, cardFromStr, cardToStr, handToStr,
 		/** true if the WebAssembly kernels loaded; setWasm(false) forces the JavaScript path */
-		get wasm() { return !!wasm(); }, setWasm(on) { wasmOn = !!on; }, ready,
+		get wasm() { return !!wasm(); }, setWasm(on) { wasmOn = !!on; }, ready, releaseMemory,
 	};
 }
 

@@ -18,7 +18,7 @@ const from = process.argv[2];
 if (!from) throw new Error('Give the path to a checkout of poker-rangecompress');
 let source = readFileSync(join(from, 'dist', 'range-compress.js'), 'utf8');
 
-/** The text between two markers, the first included; throws when either is missing. */
+/** `text` without the stretch from `start` up to, not including, `end`; throws when either is missing. */
 function cut(text: string, start: string, end: string): string {
 	const a = text.indexOf(start);
 	const b = text.indexOf(end, a);
@@ -36,7 +36,7 @@ source = source.replace(surface, [
 	'  return {',
 	'    compress, compressBoth, blankSuitsFor, expectedFrequencyError, parseRange, rangeToString, cardFromStr, cardToStr, handToStr,',
 	'    /** true if the WebAssembly kernels loaded; setWasm(false) forces the JavaScript path */',
-	'    get wasm() { return !!wasm(); }, setWasm(on) { wasmOn = !!on; }, ready,',
+	'    get wasm() { return !!wasm(); }, setWasm(on) { wasmOn = !!on; }, ready, releaseMemory,',
 	'  };',
 	'}',
 	'',
