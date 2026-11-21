@@ -2503,7 +2503,7 @@ function makeSolution(
 }
 
 export { formatCards, parseCards };
-export { compressRanges } from './compress.ts';
+export { compressRanges, rebuildRanges, STAND_INS } from './compress.ts';
 export type { CompressedRanges, CompressRangesOptions, RangeCompression } from './compress.ts';
 export { bettingFrom, checkedDown, exploitabilityInExact, keepWithin, liteConfig, litePreset, openLite, solveLite } from './lite.ts';
 export type { LiteOptions, LitePreset, LiteResolveOptions, LiteSession, LiteSolution, OpenLiteOptions, SolveLiteOptions } from './lite.ts';

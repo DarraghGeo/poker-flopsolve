@@ -1,0 +1,22 @@
+
+rainbow (As Kh 7d), 4 threads; turns 2s 7h Jd after "check check /" and "check bet 18.15 call /"
+turn re-solved from     combos    blueprint   re-solve   per hand   over 25   missing    range
+plain lite             433/480      78.3 s    13.8 s
+again (tighter)        433/480     112.4 s    14.7 s       1.8        0%        0%      0.9
+0.01, rebuilt          186/180      33.4 s    13.8 s       5.9        5%        0%      2.5
+0.01, kept only        186/180      33.4 s     5.2 s       9.1        9%       54%      3.6
+
+two-tone (Ts 9s 4h), 4 threads; turns 2s 7h Jd after "check check /" and "check bet 18.15 call /"
+turn re-solved from     combos    blueprint   re-solve   per hand   over 25   missing    range
+plain lite             439/518      63.4 s    13.1 s
+again (tighter)        439/518      73.2 s    15.1 s       2.7        0%        0%      1.7
+0.01, rebuilt          248/268      29.7 s    13.4 s       6.9        5%        0%      4.2
+0.01, kept only        248/268      29.7 s     6.9 s       6.7        4%       40%      2.5
+
+monotone (Ks 9s 4s), 4 threads; turns 2s 7h Ah after "check check /" and "check bet 18.15 call /"
+turn re-solved from     combos    blueprint   re-solve   per hand   over 25   missing    range
+plain lite             441/512      26.7 s     7.8 s
+again (tighter)        441/512      43.1 s     7.8 s       3.1        0%        0%      1.0
+0.01, rebuilt          316/372      19.0 s     8.0 s       5.3        3%        0%      3.0
+0.01, kept only        316/372      19.0 s     5.4 s       5.8        5%       22%      2.3
+

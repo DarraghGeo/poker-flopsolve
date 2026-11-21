@@ -5,6 +5,7 @@
 
 | script | what it does |
 |---|---|
+| `resolve.ts [board,...] [workers] [tolerance,...]` | Node: turn re-solves (`LiteSolution.resolve`) from a plain Lite blueprint, from a second one, and from a compressed one with its ranges rebuilt and without, compared hand by hand at the subgame's root play |
 | `measure.ts [board,...] [workers] [tolerance,...]` | Node: Lite as it is, Lite again to half the settle tolerance, and Lite with `compressRanges` at each tolerance: combinations, storage, iterations to settle, wall time, and how far the root play is from the first |
 
 `RANGES=<file>` reads two ranges, out of position first, one per line, in place of the bench
@@ -36,5 +37,14 @@ apart by the same measure.
   at 0.02. Rivers: plain Lite took 0.1 s, so there is nothing to save; 0.5–2.6 points off at
   0.005 (two plain solves 0.5–1.5 apart), 1.6–4.6 at 0.01, 1.9–8.8 at 0.02.
 
-What is not measured here: root play loss against an unshared blueprint, and turn re-solves
-(`bench/lite/measure.ts`'s yardsticks), and anything in a browser.
+- `resolve-wide-4t.log` (`resolve.ts`): turn re-solves from a compressed blueprint of the wide
+  ranges, rebuilt for every combination and for the kept ones alone, against the same re-solve
+  from a plain blueprint; `again` is a second plain blueprint. Rebuilt, a hand's root play is
+  5.3–6.9 points from the reference and 3–5% of the range is over 25 points off, none without a
+  strategy; kept only, 22–54% of the range has none; two plain blueprints are 1.8–3.1 points
+  apart. The three boards in one process stopped without an error during the third, which
+  completed run on its own; the log is the first two from that run and the third from its own.
+
+What is not measured here: root play loss against an unshared blueprint, the re-solve's gain
+(`bench/lite/measure.ts`'s yardsticks), what a rebuilt hand's play is worth in the full game,
+and anything in a browser.
