@@ -1,0 +1,9 @@
+rainbow (As Kh 7d), 4 threads, cfr+
+open     session   40.0 s  420 it   solveLite without the reserve 28.6 s
+move        setRange            solveLite           solveLite+reserve     setRange / solveLite / +reserve: exploitable %      from the reference: range frequencies      per hand
++2 classes    16.3 s  160 it     30.7 s  420 it     38.9 s  420 it   4.05 / 4.10 / 4.14
+widest        24.7 s  260 it     42.9 s  460 it     43.5 s  460 it   3.74 / 3.90 / 3.90
+back          17.9 s  200 it     27.1 s  400 it     39.0 s  420 it   3.40 / 4.30 / 4.31
+-2 classes     9.4 s  100 it     23.5 s  380 it     33.1 s  360 it   3.77 / 4.97 / 5.29
+tightest      36.4 s  400 it     22.8 s  360 it     32.3 s  360 it   3.34 / 6.37 / 6.36
+total        104.7 s            147.0 s            186.7 s

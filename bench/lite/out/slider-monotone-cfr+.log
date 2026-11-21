@@ -1,0 +1,9 @@
+monotone (Ks 9s 4s), 4 threads, cfr+
+open     session   15.3 s  440 it   solveLite without the reserve 10.9 s
+move        setRange            solveLite           solveLite+reserve     setRange / solveLite / +reserve: exploitable %      from the reference: range frequencies      per hand
++2 classes     3.4 s  100 it     10.7 s  440 it     14.9 s  440 it   4.36 / 3.97 / 3.68
+widest         6.0 s  180 it     15.1 s  440 it     15.0 s  440 it   3.93 / 3.72 / 3.72
+back           4.9 s  140 it     10.8 s  420 it     16.7 s  440 it   4.44 / 4.03 / 3.67
+-2 classes     2.5 s   60 it     10.1 s  400 it     16.8 s  460 it   4.59 / 3.77 / 3.73
+tightest       3.6 s  100 it     11.0 s  420 it     15.2 s  420 it   5.90 / 4.54 / 4.54
+total         20.4 s             57.6 s             78.7 s

@@ -2,7 +2,7 @@
  * A range slider on Lite: `openLite`'s live session against a new
  * `solveLite` for every range, on issue #47's betting.
  *
- *   node --import tsx bench/lite/slider.ts <rainbow|two-tone|monotone> [workers]
+ *   node --import tsx bench/lite/slider.ts <rainbow|two-tone|monotone> [workers] [reserve|no-reserve|cfr+|compress]
  *
  * Out of position's range starts at the bench range and moves five times:
  * two hand classes added (a notch of a slider), all nine (the widest), back
@@ -27,6 +27,15 @@
  *   second counts hands trading places between actions they are near
  *   indifferent to, which the first does not.
  *
+ * Variants: `reserve` (the default) as above; `no-reserve` opens the session
+ * on the range alone, so a move that adds hands gets a new run warm-started
+ * from the old; `cfr+` solves with `algorithm: 'cfr+'`; `compress` gives
+ * both ranges wide (a big blind's call against a button's open) and
+ * `compressRanges` to the session and to `solveLite` alike, with no
+ * reserve, so every move is compressed again and gets a new run. Without a
+ * reserve the third column repeats the second, and under `compress` the
+ * per-hand distance covers only hands both solutions kept.
+ *
  * Environment: `RESETTLE` as `every:tolerance:patience` for the session's
  * stop after a move (default `openLite`'s); `REFERENCE=0` skips the
  * references and the distances.
@@ -36,21 +45,36 @@ import { openLite, parseRange, rootPlayNodes, solveLite } from '../../src/index.
 import type { SettleOptions, Solution, SpotConfig } from '../../src/index.ts';
 import { full, type Board } from '../blueprint-share/spots.ts';
 
-const [boardName, workerArg] = process.argv.slice(2) as [Board, string?];
+const [boardName, workerArg, variantArg] = process.argv.slice(2) as [Board, string?, string?];
 const workers = Number(workerArg ?? 4);
+const variant = variantArg ?? 'reserve';
+if (!['reserve', 'no-reserve', 'cfr+', 'compress'].includes(variant)) throw new Error(`variant must be reserve, no-reserve, cfr+ or compress; got ${variant}`);
+const reserve = variant === 'reserve' || variant === 'cfr+';
+const lite = {
+	workers,
+	...(variant === 'cfr+' ? { algorithm: 'cfr+' as const } : {}),
+	...(variant === 'compress' ? { compressRanges: true } : {}),
+};
 const REFERENCE = Number(process.env.REFERENCE ?? 1000);
 const rule = process.env.RESETTLE?.split(':').map(Number);
 const resettle: SettleOptions | undefined = rule ? { every: rule[0], tolerance: rule[1], patience: rule[2] } : undefined;
 
-const config = full(boardName);
+// `compress` is for wide ranges: a big blind's call (458 combinations) against a button's open (426).
+const WIDE_OOP = 'TT-22,AJs-A2s,KTs-K2s,QTs-Q4s,JTs-J6s,T9s-T6s,98s-96s,87s-85s,76s-75s,65s-64s,54s,43s,AJo-A5o,KQo-K9o,QJo-Q9o,JTo-J9o,T9o,98o';
+const WIDE_IP = 'AA-22,AKs-A2s,KQs-K4s,QJs-Q6s,JTs-J7s,T9s-T7s,98s-97s,87s-86s,76s-75s,65s,54s,AKo-A7o,KQo-K9o,QJo-QTo,JTo,T9o';
+const config: SpotConfig = variant === 'compress' ? { ...full(boardName), oop: WIDE_OOP, ip: WIDE_IP } : full(boardName);
 const BASE = config.oop as string;
-const WIDE = `${BASE},K8s-K6s,Q8s,J8s,T8s,76s,65s,A9o-A8o,QJo`;
-const TIGHT = 'AA-55,AKs-A7s,KQs-KTs,QJs-QTs,JTs,T9s,AKo-AJo,KQo';
+const WIDE = variant === 'compress'
+	? `${BASE},Q3s-Q2s,J5s-J4s,T5s,95s,74s,53s,A4o-A2o,K8o,87o`
+	: `${BASE},K8s-K6s,Q8s,J8s,T8s,76s,65s,A9o-A8o,QJo`;
+const TIGHT = variant === 'compress'
+	? '99-22,AJs-A2s,KTs-K6s,QTs-Q8s,JTs-J8s,T9s-T8s,98s,87s,76s,65s,AJo-A8o,KQo-KTo,QJo-QTo,JTo'
+	: 'AA-55,AKs-A7s,KQs-KTs,QJs-QTs,JTs,T9s,AKo-AJo,KQo';
 const MOVES = [
-	['+2 classes', `${BASE},K8s,76s`],
+	['+2 classes', variant === 'compress' ? `${BASE},Q3s,J5s` : `${BASE},K8s,76s`],
 	['widest', WIDE],
 	['back', BASE],
-	['-2 classes', BASE.replace(',87s', '').replace('KQo-KJo', 'KQo')],
+	['-2 classes', variant === 'compress' ? BASE.replace(',43s', '').replace(',98o', '') : BASE.replace(',87s', '').replace('KQo-KJo', 'KQo')],
 	['tightest', TIGHT],
 ] as const;
 if (MOVES.some(([, range]) => range !== WIDE && parseRange(range).some((w, combo) => w > 0 && !(parseRange(WIDE)[combo] > 0)))) {
@@ -113,11 +137,11 @@ const clock = <T>(work: () => T): [T, number] => {
 };
 const cell = (seconds: number, iterations: number): string => `${seconds.toFixed(1).padStart(6)} s ${String(iterations).padStart(4)} it`;
 
-console.log(`${boardName} (${config.board}), ${workers} threads${resettle ? `, resettle ${process.env.RESETTLE}` : ''}`);
-const reserved: SpotConfig = { ...config, oopReserve: WIDE };
-const [session, opened] = clock(() => openLite(reserved, { workers, resettle }));
-const [, plain] = clock(() => solveLite(config, { workers }));
-console.log(`open     session ${cell(opened, session.iterations)}   solveLite without the reserve ${plain.toFixed(1)} s`);
+console.log(`${boardName} (${config.board}), ${workers} threads, ${variant}${resettle ? `, resettle ${process.env.RESETTLE}` : ''}`);
+const reserved: SpotConfig = reserve ? { ...config, oopReserve: WIDE } : config;
+const [session, opened] = clock(() => openLite(reserved, { ...lite, resettle }));
+const [, plain] = clock(() => solveLite(config, lite));
+console.log(`open     session ${cell(opened, session.iterations)}   solveLite${reserve ? ' without the reserve' : ''} ${plain.toFixed(1)} s`);
 console.log('move        setRange            solveLite           solveLite+reserve     setRange / solveLite / +reserve: exploitable %      from the reference: range frequencies      per hand');
 
 let total = [0, 0, 0];
@@ -129,11 +153,12 @@ for (const [name, range] of MOVES) {
 	// Best-response passes, off the clock; the session's before anything else can move it.
 	const exploitable = [warm.solution.exploitabilityPercent()];
 	let quality = '';
-	const [cold, coldSeconds] = clock(() => solveLite({ ...config, oop: range }, { workers }));
-	const [coldReserve, reserveSeconds] = clock(() => solveLite({ ...reserved, oop: range }, { workers }));
+	const [cold, coldSeconds] = clock(() => solveLite({ ...config, oop: range }, lite));
+	// Without a reserve there is nothing to tell apart: the plain solve stands in.
+	const [coldReserve, reserveSeconds] = reserve ? clock(() => solveLite({ ...reserved, oop: range }, lite)) : [cold, coldSeconds];
 	exploitable.push(cold.solution.exploitabilityPercent(), coldReserve.solution.exploitabilityPercent());
 	if (REFERENCE > 0) {
-		const long = { workers, settle: false as const, iterations: REFERENCE };
+		const long = { ...lite, settle: false as const, iterations: REFERENCE };
 		const reference = solveLite({ ...config, oop: range }, long).solution;
 		const d = (s: Solution): string => distance(s, reference, ranges).toFixed(1);
 		const base = frequencies(reference);

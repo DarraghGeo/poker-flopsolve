@@ -131,15 +131,81 @@ describe('openLite', () => {
 		}
 	});
 
-	it('refuses a hand it has no storage for, and keeps what it had', () => {
+	it('takes a range it has no storage for, on a new run started from the old one', () => {
+		const session = openLite(small, { ...ONE, sampling: false });
+		try {
+			const opened = session.iterations;
+			const stored = session.current.solution.spot.players[0].count;
+			const warm = session.setRange(0, WIDE);
+			const cold = solveLite({ ...small, oop: WIDE }, { ...ONE, sampling: false });
+			expect(warm.solution.spot.players[0].count).toBeGreaterThan(stored);
+			expect(warm.solution.stoppedAt).toBe('settled');
+			expect(warm.source.oop).toBe(WIDE);
+			expect(session.iterations).toBeGreaterThan(opened);
+			// Three classes onto eight is most of a new game on a spot this small: only that it lands where a new solve does.
+			expect(Math.abs(warm.solution.ev(0) - cold.solution.ev(0))).toBeLessThan(0.5);
+			expect(warm.solution.exploitabilityPercent()).toBeLessThan(cold.solution.exploitabilityPercent() * 1.2);
+			// The wider hands are stored now, so the way back is in place.
+			const run = warm.solution.solver;
+			expect(session.setRange(0, small.oop as string).solution.solver).toBe(run);
+			// A range that breaks the blueprint's symmetry gets a new run too.
+			const lopsided = session.setRange(0, `${small.oop as string},AdQc`);
+			expect(lopsided.solution.solver).not.toBe(run);
+			expect(lopsided.solution.spot.players[0].weights[parseRange('AdQc').findIndex((w) => w > 0)]).toBe(1);
+		} finally {
+			session.close();
+		}
+	});
+
+	it('still refuses a range nobody can play, and keeps what it had', () => {
 		const session = openLite(small, ONE);
 		try {
 			const before = session.current;
 			const iterations = session.iterations;
-			expect(() => session.setRange(0, WIDE)).toThrow(/oopReserve/);
+			expect(() => session.setRange(0, 'Ts9h')).toThrow(/empty/);
 			expect(session.current).toBe(before);
 			expect(session.iterations).toBe(iterations);
 			expect(before.source).toBe(small);
+		} finally {
+			session.close();
+		}
+	});
+
+	it('compresses the ranges again at every move', () => {
+		const wide: SpotConfig = {
+			...small,
+			oop: 'AA-22,AKs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,AKo-ATo,KQo-KJo',
+			ip: 'TT-22,AQs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,76s,AQo-ATo,KQo',
+		};
+		const options = { ...ONE, compressRanges: { tolerance: 0.02 } } as const;
+		const session = openLite(wide, options);
+		try {
+			const next = `${wide.oop as string},76s,65s,QJo`;
+			const warm = session.setRange(0, next);
+			const cold = solveLite({ ...wide, oop: next }, options);
+			expect(warm.solution.stoppedAt).toBe('settled');
+			// The blueprint holds the new range compressed, as a new solveLite's does.
+			expect(Array.from(warm.solution.spot.players[0].weights)).toEqual(Array.from(cold.solution.spot.players[0].weights));
+			expect(Array.from(warm.solution.spot.players[1].weights)).toEqual(Array.from(cold.solution.spot.players[1].weights));
+			expect(warm.solution.spot.players[0].count).toBeLessThan(parseRange(next).filter((w) => w > 0).length);
+			expect(Math.abs(warm.solution.ev(0) - cold.solution.ev(0))).toBeLessThan(1);
+			expect(warm.source.oop).toBe(next);
+		} finally {
+			session.close();
+		}
+	});
+
+	it('follows a range under CFR+', () => {
+		const options = { ...ONE, sampling: false, algorithm: 'cfr+' } as const;
+		const session = openLite({ ...small, oopReserve: WIDE }, options);
+		try {
+			const opened = session.iterations;
+			const warm = session.setRange(0, WIDE);
+			const cold = solveLite({ ...small, oopReserve: WIDE, oop: WIDE }, options);
+			expect(warm.solution.stoppedAt).toBe('settled');
+			expect(session.iterations - opened).toBeLessThanOrEqual(cold.solution.iterations);
+			expect(Math.abs(warm.solution.ev(0) - cold.solution.ev(0))).toBeLessThan(0.5);
+			expect(warm.solution.exploitabilityPercent()).toBeLessThan(cold.solution.exploitabilityPercent() * 1.5);
 		} finally {
 			session.close();
 		}
@@ -192,8 +258,4 @@ describe('openLite', () => {
 		}
 	});
 
-	it('refuses compressRanges and CFR+', () => {
-		expect(() => openLite(small, { ...ONE, compressRanges: true })).toThrow(/compressRanges/);
-		expect(() => openLite(small, { ...ONE, algorithm: 'cfr+' })).toThrow(/dcfr/);
-	});
 });

@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { createRun, defineSpot, parseRange, RANGE_RESUME } from '../src/index.ts';
+import { createRun, defineSpot, parseRange, RANGE_RESUME, RangeNotInPlaceError } from '../src/index.ts';
 import type { SolveOptions, SolveRun, SpotConfig } from '../src/index.ts';
 import { comboIndex, parseCards } from '../src/cards.ts';
 import { warmStart } from '../src/warm.ts';
@@ -202,12 +202,39 @@ describe('setRange', () => {
 		}
 	});
 
-	it('refuses a CFR+ run, which would stay with the old range', () => {
-		const run = createRun(defineSpot(river), { ...ONE, algorithm: 'cfr+' });
+	it.each([['64-bit', ONE], ['16-bit', { workers: 1, precision: 'i16' }], ['the default engine', {}]] as const)(
+		'follows a range under CFR+, its average cleared and its count kept: %s',
+		(_, base) => {
+			const options: SolveOptions = { ...base, algorithm: 'cfr+' };
+			for (const next of [TIGHT, OOP.replace(',87s', '')]) {
+				const run = createRun(defineSpot(river), options);
+				const cold = createRun(defineSpot({ ...river, oop: next }), options);
+				try {
+					const before = iterationsTo(run, 0.3);
+					run.setRange(0, next);
+					expect(run.totalIterations).toBe(before);
+					expect(iterationsTo(run, 0.3)).toBeLessThan(iterationsTo(cold, 0.3));
+				} finally {
+					run.close();
+					cold.close();
+				}
+			}
+		},
+	);
+
+	it('says a range that needs a new run from one that is no range', () => {
+		const run = createRun(defineSpot(flop), ONE);
 		try {
-			run.step(5);
-			expect(() => run.setRange(0, TIGHT)).toThrow(/cfr\+/);
-			expect(run.totalIterations).toBe(5);
+			expect(() => run.setRange(0, `${flop.oop as string},JJ`)).toThrow(RangeNotInPlaceError);
+			expect(() => run.setRange(0, 'AA,KK,QQ,AKs,AQs,KQs,76s,6d5d')).toThrow(RangeNotInPlaceError);
+			let caught: unknown;
+			try {
+				run.setRange(0, 'Ts9s');
+			} catch (error) {
+				caught = error;
+			}
+			expect(caught).toBeInstanceOf(Error);
+			expect(caught).not.toBeInstanceOf(RangeNotInPlaceError);
 		} finally {
 			run.close();
 		}

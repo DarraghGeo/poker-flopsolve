@@ -10,7 +10,7 @@ blueprint from `bench/blueprint-share/measure.ts <board> none` with
 | `measure.ts <board> [variants] [workers]` | Node: the blueprint to the settle rule (or `RULE=none` to a cap, tabulating rules), root play loss, per-hand EV error, turn re-solve gain and time |
 | `browser.ts <board> [variants] [workers,...]` | headless Chromium: time to settle, renderer peak RSS, one timed turn re-solve |
 | `t0.ts <lite\|unshared>` | against exact T₀ on As Kh 7d (`bench/adaptive/results/rainbow-T0.json`): the simplification's cost |
-| `slider.ts <board> [workers]` | Node: `openLite`'s session against a new `solveLite` for each of five moves of out of position's range: time and iterations to settle, exploitability, and root play against a 1000-iteration reference (`out/slider-*.log`) |
+| `slider.ts <board> [workers] [variant]` | Node: `openLite`'s session against a new `solveLite` for each of five moves of out of position's range: time and iterations to settle, exploitability, and root play against a 1000-iteration reference (`out/slider-<board>.log`); variants `no-reserve`, `cfr+` and `compress` (`out/slider-<board>-<variant>.log`, `REFERENCE=0`) |
 | `napkin.ts [count] [variant]` | napkinpoker's postflop-solver spots: root play at the stored per-action EVs |
 | `user-bench*.ts` (`npm run bench:lite`) | issue #133: a cross-origin isolated page on localhost that times `solveLite` phase by phase in any browser, at each thread count, and gives a JSON report to paste back (also saved under `scratch/bench-lite/`); see `bin/bench-lite-browser.ts` |
 
