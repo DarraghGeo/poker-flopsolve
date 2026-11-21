@@ -317,9 +317,11 @@ the spot folds runouts by (define the spot with `isomorphism: false` to be free 
 `runoutBuckets` stand as they are, since they were chosen by the hands the spot stores. The
 average strategy is not cleared, which would cost a pass over the storage; the iteration count
 resumes from 10 instead (`{ resume }` to choose), where DCFR's discounting shrinks the old
-range's share within a few iterations. A run with `algorithm: 'cfr+'` is refused, since it
-discounts nothing and would stay with the old range. Every run built on the same spot object is
-reweighted with it. For Lite, [`openLite`](#a-range-slider-on-lite-openlite) wraps this with the
+range's share within a few iterations. A run with `algorithm: 'cfr+'`, which discounts nothing,
+keeps its count and has its average cleared: 25–100 iterations to 0.3% of pot against 105–185
+from cold on the bench river and turn. A range that adds a hand without storage, or breaks a
+symmetry, throws `RangeNotInPlaceError`: start a new run on it with `warmStart`. Every run built
+on the same spot object is reweighted with it. For Lite, [`openLite`](#a-range-slider-on-lite-openlite) wraps this with the
 settle rule.
 
 ## Re-solving from a node
@@ -606,7 +608,7 @@ against the exact solve at equal iterations, root loss OOP / IP in % of pot (the
 | `analysisOnly` | advanced | both, at 32 bits | `compactStorage`, `currentProfileEv` | loads a saved strategy; keeps no regrets |
 | `warmStart`, `warmCards` | advanced | both | — | see [Warm starts](#warm-starts) |
 | `oopReserve`, `ipReserve` | advanced | both | — | storage for hands `run.setRange` may add; see [Changing a range in place](#changing-a-range-in-place) |
-| `openLite` | preset | both | — | `solveLite` kept live for a range slider: a changed range settled again in 0.52–0.68× the time of a new `solveLite` over five moves, 0.31–0.61× for a two-class move, about as exploitable; the reserve costs 27–42% an iteration ([A range slider on Lite](#a-range-slider-on-lite-openlite)) |
+| `openLite` | preset | both | — | `solveLite` kept live for a range slider: a changed range settled again in 0.52–0.68× the time of a new `solveLite` over five moves, 0.31–0.61× for a two-class move, about as exploitable; any range and every Lite option taken, with or without a reserve ([A range slider on Lite](#a-range-slider-on-lite-openlite)) |
 | `minWeight` | advanced | both | — | edits the ranges: 2–5% less storage, up to 15% less time on napkinpoker's spots |
 | `engine: 'js'` | advanced | JavaScript | — | the reference engine, about 2.4× slower; `precision: 'f64'` runs on it |
 | `isomorphism: false`, `simd: false`, `algorithm: 'cfr+'` | advanced | both | — | exact; off switches for comparison |
@@ -997,16 +999,37 @@ the reserve, which changes the hands stored and so the runouts bucketed together
 given the same reserve was itself further off than without it, by 0.1–6.6 points, in all 12
 moves where the reserve held more than the range.
 
-`oopReserve` and `ipReserve` name the widest ranges the slider can reach. A hand can be added
-only where the blueprint stores it, and a stored hand costs what a held one does: with the nine
-classes above in reserve an iteration cost 27–42% more and the first solve took 20–52% longer,
-which the first move repays. The
-runout buckets are chosen by the hands stored, so they hold for every range the session can
-take. Under the blueprint's shared river histories a reserved hand's river play is not trained
-until it has weight, so a move that adds hands has that to settle too. `compressRanges` is
-refused, as it picks its combinations for one range, and so is `algorithm: 'cfr+'`. Each
-`setRange` or `refine` makes the `LiteSolution` before it stale: it reads the session's live
-storage.
+Any range is taken, and every Lite option works with it. The same five moves in three other
+ways, each against `solveLite` with the same options (seconds for the five; then in how many
+moves the session ended less exploitable):
+
+| | As Kh 7d | Ts 9s 4h | Ks 9s 4s | less exploitable |
+|---|---|---|---|---|
+| No reserve | 83 against 143 | 66 against 91 | 27 against 51 | 12 moves of 15 |
+| `compressRanges`, wide ranges | 161 against 193 | 110 against 178 | 50 against 90 | 14 of 15 |
+| `algorithm: 'cfr+'`, with the reserve | 105 against 147 | 70 against 103 | 20 against 58 | 8 of 15 |
+
+- **The reserve is optional.** `oopReserve` and `ipReserve` name hands to store ahead: with the
+  widest ranges the slider can reach in them, every move changes in place, at 27–42% more an
+  iteration and a first solve 20–52% longer for the nine classes above. Without them the first
+  solve costs what `solveLite`'s does, and a move that adds a hand the blueprint does not store,
+  or breaks a suit symmetry it folds runouts by, gets a new run on the new ranges, started from
+  the old one's regrets. The new run stores that hand and every hand stored before it, so the
+  way back is in place; after a range that broke a symmetry the session stays without it. A new
+  run costs a run's setup and the copy, about 0.5 s on a 265 MiB blueprint, and holds both
+  blueprints for that moment.
+- **`compressRanges`** compresses both ranges again at every move, so every move gets a new run.
+  Measured on a big blind's call against a button's open (458 and 426 combinations), where it
+  matters; on As Kh 7d the gain is small, 0.83× the time, and one move of five was slower.
+- **`algorithm: 'cfr+'`** keeps its iteration count at a move and clears its average, and
+  settles to half the tolerance unless `resettle` gives one, since its fresh average stops
+  moving sooner than it is good. It is the fastest of the three and the least even: on the
+  monotone flop every move ended 0.2–1.4% of pot more exploitable than `solveLite`.
+
+The runout buckets are chosen by the hands stored, so they hold for every range that changes in
+place. Under the blueprint's shared river histories a reserved hand's river play is not trained
+until it has weight, so a move that adds hands has that to settle too. Each `setRange` or
+`refine` makes the `LiteSolution` before it stale: it reads the session's live storage.
 
 A spot that starts on the turn or the river compresses too (issue #158): give the board's four or
 five cards and the ranges the players hold there. A turn is matched on its board and each river

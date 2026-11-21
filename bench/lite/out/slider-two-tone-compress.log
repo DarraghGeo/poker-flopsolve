@@ -1,0 +1,9 @@
+two-tone (Ts 9s 4h), 4 threads, compress
+open     session   44.5 s  520 it   solveLite 44.7 s
+move        setRange            solveLite           solveLite+reserve     setRange / solveLite / +reserve: exploitable %      from the reference: range frequencies      per hand
++2 classes    16.5 s  160 it     35.1 s  380 it     35.1 s  380 it   4.49 / 4.50 / 4.50
+widest        35.0 s  360 it     38.1 s  420 it     38.1 s  420 it   3.89 / 4.23 / 4.23
+back          25.3 s  280 it     50.0 s  520 it     50.0 s  520 it   3.98 / 4.57 / 4.57
+-2 classes    17.6 s  200 it     35.1 s  420 it     35.1 s  420 it   4.07 / 4.41 / 4.41
+tightest      15.0 s  220 it     19.9 s  320 it     19.9 s  320 it   4.37 / 5.62 / 5.62
+total        109.5 s            178.2 s            178.2 s

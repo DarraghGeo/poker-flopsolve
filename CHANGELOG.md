@@ -4,6 +4,25 @@
 
 The third beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.1.
 
+### `openLite` takes any range, with every Lite option
+
+- A session no longer refuses a range. One that adds a hand the blueprint does not store, or
+  breaks a suit symmetry it folds, gets a new run started from the old one's regrets, so
+  `oopReserve` and `ipReserve` are optional: five moves with no reserve took 83 s against 143
+  for `solveLite` on As Kh 7d, 66 against 91 on Ts 9s 4h and 27 against 51 on Ks 9s 4s.
+- `compressRanges` works in a session, compressing both ranges again at every move: 161 s
+  against 193 on As Kh 7d, 110 against 178 on Ts 9s 4h and 50 against 90 on Ks 9s 4s, on wide
+  ranges, less exploitable in 14 moves of 15.
+- `algorithm: 'cfr+'` works in a session and in `run.setRange`, which clears its average and
+  keeps its count: 105 s against 147, 70 against 103 and 20 against 58, less exploitable in 8
+  moves of 15 and 0.2–1.4% of pot more on the monotone flop.
+- `run.setRange` throws `RangeNotInPlaceError` for a range that needs a new run, apart from a
+  range that is no range.
+- `defineSpot` refuses two ranges of which no pair of hands can be held together, which
+  solved to NaN before.
+- A warm start into a new run copies about nine times faster (4.7 s to 0.5 on a 265 MiB
+  blueprint), the same values bit for bit.
+
 ### Startup
 
 - Less stands between a call and solving. Defining the spot, creating the run and the first

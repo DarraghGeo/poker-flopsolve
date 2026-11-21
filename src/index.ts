@@ -622,6 +622,9 @@ export function defineSpot(config: SpotConfig): Spot {
 		buildPlayerIndex(trim(config.oop, 'out-of-position'), reserves[0] ?? undefined),
 		buildPlayerIndex(trim(config.ip, 'in-position'), reserves[1] ?? undefined),
 	];
+	if (!holdable(players[0].weights, players[1].weights)) {
+		throw new Error('No hand of one range can be held against a hand of the other: every pair shares a card');
+	}
 	for (const player of players) {
 		if (config.maxCombos !== undefined && player.count > config.maxCombos) {
 			throw new Error(`A range and its reserve hold ${player.count} combinations, over the ${config.maxCombos} limit`);
@@ -1302,10 +1305,20 @@ export interface StrategyView {
 	readonly probs: Float64Array;
 }
 
+/**
+ * `SolveRun.setRange` cannot take this range where the run stands, though
+ * the range itself is good: it holds a hand the spot keeps no storage for,
+ * or it breaks a suit symmetry the spot folds runouts by. A new run on a
+ * spot defined with the range can, warm-started from this one
+ * (`SolveOptions.warmStart`); `openLite`'s session does that by itself.
+ */
+export class RangeNotInPlaceError extends Error {}
+
 /** Settings for `SolveRun.setRange`. */
 export interface SetRangeOptions {
 	/**
-	 * The iteration count the run resumes from, unless it was lower. Default
+	 * The iteration count the run resumes from, unless it was lower; a CFR+
+	 * run keeps its count whatever this says. Default
 	 * `RANGE_RESUME`, 10, measured on exact solves. A chance-sampled solve
 	 * wants more: Lite's blueprint (p 0.35) swung 10 points of root play off
 	 * and back resuming from 10, and settled smoothly from 25 or 40; from 80
@@ -1352,10 +1365,12 @@ export interface SolveRun {
 	 * new run or fewer — 40–50 against 60–85 cold on river and turn, 16–24
 	 * against 44 on the flop — where resuming from 0 or keeping the count
 	 * did no better than cold. `totalIterations` resumes with it. A run
-	 * with `algorithm: 'cfr+'` is refused: it discounts nothing, and
-	 * measured, 400 iterations of one range held it near that range's play
-	 * (3.7% of pot exploitable 200 iterations after the change, where a new
-	 * solve was at 0.03%).
+	 * with `algorithm: 'cfr+'`, which discounts nothing, keeps its count
+	 * and has its average cleared instead, a pass over the storage. On the
+	 * bench river and turn that reached 0.3% of pot in 25–100 iterations
+	 * against 105–185 from cold, for two hand classes or a third of the
+	 * range dropped. A range cut to a few hands is slower than from cold
+	 * under CFR+, whose regrets are never discounted.
 	 *
 	 * The spot is reweighted with the run: `spot.players` and `spot.source`
 	 * show the new range, for this run and any other built on the same spot,
@@ -1367,9 +1382,10 @@ export interface SolveRun {
 	 * @param range the whole new range, as `SpotConfig.oop` takes one; an
 	 *   array of weights skips the parsing a string costs
 	 * @param options `resume`, the iteration count to resume from
-	 * @throws on a CFR+ run, or if the range is empty, adds a hand without storage, breaks a
-	 *   symmetry, or leaves no pair of hands the players can hold together;
-	 *   nothing has changed then
+	 * @throws {RangeNotInPlaceError} if the range adds a hand without storage or breaks a
+	 *   symmetry: the range is good, but needs a new run. Or, a plain error, if
+	 *   it is empty or leaves no pair of hands the players can hold together.
+	 *   Nothing has changed in either case
 	 */
 	setRange(player: 0 | 1, range: string | Float64Array, options?: SetRangeOptions): void;
 	/** Distance from equilibrium as a percentage of the pot. */
@@ -1668,12 +1684,6 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			if (options.resume !== undefined && !(Number.isInteger(options.resume) && options.resume >= 0)) {
 				throw new Error(`setRange: resume must be a whole number of iterations; got ${options.resume}`);
 			}
-			if (!ctx.dcfr) {
-				throw new Error(
-					"setRange: algorithm 'cfr+' discounts neither its regrets nor its average, so it would stay with the old range; " +
-						"use the default 'dcfr', or solve the new range in a new run",
-				);
-			}
 			const given = typeof range === 'string' ? parseRange(range) : range;
 			if (given.length !== COMBOS) {
 				throw new Error(`setRange: the range has ${given.length} weights; one per combination is ${COMBOS}`);
@@ -1685,38 +1695,42 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			const fifth = spot.board[4] ?? -1;
 			const blocked = (card: number): boolean =>
 				card === first || card === second || card === third || card === fourth || card === fifth;
+			// The range is judged whole before it is said to need a new run:
+			// one that is no range at all must not be sent to get one.
 			let live = 0;
+			let unstored = -1;
 			for (let combo = 0; combo < COMBOS; combo++) {
 				let weight = given[combo];
 				if (!(weight >= 0)) throw new Error(`setRange: a weight is ${weight}; weights are zero or more`);
 				// The floor first, as `defineSpot` applies it: a hand under it was never stored.
 				if (weight < floor) weight = 0;
 				if (weight > 0 && index.slot[combo] < 0) {
-					if (!blocked(COMBO_CARDS[combo * 2]) && !blocked(COMBO_CARDS[combo * 2 + 1])) {
-						throw new Error(
-							`setRange: ${formatCards([COMBO_CARDS[combo * 2], COMBO_CARDS[combo * 2 + 1]])} has no storage; ` +
-								`a hand can be added only if the range or \`${player === 0 ? 'oopReserve' : 'ipReserve'}\` held it when the spot was defined`,
-						);
-					}
-					weight = 0;
+					if (blocked(COMBO_CARDS[combo * 2]) || blocked(COMBO_CARDS[combo * 2 + 1])) weight = 0;
+					else if (unstored < 0) unstored = combo;
 				}
 				if (weight > 0) live++;
 				nextRange[combo] = weight;
 			}
 			if (live === 0) throw new Error('setRange: the range is empty once the board is removed');
+			// Counted pair by pair: the mass, summed by inclusion-exclusion, leaves a rounding residue for none.
+			if (!holdable(nextRange, spot.players[1 - player].weights)) {
+				throw new Error('setRange: no hand of this range can be held against the other range');
+			}
+			if (unstored >= 0) {
+				throw new RangeNotInPlaceError(
+					`setRange: ${formatCards([COMBO_CARDS[unstored * 2], COMBO_CARDS[unstored * 2 + 1]])} has no storage; ` +
+						`a hand can be added only if the range or \`${player === 0 ? 'oopReserve' : 'ipReserve'}\` held it when the spot was defined`,
+				);
+			}
 			for (const image of spotSymmetries.get(spot) ?? []) {
 				for (let combo = 0; combo < COMBOS; combo++) {
 					if (nextRange[combo] !== nextRange[image[combo]]) {
-						throw new Error(
+						throw new RangeNotInPlaceError(
 							'setRange: the range breaks a suit symmetry the spot folds runouts by; ' +
 								'keep mirrored hands at one weight, or define the spot with `isomorphism: false`',
 						);
 					}
 				}
-			}
-			// Counted pair by pair: the mass, summed by inclusion-exclusion, leaves a rounding residue for none.
-			if (!holdable(nextRange, spot.players[1 - player].weights)) {
-				throw new Error('setRange: no hand of this range can be held against the other range');
 			}
 			index.weights.set(nextRange);
 			// The source names every stored hand as reserved, so a spot defined
@@ -1729,8 +1743,21 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 				? { ...spot.source, oop: nextRange.slice(), oopReserve: stored }
 				: { ...spot.source, ip: nextRange.slice(), ipReserve: stored };
 			// The count resumes early, so the discounting forgets the old range's average.
-			const resumed = Math.min(offset + completed, options.resume ?? RANGE_RESUME);
-			offset = resumed - completed;
+			let resumed = offset + completed;
+			if (ctx.dcfr) {
+				resumed = Math.min(resumed, options.resume ?? RANGE_RESUME);
+				offset = resumed - completed;
+			} else if (ctx.regret.length > 0 || ctx.compactRegret) {
+				// CFR+ never discounts its average, so the old range's is
+				// cleared, a pass over the storage, and the count kept: its
+				// regrets carry the strategy, and scaled down or counted from
+				// an earlier iteration they did worse than from cold. Not on
+				// an analysis-only run, whose loaded average is all it has.
+				ctx.strategySum.fill(0);
+				ctx.sumScale?.fill(0);
+				ctx.compactSum?.forEach((sums) => sums.fill(0));
+				ctx.sumShift?.forEach((shifts) => shifts.fill(0));
+			}
 			// A shared block's last discount is an iteration the count will pass again.
 			ctx.discounted?.fill(0);
 			// Baselines were the old range's values; discounts are owed from the resumed count.
