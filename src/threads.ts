@@ -15,8 +15,9 @@
  *   const run = createRun(defineSpot(config), { workers: threads });
  *
  * In Node this is optional: a run starts the threads it lacks, beside its
- * own setup, and they wait 30 seconds for the next run before ending.
- * Calling it starts them ahead of the first run and keeps them for good.
+ * own setup, and when it closes, replacements start and wait 30 seconds for
+ * the next run. Calling it starts them ahead of the first run and keeps
+ * that many waiting for good.
  */
 
 import { prepareThreads, threadsUnavailableReason } from './platform/node.ts';
