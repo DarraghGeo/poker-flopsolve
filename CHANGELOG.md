@@ -36,10 +36,6 @@ The third beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0
 - The engine's storage is written once before the first iteration, a share a thread, instead
   of being mapped by every thread at once during it.
 
-## 0.5.0-beta.2
-
-The third beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.1.
-
 ### Lite for a range slider: `openLite`
 
 - `openLite(spot, options)` solves the Lite blueprint as `solveLite` does and keeps it live.
