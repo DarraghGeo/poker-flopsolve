@@ -1,8 +1,27 @@
 # Changelog
 
-## Unreleased
+## 0.5.0-beta.1
 
-Not in 0.5.0-beta.0, which was already published: this lands in the next beta or in 0.5.0.
+The second beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.0.
+
+### Lite: compress the ranges first (issue #156)
+
+- `solveLite` and `liteConfig` take `compressRanges` (off by default): before the blueprint is
+  solved, each range keeps the fewest of its combinations, re-weighted, whose equity
+  distributions on this flop's boards stay within a tolerance (default 0.01) of the full
+  range's. `compressRanges(spot)` does the same on its own.
+- For wide ranges. A button open against a big-blind call (433–518 combinations a side) on 4
+  threads settled in 40.6 s against 87.6 on As Kh 7d, 31.2 against 62.1 on Ts 9s 4h and 16.5
+  against 27.3 on Ks 9s 4s, in 0.42–0.72× the storage, with the root play 1.2–2.7 points from
+  Lite's on the full ranges, where two Lite solves of the full ranges were 1.8–3.0 apart.
+- On narrow ranges it gains little and can lose. The bench ranges, about 200 combinations a side:
+  As Kh 7d settled in 16.0 s against 21.5 (135 MiB against 173), Ts 9s 4h in 8.6 against 12.7 (91 against 122), and Ks 9s 4s in 7.8 against 6.6 (57 against 47). Dropping combinations breaks the
+  symmetries that fold boards together.
+- It keeps how the range plays, not what one combination does: the blueprint and its re-solves
+  hold a strategy only for the combinations kept.
+- The compressor is poker-rangecompress, vendored as `src/vendor/range-compress.js` (JavaScript
+  with its WebAssembly kernels embedded; the package still has no dependencies). It adds about
+  60 kB to the bundle, before minifying.
 
 ### Lite's exploitability in the full game (issue #154)
 
