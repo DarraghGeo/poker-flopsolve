@@ -607,7 +607,7 @@ against the exact solve at equal iterations, root loss OOP / IP in % of pot (the
 | `solveLite` / `litePreset` | preset | both | — | settled at 2.6× the iterations: 0.22× storage, 0.30× time, root 0.052 / 0.068, turn nodes 0.127, 1.89% exploitable ([Lite mode](#lite-mode-solvelite)) |
 | `largeTree` | preset | WebAssembly | — | at 4× the iterations: 0.38× storage, 0.58× time, root 0.057 / 0.289 (IP's cut 0.33 bet), 0.39% exploitable in its own tree ([Fitting a large tree](#fitting-a-large-tree-largetree)) |
 | `shareHistories` | preset-internal (lite) | both | — | 0.40× storage, 1.00× time, root 0.061 / 0.068, 1.89% exploitable |
-| `compressRanges` (`solveLite`, or on its own) | advanced (a lite option) | both | — | edits the ranges. Wide weighted ranges on a flop: 0.42–0.72× storage, 0.46–0.60× time, root play 1.2–2.7 points off where two Lite solves were 1.8–3.0 apart. Narrow ranges: little, and slower on a monotone flop. A spot that starts on the turn: 0.29–0.54× time, 1.2–1.9 points off (0.6–2.6); on the river, nothing to save ([Lite mode](#lite-mode-solvelite)) |
+| `compressRanges` (`solveLite`, or on its own) | advanced (a lite option) | both | — | edits the ranges. Wide weighted ranges on a flop: 0.42–0.72× storage, 0.46–0.60× time, root play 1.2–2.7 points off where two Lite solves were 1.8–3.0 apart. Narrow ranges: little, and slower on a monotone flop. A spot that starts on the turn: 0.29–0.54× time, 1.2–1.9 points off (0.6–2.6); on the river, nothing to save. `resolve` solves the turn for every hand again: 5.3–6.9 points per hand from a full blueprint's re-solve, 1.8–3.1 between two of those ([Lite mode](#lite-mode-solvelite)) |
 | `keepBudget` (`solveLite`), `shareHistories.keepLines`, `linesWithin` | advanced (a lite option) | both | — | turn re-solve gain within 0.1–0.8% of the subgame pot of an unshared blueprint's, against 3.0–4.2% from plain sharing ([History sharing](#history-sharing)) |
 | `runoutBuckets` | preset-internal (lite) | both | — | folds nothing on napkinpoker's weighted ranges. Bench ranges, gap 3: 0.61× time, true exploitability 0.302 against 0.271 ([Runout buckets](#runout-buckets-and-coarse-start)) |
 | `approximations.chanceSampling` | preset-internal (both) | both, threaded | — | at 4× the iterations: 0.69× time, root 0.057 / 0.056, 0.60% exploitable |
@@ -968,10 +968,36 @@ combinations breaks the suit and rank symmetries that fold boards together, so w
 saving the most there is the least to gain (`bench/range-compress`).
 
 What it keeps is how the range plays. What it does not keep is what one combination does: the
-blueprint, and `resolve`, hold a strategy only for the combinations kept, each carrying the
-weight of those dropped, and `exploitabilityInExact` covers only those: a combination left out
-keeps `exact`'s play. `compressRanges(spot)` gives the two compressed ranges on their own.
-`minWeight` is applied to the ranges as given, before compressing.
+blueprint holds a strategy only for the combinations kept, each carrying the weight of those
+dropped, and `exploitabilityInExact` covers only those: a combination left out keeps `exact`'s
+play. `compressRanges(spot)` gives the two compressed ranges on their own. `minWeight` is
+applied to the ranges as given, before compressing.
+
+`resolve` puts the combinations left out back (issue #173). On a compressed blueprint it solves the turn (or
+river) for your own ranges: each combination takes the play of the kept one nearest to it up to
+that street, which gives it a weight for getting there, and from there on it is solved in its
+own right. `rebuild: false` re-solves for the kept combinations alone, as before, and `measure`
+does so too, since it compares against the blueprint on its own ranges. Compared with the same
+turn re-solve from a blueprint of the full ranges, at the subgame's root play (the wide ranges
+above, tolerance 0.01, two lines and three turn cards a flop):
+
+| flop | blueprint | a hand's play differs by | hands over 25 points off | hands with no strategy | kept only: no strategy | two plain blueprints apart |
+|---|---|---|---|---|---|---|
+| As Kh 7d | 33.4 s against 78.3 | 5.9 points | 5% | 0% | 54% | 1.8 points, 0% |
+| Ts 9s 4h | 29.7 s against 63.4 | 6.9 | 5% | 0% | 40% | 2.7, 0% |
+| Ks 9s 4s | 19.0 s against 26.7 | 5.3 | 3% | 0% | 22% | 3.1, 0% |
+
+The re-solve itself takes what one from a full blueprint does (8–14 s here), being of the full
+ranges again. Up to the street re-solved a combination's play is still its stand-in's: the
+flop strategy of a hand the blueprint left out is borrowed, and should be read as rough. On
+another solver with one bet size, a rebuilt hand played with the ranges a full solve arrives
+with gave up 0.07% of the pot against the true opponent on the turn and river, where two solves
+of the same ranges differ by 0.05%. Over the whole hand, on the one flop scored, the strategy
+gave up 0.06% of the pot against a reference opponent, less than a solve of the full ranges to
+1% of pot (0.19%), and was 6.3% exploitable, more than one stopped at 5%: borrowed flop play is
+sound but not balanced hand by hand. It is for reading how to play, not for a strategy that
+cannot be exploited. `rebuildRanges` is the step on its own, for
+a solve of `compressRanges`' output that is not Lite's (`bench/range-compress`).
 
 #### A range slider on Lite (`openLite`)
 

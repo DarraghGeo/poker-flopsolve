@@ -14,6 +14,12 @@ export interface CompressedRange {
 	readonly originalSize: number;
 	/** How far the compressed range is from the original in the matched features; 0 is identical. */
 	readonly mismatch: number;
+	/**
+	 * With `standIns`: for every combination of the original range, the
+	 * surviving combinations that play most like it, nearest first (itself,
+	 * if it survived). Null otherwise.
+	 */
+	readonly standIns: Readonly<Record<string, readonly string[]>> | null;
 }
 
 declare const RangeCompress: {
@@ -25,6 +31,8 @@ declare const RangeCompress: {
 		readonly tolerance?: number;
 		readonly sizeOop?: number;
 		readonly sizeIp?: number;
+		/** Also list this many stand-ins for every original combination. */
+		readonly standIns?: number;
 	}): { readonly oop: CompressedRange; readonly ip: CompressedRange };
 	/** Whether the WebAssembly kernels loaded on this thread. */
 	readonly wasm: boolean;

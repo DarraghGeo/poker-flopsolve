@@ -49,13 +49,21 @@ export interface ResolveOptions {
 	readonly measure?: boolean;
 	/** Solver settings for the subgame; `iterations` and warm starts are this function's. */
 	readonly solve?: Pick<SolveOptions, 'workers' | 'precision' | 'algorithm' | 'engine' | 'simd' | 'wasmStorage'>;
+	/**
+	 * Solve the subgame for these ranges, out of position's then in
+	 * position's, in place of the ones the blueprint brings to the node
+	 * (`rebuildRanges`, for a blueprint of compressed ranges). Not with
+	 * `measure`, which compares against the blueprint's own ranges.
+	 */
+	readonly ranges?: readonly [Float64Array, Float64Array];
 }
 
 /** A re-solved subgame. */
 export interface ResolvedSubgame {
 	/**
 	 * The subgame's solution. Its ranges are the ones the blueprint brings to
-	 * the node; read the refined player's strategy from it.
+	 * the node, or `ResolveOptions.ranges` where given; read the refined
+	 * player's strategy from it.
 	 */
 	readonly solution: Solution;
 	readonly player: 0 | 1;
@@ -91,7 +99,9 @@ export function resolveSubgame(blueprint: Solution, node: number, board: number,
 	if (!(Number.isInteger(iterations) && iterations > 0)) {
 		throw new Error(`iterations must be a positive whole number; got ${iterations}`);
 	}
-	const spot = defineSpot(blueprint.subgameAt(node, board, options.betting));
+	if (options.ranges && options.measure) throw new Error('measure compares with the blueprint on its own ranges; it cannot be used with ranges');
+	const at = blueprint.subgameAt(node, board, options.betting);
+	const spot = defineSpot(options.ranges ? { ...at, oop: options.ranges[0], ip: options.ranges[1], minWeight: undefined } : at);
 	const base = spot.players[opponent].weights;
 	const mine = spot.players[player].weights;
 	// Mass of the refined player's range each opponent hand does not block.

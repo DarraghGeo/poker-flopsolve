@@ -16,9 +16,15 @@
  * how its strong, middling and weak parts act. What it does not keep is what
  * one combination does: a combination that is left out has no strategy, and
  * the ones kept carry the weight of those that were dropped.
+ *
+ * `rebuildRanges` puts the combinations left out back at a later street
+ * (issue #173): each takes the play of the kept combination nearest to it
+ * up to there, and a solve from the rebuilt ranges gives every one a
+ * strategy of its own from there on.
  */
 
 import { COMBO_CARDS, COMBOS, comboIndex, formatCard, formatCombo, parseCard, parseCards } from './cards.ts';
+import type { Solution } from './index.ts';
 import { parseRange } from './range.ts';
 import RangeCompress from './vendor/range-compress.js';
 import type { WeightedHand } from './vendor/range-compress.d.ts';
@@ -38,7 +44,16 @@ export interface CompressRangesOptions {
 	readonly tolerance?: number;
 	/** Keep this many combinations of each range (or `[oop, ip]`) instead of working to `tolerance`. */
 	readonly size?: number | readonly [number, number];
+	/**
+	 * Also say which kept combinations each one plays most like
+	 * (`CompressedRanges.standIns`), which `rebuildRanges` needs. About
+	 * 15 ms more. Default off.
+	 */
+	readonly standIns?: boolean;
 }
+
+/** How many stand-ins `CompressedRanges.standIns` lists for each combination. */
+export const STAND_INS = 4;
 
 /** What {@link compressRanges} did to one range. */
 export interface RangeCompression {
@@ -57,6 +72,15 @@ export interface CompressedRanges {
 	readonly ip: Float64Array;
 	/** Out of position's range, then in position's. */
 	readonly report: readonly [RangeCompression, RangeCompression];
+	/**
+	 * With the `standIns` option, for each player: the kept combinations
+	 * every combination of the range plays most like, nearest first, as
+	 * `STAND_INS` combination indices from `combo * STAND_INS`; a kept
+	 * combination comes first in its own list. -1 where there are fewer,
+	 * and throughout for a combination the range does not hold. "Nearest"
+	 * is by equity on the boards one card on (every turn of a flop).
+	 */
+	readonly standIns?: readonly [Int16Array, Int16Array];
 }
 
 /**
@@ -110,6 +134,7 @@ export function compressRanges(
 			ip,
 			board: board.map(formatCard).join(''),
 			...(sizes ? { sizeOop: Math.min(sizes[0], oop.length), sizeIp: Math.min(sizes[1], ip.length) } : { tolerance }),
+			...(options.standIns ? { standIns: STAND_INS } : {}),
 		});
 	} finally {
 		// Its WebAssembly memory, tens of MiB for wide ranges, would
@@ -121,6 +146,16 @@ export function compressRanges(
 		for (const { hand, weight } of hands) weights[comboIndex(parseCard(hand.slice(0, 2)), parseCard(hand.slice(2, 4)))] = weight;
 		return weights;
 	};
+	const comboOf = (hand: string): number => comboIndex(parseCard(hand.slice(0, 2)), parseCard(hand.slice(2, 4)));
+	const standInsOf = (lists: Readonly<Record<string, readonly string[]>> | null): Int16Array => {
+		if (!lists) throw new Error('The compressor returned no stand-ins');
+		const out = new Int16Array(COMBOS * STAND_INS).fill(-1);
+		for (const [hand, list] of Object.entries(lists)) {
+			const at = comboOf(hand) * STAND_INS;
+			for (let k = 0; k < list.length && k < STAND_INS; k++) out[at + k] = comboOf(list[k]);
+		}
+		return out;
+	};
 	return {
 		oop: weightsOf(result.oop.hands),
 		ip: weightsOf(result.ip.hands),
@@ -128,5 +163,94 @@ export function compressRanges(
 			{ from: oop.length, to: result.oop.size, mismatch: result.oop.mismatch },
 			{ from: ip.length, to: result.ip.size, mismatch: result.ip.mismatch },
 		],
+		...(options.standIns ? { standIns: [standInsOf(result.oop.standIns), standInsOf(result.ip.standIns)] as const } : {}),
 	};
+}
+
+/**
+ * The least share of its weight a combination keeps in `rebuildRanges`, so
+ * that one whose stand-in never takes the line is still there to be given a
+ * strategy. It kept 0.4% of the true weight that would otherwise have gone,
+ * and moved the rebuilt ranges by 0.1%.
+ */
+const REBUILD_FLOOR = 0.005;
+
+/**
+ * The ranges of `source` as they stand at a node of a solve of its
+ * compressed ranges, every combination of `source` back in.
+ *
+ * A compressed solve reaches a later street holding only the combinations
+ * it kept. Here each combination of the original range gets its own weight
+ * times the share of its stand-in that came this way: the stand-in's reach at
+ * the node over its starting weight. A stand-in that holds a card dealt
+ * before the node's street has no play of its own on the way, so the next
+ * nearest that does not is used. Solve the subgame from the result
+ * (`resolveSubgame`'s `ranges`) and every combination has a strategy of its
+ * own from there on; up to the node its play is still its stand-in's.
+ *
+ * Measured on four flops and 36 turn spots against the turn solved from a
+ * full solve's ranges (another solver, one bet size, tolerance 0.01): a
+ * rebuilt hand's play differed by 5.1 points where two solves of the same
+ * ranges differ by 3.2, and played with the true ranges it gave up 0.07% of
+ * the pot against the true opponent (0.05%) and was 1.15% exploitable
+ * (0.26%). A fifth of the range arrives with a weight more than a quarter
+ * off. That is the node's street and after. Over the whole hand, on the one
+ * flop scored, the strategy gave up 0.06% of the pot against a reference
+ * opponent and was 6.3% exploitable: play borrowed up to the node is sound
+ * but not balanced hand by hand.
+ *
+ * @param source the spot whose ranges were compressed
+ * @param compressed `compressRanges(source, { standIns: true })`
+ * @param solution a solve of the compressed ranges, on any betting
+ * @param node a decision that opens a betting round after the first
+ * @param board the board index at that node's round
+ * @returns out of position's weights, then in position's, the largest 1; combinations on the node's board are still in
+ * @throws if `compressed` has no stand-ins, or `solution` is not of those ranges
+ */
+export function rebuildRanges(
+	source: { readonly board: string; readonly oop: string | Float64Array; readonly ip: string | Float64Array; readonly minWeight?: number },
+	compressed: CompressedRanges,
+	solution: Solution,
+	node: number,
+	board: number,
+): [Float64Array, Float64Array] {
+	const { standIns } = compressed;
+	if (!standIns) throw new Error('rebuildRanges needs the stand-ins: compressRanges(source, { standIns: true })');
+	const { spot } = solution;
+	const round = spot.tree.round[node];
+	const width = spot.runouts.width[round];
+	// Cards dealt before the node's street: a kept combination holding one
+	// has no strategy at the decisions in between.
+	const dealt = spot.runouts.cards[round].subarray(board * width + spot.runouts.width[0], board * width + width - 1);
+	const dead = (combo: number): boolean => dealt.includes(COMBO_CARDS[combo * 2]) || dealt.includes(COMBO_CARDS[combo * 2 + 1]);
+	const one = (player: 0 | 1): Float64Array => {
+		const given = player === 0 ? source.oop : source.ip;
+		const weights = typeof given === 'string' ? parseRange(given) : given;
+		const start = spot.players[player].weights;
+		const kept = player === 0 ? compressed.oop : compressed.ip;
+		for (let combo = 0; combo < COMBOS; combo++) {
+			if (kept[combo] > 0 !== start[combo] > 0) throw new Error('rebuildRanges: the solution is not a solve of these compressed ranges');
+		}
+		const reach = solution.reachAt(node, board, player);
+		const map = standIns[player];
+		const out = new Float64Array(COMBOS);
+		let largest = 0;
+		for (let combo = 0; combo < COMBOS; combo++) {
+			if (map[combo * STAND_INS] < 0) continue;
+			let share = 0;
+			for (let k = 0; k < STAND_INS; k++) {
+				const standIn = map[combo * STAND_INS + k];
+				if (standIn < 0) break;
+				if (dead(standIn)) continue;
+				share = Math.min(1, reach[standIn] / start[standIn]);
+				break;
+			}
+			out[combo] = weights[combo] * Math.max(REBUILD_FLOOR, share);
+			if (out[combo] > largest) largest = out[combo];
+		}
+		if (!(largest > 0)) throw new Error('rebuildRanges: the range has no weight left at this node');
+		for (let combo = 0; combo < COMBOS; combo++) out[combo] /= largest;
+		return out;
+	};
+	return [one(0), one(1)];
 }
