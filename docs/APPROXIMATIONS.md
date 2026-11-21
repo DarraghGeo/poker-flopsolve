@@ -36,6 +36,21 @@ cost more iterations than it saved: a flop spot on 4 threads reached
 0.3% of pot in 14.1 s exact, 23.1 s at p = 0.5, and not within 400
 iterations at p = 0.25; at best it broke even to 1%.
 
+## Chance sampling without its first full walk
+
+Under `chanceSampling` a deal never walked is walked the first time it is
+met, sampled or not, so its baseline starts from a real value; the first
+iteration therefore walks every deal (190–450 ms on the Lite blueprints
+of the three bench flops on 4 threads, where a later iteration takes
+25–70). Letting an unsampled deal that was never walked give zeros until
+it is first sampled was built in both engines and measured (issue #164).
+The first iteration fell to 40–65 ms, and the blueprint stayed more
+exploitable at every check from 40 to 480 iterations: on Ks 9s 4s 4.45%
+of pot against 3.68 at 280 iterations and 3.9 against 3.6 at the
+plateau, on Ts 9s 4h 4.93 against 4.79, the same at p 0.36 as at 0.35.
+It settled no sooner. A third of a second of a 9–27 s solve was not
+worth it, and it was removed.
+
 ## Hand classes at the flop root
 
 Hand classes at the flop root — each player's flop vector shortened to

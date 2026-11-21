@@ -1306,11 +1306,10 @@ export interface StrategyView {
 }
 
 /**
- * `SolveRun.setRange` cannot take this range where the run stands, though
- * the range itself is good: it holds a hand the spot keeps no storage for,
- * or it breaks a suit symmetry the spot folds runouts by. A new run on a
- * spot defined with the range can, warm-started from this one
- * (`SolveOptions.warmStart`); `openLite`'s session does that by itself.
+ * `SolveRun.setRange`, asked not to grow (`SetRangeOptions.grow`), cannot
+ * take this range where the run stands, though the range itself is good: it
+ * holds a hand the spot keeps no storage for, or it breaks a suit symmetry
+ * the spot folds runouts by.
  */
 export class RangeNotInPlaceError extends Error {}
 
@@ -1325,6 +1324,25 @@ export interface SetRangeOptions {
 	 * and 160 it was smooth and slower.
 	 */
 	readonly resume?: number;
+	/**
+	 * What to do with a range the run cannot take where it stands: one with
+	 * a hand it keeps no storage for, or that breaks a suit symmetry it
+	 * folds runouts by. Default true: the run grows. It becomes a run on a
+	 * spot that stores every hand this one did and the range's, started
+	 * from this one's regrets (`SolveOptions.warmStart`), with its threads;
+	 * `spot` and `solver` are the new one's from then on, and a snapshot
+	 * taken before reads the old storage. That costs a run's setup and a
+	 * copy of the regrets, once, where storing hands ahead (`oopReserve`)
+	 * costs every iteration. On the bench turn, two classes added took
+	 * 15 ms and then 0.29 s to 0.3% of pot; with every hand stored ahead the
+	 * change was free, the re-solve took 2.6 s and the first solve 4.2 s
+	 * for 0.66. On the flop: 0.3 s and 3.5 s to 0.5%, against 10.8 s and a
+	 * first solve of 90 s for 14. It holds both runs' storage for that
+	 * moment, and a symmetry once broken stays broken. A `run.solver` or
+	 * `run.spot` read before is the old run's: read them again. False throws
+	 * `RangeNotInPlaceError` instead. An `analysisOnly` run never grows.
+	 */
+	readonly grow?: boolean;
 }
 
 /** An in-progress solve the caller drives. */
@@ -1347,13 +1365,13 @@ export interface SolveRun {
 	 * and only reads other weights from the next iteration on — so it costs
 	 * microseconds where a new run costs as much as a few iterations.
 	 *
-	 * A hand can be reweighted or dropped freely. One the range did not hold
-	 * when the spot was defined can be added only if `oopReserve` or
-	 * `ipReserve` kept storage for it. Board cards are dropped and
-	 * `minWeight` applied, as `defineSpot` does. The range must keep every
-	 * suit symmetry the spot folds runouts by (none with `isomorphism:
-	 * false`). `runoutBuckets` stand as they are: they were chosen by which
-	 * hands the spot stores, and that does not change.
+	 * A hand can be reweighted or dropped freely, and so can a hand be added
+	 * that the spot stores: one its range held when it was defined, or that
+	 * `oopReserve` or `ipReserve` kept storage for. For any other hand, and
+	 * for a range that breaks a suit symmetry the spot folds runouts by, the
+	 * run grows: see `SetRangeOptions.grow`. Board cards are dropped and
+	 * `minWeight` applied, as `defineSpot` does. `runoutBuckets` stand as
+	 * they are in place: they were chosen by which hands the spot stores.
 	 *
 	 * The average strategy is not cleared, since that would cost a pass over
 	 * the whole storage. Instead the iteration count resumes from
@@ -1381,11 +1399,12 @@ export interface SolveRun {
 	 * @param player 0 out of position, 1 in position
 	 * @param range the whole new range, as `SpotConfig.oop` takes one; an
 	 *   array of weights skips the parsing a string costs
-	 * @param options `resume`, the iteration count to resume from
-	 * @throws {RangeNotInPlaceError} if the range adds a hand without storage or breaks a
-	 *   symmetry: the range is good, but needs a new run. Or, a plain error, if
-	 *   it is empty or leaves no pair of hands the players can hold together.
-	 *   Nothing has changed in either case
+	 * @param options `resume`, the iteration count to resume from, and `grow`, whether the run
+	 *   may become a wider one for a range it cannot take where it stands (default true)
+	 * @throws if the range is empty or leaves no pair of hands the players
+	 *   can hold together; or, with `grow: false`, a
+	 *   {@link RangeNotInPlaceError} if it adds a hand without storage or
+	 *   breaks a symmetry. Nothing has changed in either case
 	 */
 	setRange(player: 0 | 1, range: string | Float64Array, options?: SetRangeOptions): void;
 	/** Distance from equilibrium as a percentage of the pot. */
@@ -1419,6 +1438,109 @@ export interface SolveRun {
  * @param options solver setup
  */
 export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
+	// The run a caller holds stands in front of the one that solves, so that
+	// `setRange` can give it a wider one: see `SetRangeOptions.grow`.
+	let inner = createFixedRun(spot, options);
+	// Iterations of the runs before this one.
+	let earlier = 0;
+	// What a wider run is created with: neither the run this one was started
+	// from, which must not be held past its use, nor its relabelling or count,
+	// nor a coarse start, since the wider run has this one to start from.
+	const { warmStart: _source, warmCards: _cards, warmIteration: _count, ...kept } = options;
+	const { coarseStart: _coarse, ...approximations } = options.approximations ?? {};
+	const base: SolveOptions = { ...kept, ...(options.approximations ? { approximations } : {}) };
+	return {
+		get spot() {
+			return inner.spot;
+		},
+		get solver() {
+			return inner.solver;
+		},
+		get workers() {
+			return inner.workers;
+		},
+		get engine() {
+			return inner.engine;
+		},
+		get warmStart() {
+			return inner.warmStart;
+		},
+		get completed() {
+			return earlier + inner.completed;
+		},
+		get totalIterations() {
+			return inner.totalIterations;
+		},
+		step(count) {
+			inner.step(count);
+		},
+		setRange(player, range, settings = {}) {
+			try {
+				inner.setRange(player, range, settings);
+				return;
+			} catch (error) {
+				// A range that is none, or a run asked not to grow, or one with
+				// only a loaded average, which a new run could not take over.
+				if (!(error instanceof RangeNotInPlaceError) || settings.grow === false || base.analysisOnly) throw error;
+			}
+			// A new run on a spot that stores this one's hands and the range's,
+			// started from this one's regrets.
+			const old = inner;
+			const stored = (index: PlayerIndex): Float64Array => Float64Array.from(index.slot, (slot) => (slot >= 0 ? 1 : 0));
+			// Defined before anything is let go: a spot that cannot be throws here, with nothing changed.
+			const wider = defineSpot({
+				...old.spot.source,
+				[player === 0 ? 'oop' : 'ip']: typeof range === 'string' ? range : range.slice(),
+				oopReserve: stored(old.spot.players[0]),
+				ipReserve: stored(old.spot.players[1]),
+			});
+			const dcfr = (base.algorithm ?? 'dcfr') === 'dcfr';
+			const resumed = dcfr ? Math.min(old.totalIterations, settings.resume ?? RANGE_RESUME) : old.totalIterations;
+			// The old run's threads first, which the new one needs where
+			// threads are borrowed (a browser); its storage stays readable.
+			old.close();
+			const before = earlier + old.completed;
+			let next: SolveRun;
+			try {
+				next = createFixedRun(wider, { ...base, warmStart: old, warmIteration: resumed }, before);
+			} catch (error) {
+				// Back on the ranges it had: the same spot, so the average and
+				// the count come too. If that fails as well, the run stays as it
+				// was, closed, and the first failure is the one to report.
+				try {
+					next = createFixedRun(old.spot, { ...base, warmStart: old }, before);
+				} catch {
+					throw error;
+				}
+				earlier = before;
+				inner = next;
+				throw error;
+			}
+			earlier = before;
+			inner = next;
+		},
+		exploitabilityPercent() {
+			return inner.exploitabilityPercent();
+		},
+		trueExploitabilityPercent() {
+			return inner.trueExploitabilityPercent();
+		},
+		snapshot(history, stoppedAt) {
+			return inner.snapshot(history, stoppedAt);
+		},
+		close() {
+			inner.close();
+		},
+	};
+}
+
+/**
+ * A run on the spot it was created for, whose `setRange` throws for a range
+ * that spot cannot hold; `createRun` stands in front of it.
+ *
+ * @param before iterations the caller's run completed on the runs before this one, which its snapshots count too
+ */
+function createFixedRun(spot: Spot, options: SolveOptions = {}, before = 0): SolveRun {
 	if (options.analysisOnly && options.approximations?.currentProfileEv) {
 		throw new Error('approximations.currentProfileEv needs regrets, and an analysisOnly run has none');
 	}
@@ -1644,6 +1766,10 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		}
 		// Inherited accumulators are discounted up to where the count resumes.
 		if (warm) ctx.sampling?.lastUpdate.fill(offset);
+		// The run this one started from is done with: the closures below keep
+		// `options`, and through it would keep that run's whole storage for as
+		// long as this one lives.
+		if (options.warmStart) options = { ...options, warmStart: undefined };
 
 		solver = makeSolver(ctx);
 		if (engine?.profile) threadProfiles.set(solver, engine.profile);
@@ -1789,7 +1915,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		},
 		snapshot(history = [], stoppedAt = 'iterations') {
 			return makeSolution(
-				spot, solver, completed, offset + completed, [...history], stoppedAt, threadCount,
+				spot, solver, before + completed, offset + completed, [...history], stoppedAt, threadCount,
 				options.approximations?.currentProfileEv === true,
 			);
 		},
