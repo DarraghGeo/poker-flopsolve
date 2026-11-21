@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changing a range in place
+
+- `run.setRange(player, range)` reweights a live run without building anything: about 0.02 ms a
+  call, where a `warmStart` into a new run cost about two iterations of the spot (1.1 s on the
+  bench flop). It keeps the regrets and resumes the iteration count from 10 (`RANGE_RESUME`),
+  and reaches a target in as few iterations as that warm start or fewer.
+- `oopReserve` and `ipReserve` on a spot keep storage for hands a range does not hold yet, so
+  `setRange` can add them.
+
 ## 0.5.0-beta.1
 
 The second beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.0.

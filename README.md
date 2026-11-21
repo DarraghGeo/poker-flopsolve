@@ -284,6 +284,40 @@ const seven = solve(defineSpot({ ...config, board: 'As Kh 7d' }), {
 On the bench flop that reaches 0.5% of pot in 8 iterations instead of 52 (from AsQh7d,
 20). It needs the whole old solve: seeding only the flop's decisions saved at most 15%.
 
+### Changing a range in place
+
+A warm start builds a new run, which costs about two iterations of the spot before the first
+one runs: around a second on the bench flop. A range slider, which changes nothing but one
+player's weights, needs none of that. `run.setRange` reweights the live run where it stands:
+
+```ts
+const run = createRun(defineSpot({ ...config, oopReserve: widest }));   // every hand the slider can reach
+run.step(50);
+run.setRange(0, weights);   // a Float64Array of 1326 weights, or a range string
+run.step(20);               // keeps solving, from the regrets it had
+```
+
+Nothing is built or copied, so a call takes about 0.02 ms on any of the bench spots (0.04 ms
+given a string to parse), against 3–110 ms on river and turn and about 1.1 s on the flop for a
+warm start into a new run. It then solves as that warm start does, or faster:
+
+| To 0.3% of pot (flop: 0.5%) | From scratch | `warmStart` | `setRange` |
+|---|---|---|---|
+| River, hands added | 60 iterations | 40 | 40 |
+| River, hands dropped | 70 | 45 | 45 |
+| Turn, hands added | 85 | 60 | 50 |
+| Turn, hands dropped | 85 | 60 | 50 |
+| Flop, hands added | 44 | 16 | 16 |
+| Flop, hands dropped | 44 | 24 | 24 |
+
+Hands can be reweighted or dropped freely. A hand can be added only where the spot kept
+storage for it: `oopReserve` and `ipReserve` name the hands a range may gain, and each costs
+what a held hand does, in memory and per iteration. The new range must keep the suit symmetries
+the spot folds runouts by (define the spot with `isomorphism: false` to be free of that), and a
+spot with `runoutBuckets` is refused. The average strategy is not cleared, which would cost a
+pass over the storage; the iteration count resumes from 10 instead, where DCFR's discounting
+shrinks the old range's share within a few iterations.
+
 ## Re-solving from a node
 
 Solve the whole spot with a coarse tree, then re-solve the street you are looking at
@@ -567,6 +601,7 @@ against the exact solve at equal iterations, root loss OOP / IP in % of pot (the
 | `approximations.currentProfileEv` | advanced | both | `analysisOnly` | no more than reading EVs; per-hand EVs often 2–4× closer at equal iterations |
 | `analysisOnly` | advanced | both, at 32 bits | `compactStorage`, `currentProfileEv` | loads a saved strategy; keeps no regrets |
 | `warmStart`, `warmCards` | advanced | both | — | see [Warm starts](#warm-starts) |
+| `oopReserve`, `ipReserve` | advanced | both | — | storage for hands `run.setRange` may add; see [Changing a range in place](#changing-a-range-in-place) |
 | `minWeight` | advanced | both | — | edits the ranges: 2–5% less storage, up to 15% less time on napkinpoker's spots |
 | `engine: 'js'` | advanced | JavaScript | — | the reference engine, about 2.4× slower; `precision: 'f64'` runs on it |
 | `isomorphism: false`, `simd: false`, `algorithm: 'cfr+'` | advanced | both | — | exact; off switches for comparison |
