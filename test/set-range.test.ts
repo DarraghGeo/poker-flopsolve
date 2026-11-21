@@ -326,6 +326,8 @@ describe('a run that grows', () => {
 			const warm = iterationsTo(run, 0.5);
 			expect(warm).toBeLessThan(iterationsTo(cold, 0.5));
 			expect(run.completed).toBe(before.completed + warm);
+			// A snapshot counts what the caller's run has done, on whichever run.
+			expect(run.snapshot().iterations).toBe(run.completed);
 			// The way back is in place: everything it stored is still stored.
 			const grown = run.solver;
 			run.setRange(0, OOP);

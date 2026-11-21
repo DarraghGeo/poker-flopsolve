@@ -13,8 +13,9 @@
  */
 
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-const { createRun, defineSpot } = await import(resolve('dist/index.js'));
+const { createRun, defineSpot } = await import(pathToFileURL(resolve('dist/index.js')).href);
 const OOP = 'AA-22,AKs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,AKo-ATo,KQo-KJo';
 const IP = 'TT-22,AQs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,76s,AQo-ATo,KQo';
 const ALL = new Float64Array(1326).fill(1);

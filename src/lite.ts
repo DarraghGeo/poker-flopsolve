@@ -518,8 +518,9 @@ export function openLite(config: SpotConfig, options: OpenLiteOptions = {}): Lit
 	let source = config;
 	// Iterations of the runs before this one: a range that cannot change in place gets a new run.
 	let earlier = 0;
-	/** The blueprint as it stands. */
-	const reading = (solution: Solution): LiteSolution => liteSolution(solution, source, run.spot.source, preset.changes, options);
+	/** The blueprint as it stands, its iterations the session's: a run made for a move counts only its own. */
+	const reading = (solution: Solution): LiteSolution =>
+		liteSolution({ ...solution, iterations: earlier + run.completed }, source, run.spot.source, preset.changes, options);
 	/** `solve`'s loop on the live run: to the cap, the target or the settle stop. */
 	const settleRun = (plan: SettleOptions | null | undefined): LiteSolution =>
 		reading(runToStop(run, plan ? { ...rest, settle: plan } : rest));
@@ -560,14 +561,24 @@ export function openLite(config: SpotConfig, options: OpenLiteOptions = {}): Lit
 				const count = resumed();
 				const old = run;
 				old.close();
-				earlier += old.completed;
+				let replacement: SolveRun;
 				try {
-					run = createRun(spot, { ...preset.options, warmStart: old, warmIteration: count });
+					replacement = createRun(spot, { ...preset.options, warmStart: old, warmIteration: count });
 				} catch (error) {
-					// Back on the ranges it had: the same spot, so the average comes too.
-					run = createRun(old.spot, { ...preset.options, warmStart: old });
+					// Back on the ranges it had: the same spot, so the average comes
+					// too. If that fails as well the session keeps its closed run,
+					// and the first failure is the one to report.
+					try {
+						replacement = createRun(old.spot, { ...preset.options, warmStart: old });
+					} catch {
+						throw error;
+					}
+					earlier += old.completed;
+					run = replacement;
 					throw error;
 				}
+				earlier += old.completed;
+				run = replacement;
 			}
 			source = next;
 			try {

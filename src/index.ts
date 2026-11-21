@@ -1338,7 +1338,8 @@ export interface SetRangeOptions {
 	 * change was free, the re-solve took 2.6 s and the first solve 4.2 s
 	 * for 0.66. On the flop: 0.3 s and 3.5 s to 0.5%, against 10.8 s and a
 	 * first solve of 90 s for 14. It holds both runs' storage for that
-	 * moment, and a symmetry once broken stays broken. False throws
+	 * moment, and a symmetry once broken stays broken. A `run.solver` or
+	 * `run.spot` read before is the old run's: read them again. False throws
 	 * `RangeNotInPlaceError` instead. An `analysisOnly` run never grows.
 	 */
 	readonly grow?: boolean;
@@ -1398,7 +1399,8 @@ export interface SolveRun {
 	 * @param player 0 out of position, 1 in position
 	 * @param range the whole new range, as `SpotConfig.oop` takes one; an
 	 *   array of weights skips the parsing a string costs
-	 * @param options `resume`, the iteration count to resume from
+	 * @param options `resume`, the iteration count to resume from, and `grow`, whether the run
+	 *   may become a wider one for a range it cannot take where it stands (default true)
 	 * @throws if the range is empty or leaves no pair of hands the players
 	 *   can hold together; or, with `grow: false`, a
 	 *   {@link RangeNotInPlaceError} if it adds a hand without storage or
@@ -1441,6 +1443,12 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	let inner = createFixedRun(spot, options);
 	// Iterations of the runs before this one.
 	let earlier = 0;
+	// What a wider run is created with: neither the run this one was started
+	// from, which must not be held past its use, nor its relabelling or count,
+	// nor a coarse start, since the wider run has this one to start from.
+	const { warmStart: _source, warmCards: _cards, warmIteration: _count, ...kept } = options;
+	const { coarseStart: _coarse, ...approximations } = options.approximations ?? {};
+	const base: SolveOptions = { ...kept, ...(options.approximations ? { approximations } : {}) };
 	return {
 		get spot() {
 			return inner.spot;
@@ -1473,7 +1481,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			} catch (error) {
 				// A range that is none, or a run asked not to grow, or one with
 				// only a loaded average, which a new run could not take over.
-				if (!(error instanceof RangeNotInPlaceError) || settings.grow === false || options.analysisOnly) throw error;
+				if (!(error instanceof RangeNotInPlaceError) || settings.grow === false || base.analysisOnly) throw error;
 			}
 			// A new run on a spot that stores this one's hands and the range's,
 			// started from this one's regrets.
@@ -1486,23 +1494,30 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 				oopReserve: stored(old.spot.players[0]),
 				ipReserve: stored(old.spot.players[1]),
 			});
-			const dcfr = (options.algorithm ?? 'dcfr') === 'dcfr';
+			const dcfr = (base.algorithm ?? 'dcfr') === 'dcfr';
 			const resumed = dcfr ? Math.min(old.totalIterations, settings.resume ?? RANGE_RESUME) : old.totalIterations;
-			// Neither a warm start's relabelling nor a coarse start belongs to the new run: it has this one to start from.
-			const { warmCards: _cards, ...kept } = options;
-			const { coarseStart: _coarse, ...approximations } = options.approximations ?? {};
-			const base: SolveOptions = { ...kept, ...(options.approximations ? { approximations } : {}) };
 			// The old run's threads first, which the new one needs where
 			// threads are borrowed (a browser); its storage stays readable.
 			old.close();
-			earlier += old.completed;
+			const before = earlier + old.completed;
+			let next: SolveRun;
 			try {
-				inner = createFixedRun(wider, { ...base, warmStart: old, warmIteration: resumed });
+				next = createFixedRun(wider, { ...base, warmStart: old, warmIteration: resumed }, before);
 			} catch (error) {
-				// Back on the ranges it had: the same spot, so the average comes too.
-				inner = createFixedRun(old.spot, { ...base, warmStart: old });
+				// Back on the ranges it had: the same spot, so the average and
+				// the count come too. If that fails as well, the run stays as it
+				// was, closed, and the first failure is the one to report.
+				try {
+					next = createFixedRun(old.spot, { ...base, warmStart: old }, before);
+				} catch {
+					throw error;
+				}
+				earlier = before;
+				inner = next;
 				throw error;
 			}
+			earlier = before;
+			inner = next;
 		},
 		exploitabilityPercent() {
 			return inner.exploitabilityPercent();
@@ -1519,8 +1534,13 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	};
 }
 
-/** A run on the spot it was created for, whose `setRange` throws for a range that spot cannot hold; `createRun` stands in front of it. */
-function createFixedRun(spot: Spot, options: SolveOptions = {}): SolveRun {
+/**
+ * A run on the spot it was created for, whose `setRange` throws for a range
+ * that spot cannot hold; `createRun` stands in front of it.
+ *
+ * @param before iterations the caller's run completed on the runs before this one, which its snapshots count too
+ */
+function createFixedRun(spot: Spot, options: SolveOptions = {}, before = 0): SolveRun {
 	if (options.analysisOnly && options.approximations?.currentProfileEv) {
 		throw new Error('approximations.currentProfileEv needs regrets, and an analysisOnly run has none');
 	}
@@ -1746,6 +1766,10 @@ function createFixedRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		}
 		// Inherited accumulators are discounted up to where the count resumes.
 		if (warm) ctx.sampling?.lastUpdate.fill(offset);
+		// The run this one started from is done with: the closures below keep
+		// `options`, and through it would keep that run's whole storage for as
+		// long as this one lives.
+		if (options.warmStart) options = { ...options, warmStart: undefined };
 
 		solver = makeSolver(ctx);
 		if (engine?.profile) threadProfiles.set(solver, engine.profile);
@@ -1891,7 +1915,7 @@ function createFixedRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		},
 		snapshot(history = [], stoppedAt = 'iterations') {
 			return makeSolution(
-				spot, solver, completed, offset + completed, [...history], stoppedAt, threadCount,
+				spot, solver, before + completed, offset + completed, [...history], stoppedAt, threadCount,
 				options.approximations?.currentProfileEv === true,
 			);
 		},

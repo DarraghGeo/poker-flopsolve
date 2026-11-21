@@ -9,7 +9,9 @@
   its own regrets, behind the same `run` object. On the bench turn two classes added took 15 ms
   and then 0.29 s to 0.3% of pot, where storing every hand ahead made the re-solve 2.6 s and the
   first solve 4.2 s for 0.66; on the flop 0.3 s and 3.5 s, against 10.8 s and 90 s for 14.
-- `{ grow: false }` keeps the old behaviour and throws `RangeNotInPlaceError`.
+- Changed from 0.5.0-beta.2, where such a range threw `RangeNotInPlaceError`: `{ grow: false }`
+  keeps that. After a run grows, `run.spot` and `run.solver` are the wider run's, so code that
+  kept either should read it again.
 - `openLite` uses it, so a session's `setRange` is the run's own.
 
 ### Measured and not kept: Lite without its first full walk (issue #164)
