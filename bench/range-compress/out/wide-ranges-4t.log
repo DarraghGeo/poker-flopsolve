@@ -1,0 +1,24 @@
+
+rainbow (As Kh 7d), 4 threads
+variant            combos     storage  iterations   time    root play apart
+lite               433/480     706 MiB      400     87.6 s   
+again (tighter)    433/480     706 MiB      540    124.4 s   2.04 pts
+compress 0.01      186/180     294 MiB      420     40.6 s   2.68 pts
+compress 0.02      127/128     210 MiB      440     31.0 s   2.37 pts
+root play of lite: 99.6 / 0.2 / 0.0 / 0.1 / 0.0   |   62.3 / 1.1 / 5.3 / 31.3 / 0.0
+
+two-tone (Ts 9s 4h), 4 threads
+variant            combos     storage  iterations   time    root play apart
+lite               439/518     393 MiB      400     62.1 s   
+again (tighter)    439/518     393 MiB      520     79.8 s   1.83 pts
+compress 0.01      248/268     214 MiB      380     31.2 s   1.24 pts
+compress 0.02      191/204     166 MiB      380     25.1 s   1.51 pts
+root play of lite: 93.0 / 5.3 / 0.9 / 0.8 / 0.0   |   62.8 / 3.5 / 23.0 / 10.8 / 0.0
+
+monotone (Ks 9s 4s), 4 threads
+variant            combos     storage  iterations   time    root play apart
+lite               441/512     146 MiB      400     27.3 s   
+again (tighter)    441/512     146 MiB      640     38.7 s   2.96 pts
+compress 0.01      316/372     105 MiB      380     16.5 s   2.47 pts
+compress 0.02      277/319      91 MiB      360     13.2 s   2.03 pts
+root play of lite: 81.0 / 12.1 / 6.7 / 0.1 / 0.0   |   54.4 / 28.5 / 16.0 / 1.1 / 0.0
