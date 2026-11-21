@@ -1219,6 +1219,18 @@ export interface StrategyView {
 	readonly probs: Float64Array;
 }
 
+/** Settings for `SolveRun.setRange`. */
+export interface SetRangeOptions {
+	/**
+	 * The iteration count the run resumes from, unless it was lower. Default
+	 * `RANGE_RESUME`, 10, measured on exact solves. A chance-sampled solve
+	 * wants more: Lite's blueprint (p 0.35) swung 10 points of root play off
+	 * and back resuming from 10, and settled smoothly from 25 or 40; from 80
+	 * and 160 it was smooth and slower.
+	 */
+	readonly resume?: number;
+}
+
 /** An in-progress solve the caller drives. */
 export interface SolveRun {
 	readonly spot: Spot;
@@ -1244,8 +1256,8 @@ export interface SolveRun {
 	 * `ipReserve` kept storage for it. Board cards are dropped and
 	 * `minWeight` applied, as `defineSpot` does. The range must keep every
 	 * suit symmetry the spot folds runouts by (none with `isomorphism:
-	 * false`), and the spot must not use `runoutBuckets`, whose buckets were
-	 * chosen for the ranges it was defined with.
+	 * false`). `runoutBuckets` stand as they are: they were chosen by which
+	 * hands the spot stores, and that does not change.
 	 *
 	 * The average strategy is not cleared, since that would cost a pass over
 	 * the whole storage. Instead the iteration count resumes from
@@ -1265,11 +1277,12 @@ export interface SolveRun {
 	 * @param player 0 out of position, 1 in position
 	 * @param range the whole new range, as `SpotConfig.oop` takes one; an
 	 *   array of weights skips the parsing a string costs
+	 * @param options `resume`, the iteration count to resume from
 	 * @throws if the range is empty, adds a hand without storage, breaks a
 	 *   symmetry, or leaves no pair of hands the players can hold together;
 	 *   nothing has changed then
 	 */
-	setRange(player: 0 | 1, range: string | Float64Array): void;
+	setRange(player: 0 | 1, range: string | Float64Array, options?: SetRangeOptions): void;
 	/** Distance from equilibrium as a percentage of the pot. */
 	exploitabilityPercent(): number;
 	/**
@@ -1552,9 +1565,9 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			solver.iterate(count, offset + completed);
 			completed += count;
 		},
-		setRange(player, range) {
-			if (spot.source.runoutBuckets) {
-				throw new Error('setRange: runoutBuckets chose its buckets for the ranges the spot was defined with; define a new spot');
+		setRange(player, range, options = {}) {
+			if (options.resume !== undefined && !(Number.isInteger(options.resume) && options.resume >= 0)) {
+				throw new Error(`setRange: resume must be a whole number of iterations; got ${options.resume}`);
 			}
 			const given = typeof range === 'string' ? parseRange(range) : range;
 			if (given.length !== COMBOS) {
@@ -1612,7 +1625,8 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 				? { ...spot.source, oop: nextRange.slice(), oopReserve: stored }
 				: { ...spot.source, ip: nextRange.slice(), ipReserve: stored };
 			// The count resumes early, so the discounting forgets the old range's average.
-			const resumed = Math.min(offset + completed, RANGE_RESUME);
+			const resume = options.resume ?? RANGE_RESUME;
+			const resumed = Math.min(offset + completed, resume);
 			offset = resumed - completed;
 			// A shared block's last discount is an iteration the count will pass again.
 			ctx.discounted?.fill(0);
@@ -2217,6 +2231,6 @@ function makeSolution(
 export { formatCards, parseCards };
 export { compressRanges } from './compress.ts';
 export type { CompressedRanges, CompressRangesOptions, RangeCompression } from './compress.ts';
-export { bettingFrom, checkedDown, exploitabilityInExact, keepWithin, liteConfig, litePreset, solveLite } from './lite.ts';
-export type { LiteOptions, LitePreset, LiteResolveOptions, LiteSolution, SolveLiteOptions } from './lite.ts';
+export { bettingFrom, checkedDown, exploitabilityInExact, keepWithin, liteConfig, litePreset, openLite, solveLite } from './lite.ts';
+export type { LiteOptions, LitePreset, LiteResolveOptions, LiteSession, LiteSolution, OpenLiteOptions, SolveLiteOptions } from './lite.ts';
 export type { PresetChanges, SettingChange, SizesCut, Street } from './presets.ts';

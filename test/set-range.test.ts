@@ -147,6 +147,44 @@ describe('setRange', () => {
 		}
 	});
 
+	it('keeps runout buckets, which were chosen by the hands stored', () => {
+		const config: SpotConfig = { ...flop, runoutBuckets: 3, oopReserve: `${flop.oop as string},JJ,87s` };
+		const next = 'AA,KK,AKs,AQs,76s,87s';
+		const run = createRun(defineSpot(config), ONE);
+		const other = createRun(defineSpot({ ...config, oop: next }), ONE);
+		try {
+			expect(run.spot.runouts.approximate).toBe(true);
+			expect(Array.from(other.spot.runouts.counts)).toEqual(Array.from(run.spot.runouts.counts));
+			run.step(20);
+			run.setRange(0, next);
+			warmStart(other.solver.ctx, run.solver.ctx, true);
+			expect(Object.is(run.exploitabilityPercent(), other.exploitabilityPercent())).toBe(true);
+			// A spot defined from the changed source stores what this one does.
+			const again = defineSpot(run.spot.source);
+			expect(Array.from(again.runouts.counts)).toEqual(Array.from(run.spot.runouts.counts));
+			expect(Array.from(again.players[0].combos)).toEqual(Array.from(run.spot.players[0].combos));
+		} finally {
+			run.close();
+			other.close();
+		}
+	});
+
+	it('resumes the count where asked', () => {
+		const run = createRun(defineSpot(river), ONE);
+		try {
+			run.step(50);
+			run.setRange(0, TIGHT, { resume: 30 });
+			expect(run.totalIterations).toBe(30);
+			run.setRange(0, OOP, { resume: 100 });
+			expect(run.totalIterations).toBe(30);
+			expect(() => run.setRange(0, TIGHT, { resume: -1 })).toThrow(/resume/);
+			expect(() => run.setRange(0, TIGHT, { resume: 2.5 })).toThrow(/resume/);
+			expect(run.totalIterations).toBe(30);
+		} finally {
+			run.close();
+		}
+	});
+
 	it('follows a slider back and forth', () => {
 		const run = createRun(defineSpot({ ...river, oopReserve: WIDE }), ONE);
 		try {
@@ -209,6 +247,25 @@ describe('setRange', () => {
 		}
 	});
 
+	it('keeps solving shared histories on the JavaScript pool', () => {
+		// Threads update shared blocks in their own order, so they follow one thread closely, not bit for bit.
+		const config: SpotConfig = { ...river, board: 'AsKh7d2c', maxRaises: 1, shareHistories: true };
+		const single = createRun(defineSpot(config), { ...ONE, engine: 'js' });
+		const threaded = createRun(defineSpot(config), { workers: 2, precision: 'f64', engine: 'js' });
+		try {
+			for (const run of [single, threaded]) {
+				run.step(25);
+				run.setRange(0, TIGHT);
+				run.step(25);
+			}
+			expect(threaded.workers).toBe(2);
+			expect(Math.abs(threaded.exploitabilityPercent() - single.exploitabilityPercent())).toBeLessThan(0.1);
+		} finally {
+			single.close();
+			threaded.close();
+		}
+	});
+
 	it('works with shared histories and with chance sampling', () => {
 		const turn: SpotConfig = { ...river, board: 'AsKh7d2c', maxRaises: 1 };
 		for (const [config, options] of [
@@ -230,7 +287,6 @@ describe('setRange', () => {
 	it('refuses what it cannot do in place, and changes nothing', () => {
 		const run = createRun(defineSpot(river), ONE);
 		const symmetric = createRun(defineSpot(flop), ONE);
-		const bucketed = createRun(defineSpot({ ...flop, runoutBuckets: true }), ONE);
 		try {
 			run.step(10);
 			const before = run.exploitabilityPercent();
@@ -247,7 +303,6 @@ describe('setRange', () => {
 
 			expect(() => symmetric.setRange(0, 'AA,KK,QQ,AKs,AQs,KQs,76s,6d5d')).toThrow(/symmetry/);
 			symmetric.setRange(0, 'AA,KK,AKs,AQs,76s');
-			expect(() => bucketed.setRange(0, 'AA,KK')).toThrow(/runoutBuckets/);
 
 			// Nothing to play once both players hold only the very same hand.
 			run.setRange(0, 'TdTc');
@@ -255,7 +310,6 @@ describe('setRange', () => {
 		} finally {
 			run.close();
 			symmetric.close();
-			bucketed.close();
 		}
 	});
 });

@@ -6,6 +6,10 @@
  * Boards are `bench/blueprint-share/spots.ts`'s (default all three), on issue
  * #47's betting with the bench ranges. `RANGES=<file>` reads two ranges
  * instead, one per line, out of position first, in this package's notation.
+ * `BOARD`, `POT` and `STACK` replace the board's cards, the pot and the
+ * stack, which is how a spot that starts on the turn or the river is
+ * measured (issue #158): `BOARD="Td 9d 6h 2c" POT=91 STACK=957`, with the
+ * ranges held there in `RANGES`.
  *
  * For each board it solves `solveLite` as it is, then with `compressRanges`
  * at each tolerance (default 0.005, 0.01, 0.02), on `workers` threads
@@ -64,7 +68,10 @@ for (const board of boards) {
 		const [oop, ip] = readFileSync(process.env.RANGES, 'utf8').split('\n').filter(Boolean);
 		config = { ...config, oop, ip };
 	}
-	console.log(`\n${board} (${config.board}), ${WORKERS} threads`);
+	if (process.env.BOARD) config = { ...config, board: process.env.BOARD };
+	if (process.env.POT) config = { ...config, pot: Number(process.env.POT) };
+	if (process.env.STACK) config = { ...config, stack: Number(process.env.STACK) };
+	console.log(`\n${process.env.BOARD ? 'given' : board} (${config.board}), ${WORKERS} threads`);
 	console.log('variant            combos     storage  iterations   time    root play apart');
 	const row = (name: string, result: { lite: LiteSolution; seconds: number }, base?: number[][]): void => {
 		const { spot } = result.lite.solution;

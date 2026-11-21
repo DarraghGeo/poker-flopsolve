@@ -1,15 +1,41 @@
 # Changelog
 
-## Unreleased
+## 0.5.0-beta.2
 
-### Changing a range in place
+The third beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.1.
 
-- `run.setRange(player, range)` reweights a live run without building anything: about 0.02 ms a
-  call, where a `warmStart` into a new run cost about two iterations of the spot (1.1 s on the
-  bench flop). It keeps the regrets and resumes the iteration count from 10 (`RANGE_RESUME`),
-  and reaches a target in as few iterations as that warm start or fewer.
+### Lite for a range slider: `openLite`
+
+- `openLite(spot, options)` solves the Lite blueprint as `solveLite` does and keeps it live.
+  `session.setRange(player, range)` changes a range in place and settles the blueprint again
+  from where it stands; `session.refine(n)` runs more iterations while the slider is at rest;
+  `session.current` is the `LiteSolution`, `resolve` included.
+- On issue #47's betting, 4 threads, five moves of out of position's range settled in 95 s
+  against 163 for five `solveLite` calls on As Kh 7d, 69 against 103 on Ts 9s 4h and 27 against
+  52 on Ks 9s 4s: 0.31–0.61× the time for two hand classes added or dropped, 0.66–0.92× for a
+  third of the range dropped. It ended less exploitable than `solveLite` in 11 moves of 15, and
+  0.6–1.8% of pot more on the monotone flop's three moves that dropped hands.
 - `oopReserve` and `ipReserve` on a spot keep storage for hands a range does not hold yet, so
-  `setRange` can add them.
+  they can be added. With nine classes in reserve an iteration cost 27–42% more and the first
+  solve took 20–52% longer.
+- `run.setRange(player, range, { resume })` is the same change on any run, exact solves
+  included: about 0.02 ms a call, nothing built or copied, where a `warmStart` into a new run
+  costs about two iterations of the spot. It keeps the regrets and resumes the iteration count
+  (from 10, `RANGE_RESUME`; `openLite` resumes from 30, as chance sampling was unstable at 10).
+  The range must keep the suit symmetries the spot folds runouts by; runout buckets stand.
+
+### `compressRanges` on a spot that starts on the turn or the river (issue #158)
+
+- `compressRanges(spot)`, and Lite's option of the same name, take a board of four or five cards
+  with the ranges the players hold there; before, any board but a flop was refused. A turn is
+  matched on its board and each river that can follow. A river is also matched on what the other
+  player's hands face: how much of the range beats each, ties it and loses to it.
+- The default tolerance past the flop is 0.005. Under Lite on four turns (270–497 combinations a
+  side, 4 threads) that settled in 0.6–0.8 s against 1.3–2.4, in 3–4 MiB against 6–11, the root
+  play 1.2–1.9 points from Lite's on the full ranges, where two Lite solves were 0.6–2.6 apart.
+  At 0.01 it was 1.1–7.8 points off.
+- On a river there is nothing to save: Lite took 0.1 s on the full ranges.
+- The vendored compressor is poker-rangecompress 0.2.0. A flop compresses as before.
 
 ## 0.5.0-beta.1
 
