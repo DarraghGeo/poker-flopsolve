@@ -622,6 +622,9 @@ export function defineSpot(config: SpotConfig): Spot {
 		buildPlayerIndex(trim(config.oop, 'out-of-position'), reserves[0] ?? undefined),
 		buildPlayerIndex(trim(config.ip, 'in-position'), reserves[1] ?? undefined),
 	];
+	if (!holdable(players[0].weights, players[1].weights)) {
+		throw new Error('No hand of one range can be held against a hand of the other: every pair shares a card');
+	}
 	for (const player of players) {
 		if (config.maxCombos !== undefined && player.count > config.maxCombos) {
 			throw new Error(`A range and its reserve hold ${player.count} combinations, over the ${config.maxCombos} limit`);
@@ -1314,7 +1317,8 @@ export class RangeNotInPlaceError extends Error {}
 /** Settings for `SolveRun.setRange`. */
 export interface SetRangeOptions {
 	/**
-	 * The iteration count the run resumes from, unless it was lower. Default
+	 * The iteration count the run resumes from, unless it was lower; a CFR+
+	 * run keeps its count whatever this says. Default
 	 * `RANGE_RESUME`, 10, measured on exact solves. A chance-sampled solve
 	 * wants more: Lite's blueprint (p 0.35) swung 10 points of root play off
 	 * and back resuming from 10, and settled smoothly from 25 or 40; from 80
@@ -1691,25 +1695,33 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			const fifth = spot.board[4] ?? -1;
 			const blocked = (card: number): boolean =>
 				card === first || card === second || card === third || card === fourth || card === fifth;
+			// The range is judged whole before it is said to need a new run:
+			// one that is no range at all must not be sent to get one.
 			let live = 0;
+			let unstored = -1;
 			for (let combo = 0; combo < COMBOS; combo++) {
 				let weight = given[combo];
 				if (!(weight >= 0)) throw new Error(`setRange: a weight is ${weight}; weights are zero or more`);
 				// The floor first, as `defineSpot` applies it: a hand under it was never stored.
 				if (weight < floor) weight = 0;
 				if (weight > 0 && index.slot[combo] < 0) {
-					if (!blocked(COMBO_CARDS[combo * 2]) && !blocked(COMBO_CARDS[combo * 2 + 1])) {
-						throw new RangeNotInPlaceError(
-							`setRange: ${formatCards([COMBO_CARDS[combo * 2], COMBO_CARDS[combo * 2 + 1]])} has no storage; ` +
-								`a hand can be added only if the range or \`${player === 0 ? 'oopReserve' : 'ipReserve'}\` held it when the spot was defined`,
-						);
-					}
-					weight = 0;
+					if (blocked(COMBO_CARDS[combo * 2]) || blocked(COMBO_CARDS[combo * 2 + 1])) weight = 0;
+					else if (unstored < 0) unstored = combo;
 				}
 				if (weight > 0) live++;
 				nextRange[combo] = weight;
 			}
 			if (live === 0) throw new Error('setRange: the range is empty once the board is removed');
+			// Counted pair by pair: the mass, summed by inclusion-exclusion, leaves a rounding residue for none.
+			if (!holdable(nextRange, spot.players[1 - player].weights)) {
+				throw new Error('setRange: no hand of this range can be held against the other range');
+			}
+			if (unstored >= 0) {
+				throw new RangeNotInPlaceError(
+					`setRange: ${formatCards([COMBO_CARDS[unstored * 2], COMBO_CARDS[unstored * 2 + 1]])} has no storage; ` +
+						`a hand can be added only if the range or \`${player === 0 ? 'oopReserve' : 'ipReserve'}\` held it when the spot was defined`,
+				);
+			}
 			for (const image of spotSymmetries.get(spot) ?? []) {
 				for (let combo = 0; combo < COMBOS; combo++) {
 					if (nextRange[combo] !== nextRange[image[combo]]) {
@@ -1719,10 +1731,6 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 						);
 					}
 				}
-			}
-			// Counted pair by pair: the mass, summed by inclusion-exclusion, leaves a rounding residue for none.
-			if (!holdable(nextRange, spot.players[1 - player].weights)) {
-				throw new Error('setRange: no hand of this range can be held against the other range');
 			}
 			index.weights.set(nextRange);
 			// The source names every stored hand as reserved, so a spot defined
@@ -1739,11 +1747,12 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 			if (ctx.dcfr) {
 				resumed = Math.min(resumed, options.resume ?? RANGE_RESUME);
 				offset = resumed - completed;
-			} else {
+			} else if (ctx.regret.length > 0 || ctx.compactRegret) {
 				// CFR+ never discounts its average, so the old range's is
 				// cleared, a pass over the storage, and the count kept: its
 				// regrets carry the strategy, and scaled down or counted from
-				// an earlier iteration they did worse than from cold.
+				// an earlier iteration they did worse than from cold. Not on
+				// an analysis-only run, whose loaded average is all it has.
 				ctx.strategySum.fill(0);
 				ctx.sumScale?.fill(0);
 				ctx.compactSum?.forEach((sums) => sums.fill(0));

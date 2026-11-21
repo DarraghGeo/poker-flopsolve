@@ -222,6 +222,39 @@ describe('setRange', () => {
 		},
 	);
 
+	it('leaves an analysis-only run its loaded average under CFR+', () => {
+		const run = createRun(defineSpot(river), { analysisOnly: true, algorithm: 'cfr+' });
+		try {
+			run.solver.ctx.strategySum.fill(1);
+			run.setRange(0, TIGHT);
+			expect(run.solver.ctx.strategySum.every((value) => value === 1)).toBe(true);
+		} finally {
+			run.close();
+		}
+	});
+
+	it('judges a range whole before it says it needs a new run', () => {
+		const run = createRun(defineSpot({ ...river, oop: 'QQ,TdTc', ip: 'JJ,TdTc' }), ONE);
+		try {
+			// 88 is not stored; but the range is refused for what is wrong with it first.
+			const bad = parseRange('8d8c');
+			bad[bad.findIndex((w) => w > 0)] = -1;
+			expect(() => run.setRange(1, bad)).toThrow(/zero or more/);
+			run.setRange(0, 'TdTc');
+			let caught: unknown;
+			try {
+				run.setRange(1, 'TdTc,Td9d,Tc9c');
+			} catch (error) {
+				caught = error;
+			}
+			expect((caught as Error).message).toMatch(/held against/);
+			expect(caught).not.toBeInstanceOf(RangeNotInPlaceError);
+			expect(() => defineSpot({ ...river, oop: 'TdTc', ip: 'TdTc,Td9d' })).toThrow(/shares a card/);
+		} finally {
+			run.close();
+		}
+	});
+
 	it('says a range that needs a new run from one that is no range', () => {
 		const run = createRun(defineSpot(flop), ONE);
 		try {

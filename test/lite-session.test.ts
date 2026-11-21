@@ -157,6 +157,43 @@ describe('openLite', () => {
 		}
 	});
 
+	it('refuses an unplayable range on the way to a new run too, and keeps what it had', () => {
+		const session = openLite({ ...small, oop: 'AA,KK,QQ,AKs', ip: 'AsKs' }, ONE);
+		try {
+			const before = session.current;
+			const run = before.solution.solver;
+			// Not stored, so it would need a new run; and no hand of it can face As Ks.
+			expect(() => session.setRange(0, 'AsQs')).toThrow(/held against/);
+			expect(session.current).toBe(before);
+			expect(Number.isFinite(session.refine(5).solution.ev(0))).toBe(true);
+			expect(session.current.solution.solver).toBe(run);
+		} finally {
+			session.close();
+		}
+	});
+
+	it('keeps every hand a run stored when it gets a new one', () => {
+		const session = openLite(small, { ...ONE, sampling: false });
+		try {
+			const stored = (): number => session.current.solution.spot.players[0].count;
+			const opened = stored();
+			session.setRange(0, WIDE);
+			const wide = stored();
+			expect(wide).toBeGreaterThan(opened);
+			session.setRange(0, 'AA,KK,AKs');
+			expect(stored()).toBe(wide);
+			// A new hand again: a new run, with the wide hands still stored.
+			const run = session.current.solution.solver;
+			session.setRange(0, 'AA,KK,AKs,A5s');
+			expect(session.current.solution.solver).not.toBe(run);
+			expect(stored()).toBe(wide + 4);
+			const again = session.current.solution.solver;
+			expect(session.setRange(0, WIDE).solution.solver).toBe(again);
+		} finally {
+			session.close();
+		}
+	});
+
 	it('still refuses a range nobody can play, and keeps what it had', () => {
 		const session = openLite(small, ONE);
 		try {

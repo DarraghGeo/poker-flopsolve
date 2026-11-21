@@ -410,6 +410,8 @@ export interface LiteSession {
 	/**
 	 * The blueprint as it stands. It reads the session's live storage, so it
 	 * is good until the next `setRange`, and after `close` on this thread.
+	 * Its `changes` are those of the blueprint as opened: under
+	 * `compressRanges` the counts they give are the opening ranges'.
 	 */
 	readonly current: LiteSolution;
 	/**
@@ -486,9 +488,11 @@ export interface OpenLiteOptions extends SolveLiteOptions {
  * stored hand costs what a held one does, though (27–42% an iteration for
  * nine classes). Without them the blueprint costs what `solveLite`'s does,
  * and a move that adds a hand it does not store gets a new run started from
- * the old one's regrets, after which that hand is stored. The same five
- * moves with no reserve took 28 s on Ks 9s 4s against 50 for `solveLite`,
- * where the reserve's took 27.
+ * the old one's regrets, which stores that hand and every hand stored
+ * before it. A range that breaks a suit symmetry gets one too, and the
+ * session then stays without that symmetry. The same five
+ * moves with no reserve took 27 s on Ks 9s 4s against 51 for `solveLite`,
+ * as the reserve's did.
  *
  * `compressRanges` compresses both ranges again at every move and gets a new
  * run each time. `algorithm: 'cfr+'` clears its average at a move and keeps
@@ -538,24 +542,46 @@ export function openLite(config: SpotConfig, options: OpenLiteOptions = {}): Lit
 		},
 		setRange(player, range) {
 			const next: SpotConfig = { ...source, [player === 0 ? 'oop' : 'ip']: typeof range === 'string' ? range : range.slice() };
-			// The blueprint's ranges: the caller's, or both compressed again, each against the other.
-			const ranges = compress ? compressRanges(next, compress) : next;
-			try {
-				if (compress) {
-					// Tried on player 1 first only in that both must fit; a miss on the second leaves the first changed, and the new run below takes regrets alone.
-					run.setRange(0, ranges.oop, { resume: LITE_RESUME });
-					run.setRange(1, ranges.ip, { resume: LITE_RESUME });
-				} else {
+			let inPlace = false;
+			if (!compress) {
+				// In place where every hand is stored and the symmetries hold; a
+				// range that is none throws here, with nothing changed.
+				try {
 					run.setRange(player, range, { resume: LITE_RESUME });
+					inPlace = true;
+				} catch (error) {
+					if (!(error instanceof RangeNotInPlaceError)) throw error;
 				}
-			} catch (error) {
-				if (!(error instanceof RangeNotInPlaceError)) throw error;
-				// A hand the blueprint has no storage for, or a symmetry broken:
-				// a new run on the new ranges, started from this one's regrets.
-				const blueprint: SpotConfig = { ...preset.config, oop: ranges.oop, ip: ranges.ip };
-				const replacement = createRun(defineSpot(blueprint), { ...preset.options, warmStart: run, warmIteration: resumed() });
-				earlier += run.completed;
+			}
+			if (!inPlace) {
+				// A new run on the new ranges, started from this one's regrets.
+				// Under `compressRanges` always: both ranges are compressed again,
+				// each against the other, and keep other hands. Otherwise it
+				// stores what this one does as well, so a hand once stored stays
+				// stored and the way back is in place.
+				const ranges = compress ? compressRanges(next, compress) : next;
+				const stored = (index: { readonly slot: Int32Array }): Float64Array => Float64Array.from(index.slot, (slot) => (slot >= 0 ? 1 : 0));
+				const blueprint: SpotConfig = {
+					...preset.config,
+					oop: ranges.oop,
+					ip: ranges.ip,
+					...(compress ? {} : { oopReserve: stored(run.spot.players[0]), ipReserve: stored(run.spot.players[1]) }),
+				};
+				// Defined before anything is let go: a spot that cannot be throws here, with nothing changed.
+				const spot = defineSpot(blueprint);
+				// The old run's threads first, which the new one needs where
+				// threads are borrowed (a browser); its storage stays readable.
+				const count = resumed();
 				run.close();
+				let replacement: SolveRun;
+				try {
+					replacement = createRun(spot, { ...preset.options, warmStart: run, warmIteration: count });
+				} catch (error) {
+					// Back on the ranges it had: the same spot, so the average comes too.
+					run = createRun(run.spot, { ...preset.options, warmStart: run });
+					throw error;
+				}
+				earlier += run.completed;
 				run = replacement;
 			}
 			source = next;

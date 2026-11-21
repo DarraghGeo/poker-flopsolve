@@ -1014,8 +1014,10 @@ moves the session ended less exploitable):
   iteration and a first solve 20–52% longer for the nine classes above. Without them the first
   solve costs what `solveLite`'s does, and a move that adds a hand the blueprint does not store,
   or breaks a suit symmetry it folds runouts by, gets a new run on the new ranges, started from
-  the old one's regrets; after that the hand is stored. That costs a run's setup and the copy,
-  about 0.5 s on a 265 MiB blueprint, and holds both blueprints for that moment.
+  the old one's regrets. The new run stores that hand and every hand stored before it, so the
+  way back is in place; after a range that broke a symmetry the session stays without it. A new
+  run costs a run's setup and the copy, about 0.5 s on a 265 MiB blueprint, and holds both
+  blueprints for that moment.
 - **`compressRanges`** compresses both ranges again at every move, so every move gets a new run.
   Measured on a big blind's call against a button's open (458 and 426 combinations), where it
   matters; on As Kh 7d the gain is small, 0.83× the time, and one move of five was slower.

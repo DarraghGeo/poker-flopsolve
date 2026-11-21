@@ -16,6 +16,8 @@
   moves of 15 and 0.2–1.4% of pot more on the monotone flop.
 - `run.setRange` throws `RangeNotInPlaceError` for a range that needs a new run, apart from a
   range that is no range.
+- `defineSpot` refuses two ranges of which no pair of hands can be held together, which
+  solved to NaN before.
 - A warm start into a new run copies about nine times faster (4.7 s to 0.5 on a 265 MiB
   blueprint), the same values bit for bit.
 
