@@ -616,6 +616,46 @@ against the exact solve at equal iterations, root loss OOP / IP in % of pot (the
 `litePreset` and `largeTree` (45 pairs); none is refused. Every approximation
 tried and left out, with its numbers and issue, is in [docs/APPROXIMATIONS.md](docs/APPROXIMATIONS.md).
 
+### Startup
+
+What stands between a call and solving: defining the spot, creating the run, and whatever the
+first iteration costs over an ordinary one. Measured in new Node processes on the bench spots
+(`bench/startup/measure.ts`; milliseconds, medians; "before" is 0.5.0-beta.2):
+
+| spot | cold, before | cold | hot, before | hot |
+|---|---|---|---|---|
+| River | 12 | 11 | 2.5 | 1.7 |
+| Turn | 53 | 42 | 43 | 13 |
+| Flop | 582 | 233 | 412 | 75 |
+| Flop, 4 threads | 727 | 244 | 646 | 65 |
+| Lite, As Kh 7d, 4 threads | 1456 | 584 | 1445 | 436 |
+| Lite, Ts 9s 4h, 4 threads | 1124 | 474 | 1108 | 339 |
+| Lite, Ks 9s 4s, 4 threads | 562 | 292 | 492 | 183 |
+
+Cold is the first solve in a process. Hot is a later one of the same board and hands with
+another pot, as a page solving its next spot has. Importing the package takes 13–16 ms more.
+Where it went:
+
+- **The per-hand tables** (showdown ranking, hand lists, the maps between boards) were most of
+  `createRun`: 280 ms of a flop's. They are built about five times faster, and the last set is
+  kept: a spot defined again on the same board with the same hands stored and the same
+  symmetries, whatever its pot, betting or weights, takes them as they are. They hold a few MiB
+  on narrow ranges and tens on wide ones; `releaseSetupCache()` lets them go.
+- **Threads** took 100–190 ms to start, every run. A run now starts them before it builds its
+  tables, so they are up when it needs them, and when a run closes its threads end and
+  replacements start, off the calling thread, to wait 30 seconds for the next run.
+  `enableThreads(n)` from `poker-flopsolve/threads` starts them ahead of the first run and
+  keeps that many waiting for good; `enableThreads(1)` stops them.
+- **Fresh memory** is mapped page by page as it is first written, and the first iteration did
+  that with every thread writing at once: 380 ms on the flop on 4 threads where later ones take
+  75, and 1.3 s against 70 ms on the Lite blueprint. The storage is now written once up front, a
+  share a thread, which takes 50–100 ms.
+- **Laying out the storage** counted every hand on every board up to three times in `defineSpot`
+  and once more in `createRun`; it is counted once.
+
+What is left on Lite is its first iteration, which under chance sampling walks every deal to
+have a first value for each: 340 ms of the rainbow blueprint's 436 hot.
+
 ### Exact speed
 
 Measured on an Apple M2, single threaded:

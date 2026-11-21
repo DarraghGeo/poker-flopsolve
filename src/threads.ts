@@ -14,8 +14,10 @@
  *   const threads = await enableThreads();   // 1 if the page cannot thread
  *   const run = createRun(defineSpot(config), { workers: threads });
  *
- * In Node this resolves to the thread count straight away: Node starts
- * threads with each solve and needs no preparation.
+ * In Node this is optional: a run starts the threads it lacks, beside its
+ * own setup, and when it closes, replacements start and wait 30 seconds for
+ * the next run. Calling it starts them ahead of the first run and keeps
+ * that many waiting for good.
  */
 
 import { prepareThreads, threadsUnavailableReason } from './platform/node.ts';

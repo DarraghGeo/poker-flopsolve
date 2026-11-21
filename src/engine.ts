@@ -211,6 +211,60 @@ export interface EngineWorkerSetup {
 	readonly sampling?: SamplingArgs;
 	/** `Engine.profile`'s buffer and this thread's slot in it. */
 	readonly profile: readonly [SharedArrayBuffer, number];
+	/** This thread's share of the storage to touch before it reports ready: `from, to` byte pairs; see `touchShares`. */
+	readonly touch: readonly number[];
+}
+
+/** Bytes between two touches: a page of memory, the smallest a platform here maps. */
+const TOUCH_STEP = 4096;
+
+/**
+ * Split empty storage into one share a thread, as `from, to` byte pairs.
+ *
+ * Fresh memory is mapped page by page as it is first written, and left to
+ * the first iteration that happens with every thread writing at once, each
+ * waiting on the others: measured on a flop on 4 threads, it took 380 ms
+ * where later ones took 75, and 1.3 s against 70 ms under chance sampling,
+ * whose first iteration walks every deal. Written once up front, a share a
+ * thread and in order, the same pages took 50–250 ms.
+ *
+ * @param ranges the pieces, as `[from, to]` in bytes
+ * @param shares how many threads share them
+ */
+function touchShares(ranges: readonly (readonly [number, number])[], shares: number): number[][] {
+	const total = ranges.reduce((sum, [from, to]) => sum + (to - from), 0);
+	const each = Math.ceil(total / shares / TOUCH_STEP) * TOUCH_STEP;
+	const out: number[][] = Array.from({ length: shares }, () => []);
+	let share = 0;
+	let room = each;
+	for (const [start, to] of ranges) {
+		let from = start;
+		while (from < to) {
+			const take = Math.min(room, to - from);
+			out[share].push(from, from + take);
+			from += take;
+			room -= take;
+			if (room === 0 && share < shares - 1) {
+				share++;
+				room = each;
+			}
+		}
+	}
+	return out;
+}
+
+/**
+ * Write a zero to each page of a share of empty storage, so the memory is
+ * mapped before the solve needs it. Only over pieces still all zeros, which
+ * `createEngine` marks: reading a byte to write it back would be safe on any
+ * piece, but maps each page twice, once to read and once to write, and an
+ * atomic write took several times as long. Nothing else writes to a share
+ * between the engine's memory being filled and its threads being ready.
+ */
+function touchStorage(bytes: Uint8Array, share: readonly number[]): void {
+	for (let r = 0; r < share.length; r += 2) {
+		for (let at = share[r]; at < share[r + 1]; at += TOUCH_STEP) bytes[at] = 0;
+	}
 }
 
 /** `EngineExports.setSampling`'s arguments, in order. */
@@ -278,24 +332,28 @@ export function createEngine(
 	const [upRound, upStart] = flatten(hands.upStart);
 	const [childRound, childStart] = flatten(runouts.childStart);
 	const [orbitRound, orbitStart] = flatten(runouts.orbitStart);
-	const maxCount = Math.max(4, ...active.count);
+	let maxCount = 4;
+	for (let i = 0; i < active.count.length; i++) if (active.count[i] > maxCount) maxCount = active.count[i];
 	const stride = Math.ceil(maxCount / 4) * 4;
 	const maxActions = Math.max(1, layout.maxActions);
 	const depths = treeDepth(tree) + 2;
 	const rowBytes = stride * 4;
 	const depthBytes = rowBytes * (3 + 2 * maxActions);
 
-	const pieces: { data: ArrayBufferView | null; bytes: number }[] = [];
-	const add = (data: ArrayBufferView | null, bytes = data ? data.byteLength : 0): number => {
-		pieces.push({ data, bytes: Math.ceil(Math.max(bytes, 4) / 16) * 16 });
+	// `empty`: allocated as zeros and left so until the first iteration, which
+	// is what `touchStorage` may write zeros over. A piece filled in below,
+	// before the threads start, says false.
+	const pieces: { data: ArrayBufferView | null; bytes: number; empty: boolean }[] = [];
+	const add = (data: ArrayBufferView | null, bytes = data ? data.byteLength : 0, empty = data === null): number => {
+		pieces.push({ data, bytes: Math.ceil(Math.max(bytes, 4) / 16) * 16, empty });
 		return pieces.length - 1;
 	};
 	// Shared by every thread, in header order.
 	const common = [
 		add(tree.kind), add(tree.round), add(Uint8Array.from(tree.player, (p) => (p < 0 ? 255 : p))), add(tree.firstEdge),
 		add(tree.numEdges), add(tree.edgeChild), add(tree.payoff), add(layout.offset), add(layout.rowStart),
-		add(active.roundBase), add(active.start), add(Int32Array.from(active.count)), add(active.cardA), add(active.cardB),
-		add(active.strength), add(active.packed), add(Float32Array.from(active.multiplicity)), add(active.memberStart),
+		add(active.roundBase), add(active.start), add(new Int32Array(active.count)), add(active.cardA), add(active.cardB),
+		add(active.strength), add(active.packed), add(new Float32Array(active.multiplicity)), add(active.memberStart),
 		add(active.memberA), add(active.memberB), add(upRound), add(upStart), add(hands.up),
 		add(hands.sameStart), add(hands.same), add(childRound), add(childStart), add(orbitRound), add(orbitStart),
 		add(input.runoutWeight),
@@ -310,7 +368,7 @@ export function createEngine(
 		cardSums: add(null, 52 * 8 + stride * 8),
 		rootMe: add(null, rowBytes),
 		rootOpp: add(null, rowBytes),
-		header: add(null, 40 * 4),
+		header: add(null, 40 * 4, false),
 	}));
 	// The exchange between threads.
 	const entries = pool ? pool.plan.entryNodes.length : 0;
@@ -340,13 +398,13 @@ export function createEngine(
 	const chunks = compact ? layout.chunkSlots.length : 0;
 	const stored = storage
 		? {
-				block: add(null, 128),
+				block: add(null, 128, false),
 				blockOffset: sample ? sample.blockOffset : share ? share.blockOffset : add(layout.blockOffset),
 				regretScale: quantised ? add(null, layout.blocks * 8) : -1,
 				sumScale: quantised ? add(null, layout.blocks * 8) : -1,
 				compactChunk: compact ? add(layout.compactChunk) : -1,
-				handOffset: compact ? add(Int32Array.from(layout.handOffset!)) : -1,
-				tables: compact ? add(null, chunks * 4 * 5) : -1,
+				handOffset: compact ? add(new Int32Array(layout.handOffset!)) : -1,
+				tables: compact ? add(null, chunks * 4 * 5, false) : -1,
 				regrets: layout.chunkSlots.map((slots) => add(null, slots * (compact!.float ? 4 : 1))),
 				shifts: compact?.perHand ? layout.chunkHands.map((count) => add(null, count)) : [],
 				sums: compact?.sums ? layout.chunkSlots.map((slots) => add(null, slots)) : [],
@@ -368,6 +426,12 @@ export function createEngine(
 	pieces.forEach((piece, i) => {
 		if (piece.data) bytes.set(new Uint8Array(piece.data.buffer, piece.data.byteOffset, piece.data.byteLength), offsets[i]);
 	});
+	// The accumulators and whatever else is allocated empty and large: the
+	// pages the first iteration would otherwise map as it met them.
+	const touch = touchShares(
+		pieces.flatMap((piece, i) => (piece.empty && piece.bytes >= 16 * TOUCH_STEP ? [[offsets[i], offsets[i] + piece.bytes] as const] : [])),
+		threads,
+	);
 	for (const mine of own) {
 		const head = new Uint32Array(memory.buffer, offsets[mine.header], 40);
 		common.forEach((slot, i) => (head[i] = offsets[slot]));
@@ -474,6 +538,7 @@ export function createEngine(
 	let schedule: ScheduleViews | null = null;
 	const workers: { terminate(): void }[] = [];
 	let failure: Error | null = null;
+	if (!pool) touchStorage(bytes, touch[0]);
 	if (pool) {
 		const plan = pool.plan;
 		const controlBuffer = new SharedArrayBuffer(ENGINE_CONTROL.size * 4);
@@ -499,6 +564,7 @@ export function createEngine(
 				...(stored ? { storage: true } : {}),
 				...(samplingArgs ? { sampling: samplingArgs } : {}),
 				profile: [profileBuffer, PROFILE.busy + w],
+				touch: touch[w],
 			};
 			workers.push(pool.spawn(setup, (error) => {
 				failure ??= error;
@@ -508,6 +574,8 @@ export function createEngine(
 				Atomics.notify(control!, ENGINE_CONTROL.ready);
 			}));
 		}
+		// This thread's share, while the others start and touch theirs.
+		touchStorage(bytes, touch[0]);
 		// A worker that fails to start reports it by an event, which cannot
 		// be delivered while this thread waits here, so the wait is bounded.
 		const deadline = Date.now() + WORKER_START_MS;
