@@ -136,6 +136,21 @@ describe('engine threads', () => {
 		expect(Object.is(solved(flop, threaded), expected)).toBe(true);
 	});
 
+	it('leave a run that needs none alone, and a closed run nothing to hold', async () => {
+		// A river is never split, so nothing is started for it.
+		const river = createRun(defineSpot({ ...turn, board: 'AsKh7d2c9h' }), threaded);
+		expect(river.workers).toBe(1);
+		river.close();
+		// Kept waiting threads are replaced as runs use them, not added to.
+		await enableThreads(3);
+		for (let i = 0; i < 3; i++) solved(flop, threaded);
+		const pool = (globalThis as unknown as Record<symbol, { idle: unknown[]; kept: number }>)[Symbol.for('poker-flopsolve.node-engine-threads')];
+		expect(pool.kept).toBe(2);
+		expect(pool.idle.length).toBe(2);
+		await enableThreads(1);
+		expect(pool.idle.length).toBe(0);
+	});
+
 	it('map the storage a run starts from, leaving it zeroed', () => {
 		for (const options of [ONE, threaded]) {
 			const run = createRun(defineSpot(flop), options);

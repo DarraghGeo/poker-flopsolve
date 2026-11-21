@@ -1406,14 +1406,6 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	if (options.analysisOnly && options.approximations?.currentProfileEv) {
 		throw new Error('approximations.currentProfileEv needs regrets, and an analysisOnly run has none');
 	}
-	// Threads take as long to start as the tables below take to build, so the
-	// ones the engine is likely to want start now, beside that work. Whether
-	// it runs, and on how many, is settled further down; a thread started for
-	// nothing waits for the next run.
-	if (options.workers !== undefined && options.workers !== 1 && !options.analysisOnly && options.engine !== 'js' && options.simd !== false && options.precision !== 'f64') {
-		const likely = Math.min(options.workers === 'auto' ? defaultWorkerCount() : options.workers, threadLimit(true));
-		if (likely > 1 && Number.isInteger(likely)) warmEngineThreads(likely - 1);
-	}
 	// A saved strategy is loaded as float32 sums, so analysis stays there.
 	const maxBytes = spot.source.maxBytes ?? DEFAULT_MAX_BYTES;
 	const { bytes } = spot.estimate;
@@ -1440,6 +1432,18 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	for (const combo of spot.players[0].combos) relevant[combo] = 1;
 	for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
+	// Threads take as long to start as the tables below take to build, so
+	// the ones this run will use start now, beside that work. Judged as the
+	// engine and the split are below; where chance sampling's baselines then
+	// push the storage to 16 bits, threads started for nothing wait for the
+	// next run or end.
+	if (!options.analysisOnly && options.engine !== 'js' && options.simd !== false && (options.workers ?? 1) !== 1) {
+		const engineLikely =
+			(precision === 'f32' && !compact) ||
+			(options.wasmStorage !== undefined && precision !== 'f64' && (precision === 'i16' || compact !== null));
+		const asked = engineLikely ? resolveWorkers(options, true) : 1;
+		if (asked > 1 && planShards(spot.tree, spot.runouts, asked)) warmEngineThreads(asked - 1);
+	}
 	const { showdown, active, hands } = setupTables(spot, relevant);
 	const layoutAt = (at: Precision): Layout => buildLayout(
 		spot.tree, spot.runouts, spot.players, PRECISION_BYTES[at], spot.historyAlias, compact ?? undefined,

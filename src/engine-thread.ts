@@ -94,11 +94,14 @@ export function serveEngine(setup: EngineWorkerSetup): void {
 	const profile = new Float64Array(setup.profile[0]);
 	const busy = setup.profile[1];
 
-	// This thread's share of the zeroed storage, mapped before the solve
-	// needs it; `touchStorage` in src/engine.ts, inlined.
+	// This thread's share of the empty storage, mapped before the solve needs
+	// it; `touchStorage` in src/engine.ts, inlined.
+	// Not for a solve that gave up before this thread started.
 	const pages = new Uint8Array(memory.buffer);
-	for (let r = 0; r < setup.touch.length; r += 2) {
-		for (let at = setup.touch[r]; at < setup.touch[r + 1]; at += 4096) pages[at] = 0;
+	if (Atomics.load(control, COMMAND) !== EXIT) {
+		for (let r = 0; r < setup.touch.length; r += 2) {
+			for (let at = setup.touch[r]; at < setup.touch[r + 1]; at += 4096) pages[at] = 0;
+		}
 	}
 
 	// Latch the generation before announcing readiness, so no dispatch is missed.
