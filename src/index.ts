@@ -681,6 +681,9 @@ export function defineSpot(config: SpotConfig): Spot {
 	const tree = buildTree(treeConfig(config, rows), runouts);
 
 	const historyAlias = config.shareHistories ? shareHistories(tree, runouts, config, chipScale) : undefined;
+	if (merge && board.length === 3 && (config.streetCompression?.turn ?? 0) > 0) {
+		throw new Error('streetCompression.turn cannot be used with runoutBuckets: a bucketed river deal relabels hands, and a turn\'s kept hands are chosen for its own deals');
+	}
 	const kept = keptSetsFor(runouts, players, config.streetCompression, board.length);
 	const layout = buildLayout(tree, runouts, players, 4, historyAlias, undefined, kept);
 	const last = runouts.rounds - 1;
@@ -2090,6 +2093,16 @@ function createFixedRun(spot: Spot, options: SolveOptions = {}, before = 0): Fix
 			// Counted pair by pair: the mass, summed by inclusion-exclusion, leaves a rounding residue for none.
 			if (!holdable(nextRange, spot.players[1 - player].weights)) {
 				throw new Error('setRange: no hand of this range can be held against the other range');
+			}
+			if (spot.kept) {
+				// Each board's kept hands stand for the hands the ranges held when
+				// they were chosen: weights may move in place, a new hand may not.
+				const held = spot.kept.held[player];
+				for (let combo = 0; combo < COMBOS; combo++) {
+					if (nextRange[combo] > 0 && held[combo] === 0) {
+						throw new RangeNotInPlaceError('setRange: a spot with streetCompression keeps hands chosen for the hands its ranges held, and takes a new hand on a new run');
+					}
+				}
 			}
 			if (unstored >= 0) {
 				throw new RangeNotInPlaceError(

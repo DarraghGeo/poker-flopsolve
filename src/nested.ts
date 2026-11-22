@@ -13,15 +13,15 @@
  * and so does every decision's storage there. At the deal that reaches the
  * board, each hand that could be held (a candidate) hands its reach to the
  * kept hand it plays most like, its stand-in, and takes that hand's value
- * back (`traverse`, the chance branch). A kept hand's gathered reach is
- * scaled so that the kept hands weigh what the compressor fitted them to
- * weigh when every candidate arrives in proportion to its weight.
+ * back (`traverse`, the chance branch). A kept hand so carries the reach of
+ * every hand it stands for, whatever the ranges' weights are.
  *
  * The compressor is poker-rangecompress's, as for `compressRanges`.
  */
 
 import { COMBO_CARDS, COMBOS, DECK, comboIndex, parseCard } from './cards.ts';
 import type { PlayerIndex } from './cfr.ts';
+import { evaluate } from './eval7.ts';
 import type { Runouts } from './runouts.ts';
 import RangeCompress from './vendor/range-compress.js';
 
@@ -48,8 +48,10 @@ export interface KeptSets {
 	readonly orbit: Uint8Array;
 	/** For a kept candidate, what its gathered reach is multiplied by; else 0. */
 	readonly scale: Float32Array;
-	/** For a kept candidate, the weight it was fitted to carry, a hand; else 0. */
+	/** For a kept candidate, the weight it carried when the sets were chosen, a hand; else 0. */
 	readonly weight: Float32Array;
+	/** Per player, 1 for each combination that had weight when the sets were chosen: the hands they cover. */
+	readonly held: readonly [Uint8Array, Uint8Array];
 	/** Hands kept and candidates, over all boards of each round and both players. */
 	readonly keptHands: readonly number[];
 	readonly candidates: readonly number[];
@@ -126,6 +128,165 @@ function comboOf(hand: string): number {
 	}
 	return combo;
 }
+
+
+const strengthOf = new Int32Array(COMBOS);
+const keyed = [new Float64Array(COMBOS), new Float64Array(COMBOS)];
+const equityOf = new Float64Array(COMBOS);
+const runCard = new Float64Array(DECK);
+const tieCard = new Float64Array(DECK);
+const allCard = new Float64Array(DECK);
+
+/**
+ * Kept sets for one river board, by clustering. With no card to come a hand
+ * is its strength and its blockers, and two hands the other player's range
+ * sits in the same place against play alike. Each player's candidates are
+ * walked in order of strength and gathered while their equities against the
+ * other's arriving range, exact under card removal, stay within `width` of
+ * each other; a cluster keeps the hand nearest its mean equity, which then
+ * weighs what the whole cluster did. So the kept hands carry exactly the
+ * weight that arrives, and a hand of the other player sees the range it
+ * faces move only inside a cluster.
+ */
+function clusterRiver(
+	board: Uint8Array,
+	spans: readonly (readonly [number, number])[],
+	arriving: readonly Float64Array[],
+	width: number,
+	combo: Uint16Array,
+	stand: Uint16Array,
+	orbit: Uint8Array,
+	scale: Float32Array,
+	weight: Float32Array,
+): void {
+	const suits = [0, 0, 0, 0];
+	for (const card of board) suits[card & 3] |= 1 << (card >> 2);
+	const strength = (c: number): number => {
+		const a = COMBO_CARDS[c * 2];
+		const b = COMBO_CARDS[c * 2 + 1];
+		const mine = [suits[0], suits[1], suits[2], suits[3]];
+		mine[a & 3] |= 1 << (a >> 2);
+		mine[b & 3] |= 1 << (b >> 2);
+		return evaluate(mine[0], mine[1], mine[2], mine[3]);
+	};
+	const onBoard = new Uint8Array(DECK);
+	for (const card of board) onBoard[card] = 1;
+	// Every real hand of each player that arrives, keyed by strength then combination.
+	const counts = [0, 0];
+	for (let player = 0; player < 2; player++) {
+		const from = arriving[player];
+		const keys = keyed[player];
+		let n = 0;
+		for (let c = 0; c < COMBOS; c++) {
+			if (!(from[c] > 0) || onBoard[COMBO_CARDS[c * 2]] || onBoard[COMBO_CARDS[c * 2 + 1]]) continue;
+			strengthOf[c] = strength(c);
+			keys[n++] = strengthOf[c] * 2048 + c;
+		}
+		keys.subarray(0, n).sort();
+		counts[player] = n;
+	}
+	for (let player = 0; player < 2; player++) {
+		const [from, to] = spans[player];
+		if (to - from < 2) continue;
+		const mine = keyed[player];
+		const theirs = keyed[1 - player];
+		const theirWeight = arriving[1 - player];
+		const nTheirs = counts[1 - player];
+		// Their mass in all and through each card.
+		let all = 0;
+		allCard.fill(0);
+		for (let j = 0; j < nTheirs; j++) {
+			const c = theirs[j] % 2048;
+			const w = theirWeight[c];
+			all += w;
+			allCard[COMBO_CARDS[c * 2]] += w;
+			allCard[COMBO_CARDS[c * 2 + 1]] += w;
+		}
+		// Each of my hands' equity, exact under card removal, in one sweep by strength.
+		runCard.fill(0);
+		let run = 0;
+		let below = 0;
+		let tieFrom = 0;
+		let tieTo = 0;
+		let tie = 0;
+		let tieStrength = -1;
+		for (let i = 0; i < counts[player]; i++) {
+			const c = mine[i] % 2048;
+			const s = strengthOf[c];
+			if (s !== tieStrength) {
+				// Theirs below this strength join the running sums; theirs at it are the ties.
+				for (let j = tieFrom; j < tieTo; j++) tieCard[COMBO_CARDS[(theirs[j] % 2048) * 2]] = tieCard[COMBO_CARDS[(theirs[j] % 2048) * 2 + 1]] = 0;
+				while (below < nTheirs && strengthOf[theirs[below] % 2048] < s) {
+					const o = theirs[below++] % 2048;
+					const w = theirWeight[o];
+					run += w;
+					runCard[COMBO_CARDS[o * 2]] += w;
+					runCard[COMBO_CARDS[o * 2 + 1]] += w;
+				}
+				tieFrom = below;
+				tieTo = below;
+				tie = 0;
+				while (tieTo < nTheirs && strengthOf[theirs[tieTo] % 2048] === s) {
+					const o = theirs[tieTo++] % 2048;
+					const w = theirWeight[o];
+					tie += w;
+					tieCard[COMBO_CARDS[o * 2]] += w;
+					tieCard[COMBO_CARDS[o * 2 + 1]] += w;
+				}
+				tieStrength = s;
+			}
+			const a = COMBO_CARDS[c * 2];
+			const b = COMBO_CARDS[c * 2 + 1];
+			// The very same combination, if they hold it, went out through both cards.
+			const same = theirWeight[c] > 0 ? theirWeight[c] : 0;
+			const live = all - allCard[a] - allCard[b] + same;
+			const lower = run - runCard[a] - runCard[b];
+			const level = tie - tieCard[a] - tieCard[b] + same;
+			equityOf[c] = live > 0 ? (lower + level / 2) / live : 0.5;
+		}
+		for (let j = tieFrom; j < tieTo; j++) tieCard[COMBO_CARDS[(theirs[j] % 2048) * 2]] = tieCard[COMBO_CARDS[(theirs[j] % 2048) * 2 + 1]] = 0;
+		// Where each candidate sits, to walk them in order of strength.
+		for (let i = from; i < to; i++) slotOf[combo[i]] = i;
+		let low = 0;
+		let high = 0;
+		const members: number[] = [];
+		const close = (): void => {
+			if (members.length === 0) return;
+			let massSum = 0;
+			let mean = 0;
+			for (const i of members) {
+				const m = weight[i] * orbit[i];
+				massSum += m;
+				mean += m * equityOf[combo[i]];
+			}
+			mean /= massSum;
+			let keep = members[0];
+			for (const i of members) if (Math.abs(equityOf[combo[i]] - mean) < Math.abs(equityOf[combo[keep]] - mean)) keep = i;
+			for (const i of members) {
+				stand[i] = combo[keep];
+				if (i !== keep) scale[i] = weight[i] = 0;
+			}
+			scale[keep] = 1 / orbit[keep];
+			weight[keep] = massSum / orbit[keep];
+			members.length = 0;
+		};
+		for (let k = 0; k < counts[player]; k++) {
+			const c = mine[k] % 2048;
+			const i = slotOf[c];
+			if (i < from || i >= to || combo[i] !== c) continue;
+			const e = equityOf[c];
+			if (members.length > 0 && Math.max(high, e) - Math.min(low, e) > width) close();
+			if (members.length === 0) low = high = e;
+			else {
+				if (e < low) low = e;
+				if (e > high) high = e;
+			}
+			members.push(i);
+		}
+		close();
+	}
+}
+const slotOf = new Int32Array(COMBOS).fill(-1);
 
 /** Tolerances up to this keep every candidate. */
 const WHOLE = 1e-9;
@@ -205,6 +366,8 @@ export function chooseKeptSets(
 		const parentStabMap = runouts.stabiliserMap[round - 1];
 		// A tolerance too small to drop anything keeps every candidate, without asking the compressor.
 		const tol = tolerance[round] > WHOLE ? tolerance[round] : 0;
+		// A river board has no cards to come: its hands are ordered by strength, and are clustered by equity.
+		const clustered = width === 5;
 		let lastParent = -1;
 		for (let board = 0; board < runouts.counts[round]; board++) {
 			const parent = runouts.parent[round][board];
@@ -246,7 +409,7 @@ export function chooseKeptSets(
 						if (image < leader) leader = image;
 					}
 					leaderOf[c] = leader;
-					if (tol > 0) {
+					if (tol > 0 && !clustered) {
 						// The compressor wants a hand's lower card first, by its own numbering.
 						const x = TO_VENDOR[COMBO_CARDS[c * 2]];
 						const y = TO_VENDOR[COMBO_CARDS[c * 2 + 1]];
@@ -277,7 +440,9 @@ export function chooseKeptSets(
 				candidates[round] += at - from;
 			}
 			start[(roundBase[round] + board) * 2 + 2] = at;
-			if (tol > 0 && hands[0].length >= 3 && hands[1].length >= 3) {
+			if (tol > 0 && clustered) {
+				clusterRiver(cards.subarray(board * width, (board + 1) * width), spans, arriving, tol, combo, stand, orbit, scale, weight);
+			} else if (tol > 0 && hands[0].length >= 3 && hands[1].length >= 3) {
 				const out = RangeCompress.compressBoth({
 					oop: hands[0], ip: hands[1], board: Array.from(cards.subarray(board * width, (board + 1) * width), (card) => TO_VENDOR[card]),
 					tolerance: tol, standIns: 1,
@@ -286,14 +451,11 @@ export function chooseKeptSets(
 					const result = (player === 0 ? out.oop : out.ip) as unknown as {
 						hands: readonly { hand: string; weight: number }[];
 						standIns: Readonly<Record<string, readonly string[]>>;
-						weightScale: number;
 					};
 					const [from, to] = spans[player];
-					let largest = 0;
-					for (let c = 0; c < COMBOS; c++) if (arriving[player][c] > largest) largest = arriving[player][c];
-					// A kept leader's fitted weight, a hand: its orbit's fitted weight over its size.
+					// Which candidates the compressor kept, by leader.
 					for (let i = from; i < to; i++) fitted[combo[i]] = mass[combo[i]] = 0;
-					for (const { hand, weight: w } of result.hands) fitted[leaderOf[comboOf(hand)]] += (w / result.weightScale) * largest;
+					for (const { hand } of result.hands) fitted[leaderOf[comboOf(hand)]] = 1;
 					for (let i = from; i < to; i++) standOf[combo[i]] = combo[i];
 					for (const hand in result.standIns) standOf[comboOf(hand)] = leaderOf[comboOf(result.standIns[hand][0])];
 					for (let i = from; i < to; i++) {
@@ -308,9 +470,12 @@ export function chooseKeptSets(
 							continue;
 						}
 						// A candidate that had to stand for itself was fitted no weight: it keeps its own.
-						const fit = fitted[c] > 0 ? fitted[c] / orbit[i] : weight[i];
-						scale[i] = fit / mass[c];
-						weight[i] = fit;
+						// A kept hand weighs what the hands it stands for did: the
+						// compressor's own fitted weights measured 0.3 to 0.5% of pot
+						// more exploitable in the full game, and this way the scale
+						// does not depend on the ranges' weights.
+						scale[i] = 1 / orbit[i];
+						weight[i] = mass[c] / orbit[i];
 					}
 				}
 			}
@@ -328,6 +493,7 @@ export function chooseKeptSets(
 	};
 	return {
 		tolerance: tolerance.slice(), rounds, start, ...trimmed, keptHands, candidates,
+		held: [Uint8Array.from(players[0].weights, (w) => (w > 0 ? 1 : 0)), Uint8Array.from(players[1].weights, (w) => (w > 0 ? 1 : 0))],
 		bytes: start.byteLength + at * (2 + 2 + 1 + 4 + 4),
 	};
 }

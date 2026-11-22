@@ -2111,6 +2111,7 @@ export function makeSolver(ctx: Context): Solver {
 			void live;
 			void liveCount;
 			const round = ctx.tree.round[node];
+			refuseKept(ctx, round, 'valuesAt');
 			const opponent = (1 - traverser) as 0 | 1;
 			// Values depend on the opponent's reach alone. A packed list can
 			// carry it only when mirrored hands hold equally much, as they do
@@ -2165,6 +2166,7 @@ export function makeSolver(ctx: Context): Solver {
 			}
 		},
 		pairValuesAt(node, board, traverser, hands, handReach, live, liveCount) {
+			refuseKept(ctx, 0, 'pairValuesAt', true);
 			return pairValues(ctx, node, board, traverser, hands, handReach, live, liveCount);
 		},
 		averageStrategyAt(node, board) {
@@ -2201,6 +2203,19 @@ export function makeSolver(ctx: Context): Solver {
 			return { actions, probs };
 		},
 	};
+}
+
+/**
+ * Values hand by hand need every hand on the board they start from, and
+ * hand-against-hand values on every board below it; a board with a kept set
+ * (`streetCompression`) holds only its kept hands.
+ */
+export function refuseKept(ctx: Context, round: number, what: string, below = false): void {
+	const kept = ctx.kept;
+	if (!kept) return;
+	if (below ? kept.rounds.includes(1) : kept.rounds[round] === 1) {
+		throw new Error(`${what}: not available ${below ? 'in a spot' : 'on a board'} with streetCompression's kept sets; solve the later street again (resolveSubgame) to read every hand there`);
+	}
 }
 
 export { buildActiveLists, makeTerminalScratch };
