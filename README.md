@@ -1108,6 +1108,14 @@ moves the session ended less exploitable):
   moving sooner than it is good. It is the fastest of the three and the least even: on the
   monotone flop every move ended 0.2–1.4% of pot more exploitable than `solveLite`.
 
+`session.edit(changes)` and `session.preview(changes)` do for the pot, stack and betting what
+`setRange` does for a range (`run.edit`, above): the blueprint is derived again from the edited
+spot and settled from where it stands. On Ks 9s 4s, five edits (a flop size moved, added and
+removed, a raise size moved, the pot raised) settled in 32 s against 62 for five `solveLite`
+calls, 4–11 s each against 11–17, with the preview in 3–16 ms. They ended 2.5–4.4% of pot
+exploitable against `solveLite`'s 2.7–3.6: lower on two of the five and 0.3–1.7 higher on three.
+Measured on that one flop only.
+
 The runout buckets are chosen by the hands stored, so they hold for every range that changes in
 place. Under the blueprint's shared river histories a reserved hand's river play is not trained
 until it has weight, so a move that adds hands has that to settle too. Each `setRange` or

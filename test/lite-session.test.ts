@@ -115,6 +115,56 @@ describe('openLite', () => {
 		}
 	});
 
+	it('takes an edit to the betting, pot or stack, and settles it sooner than a new solve', () => {
+		const options = { ...ONE, sampling: false } as const;
+		const session = openLite(small, options);
+		try {
+			let [warmTotal, coldTotal] = [0, 0];
+			for (const changes of [{ betSizes: [[0.33, 0.8], [0.5, 1]] }, { betSizes: [[0.33, 0.66, 1.2], [0.5, 1]] }, { pot: 72 }, { maxRaises: 3 }]) {
+				const before = session.iterations;
+				const edited = { ...session.current.source, ...changes } as SpotConfig;
+				const preview = session.preview(changes);
+				const warm = session.edit(changes);
+				const cold = solveLite(edited, options);
+				expect(warm).toBe(session.current);
+				expect(warm.source).toEqual(edited);
+				// The blueprint is the edited spot's own, as a new solveLite derives it.
+				expect(warm.solution.spot.tree.decisionNodes.length).toBe(cold.solution.spot.tree.decisionNodes.length);
+				expect(preview.spot.tree.decisionNodes.length).toBe(cold.solution.spot.tree.decisionNodes.length);
+				expect(warm.solution.stoppedAt).toBe('settled');
+				expect(warm.solution.iterations).toBe(session.iterations);
+				expect(Math.abs(warm.solution.ev(0) - cold.solution.ev(0))).toBeLessThan(0.5);
+				expect(warm.solution.exploitabilityPercent()).toBeLessThan(cold.solution.exploitabilityPercent() * 1.2 + 0.2);
+				warmTotal += session.iterations - before;
+				coldTotal += cold.solution.iterations;
+			}
+			expect(warmTotal).toBeLessThan(coldTotal);
+			// A later street is re-solved at the edited betting.
+			const { tree } = session.current.solution.spot;
+			const chance = tree.edgeChild[tree.firstEdge[tree.edgeChild[tree.firstEdge[0]]]];
+			const resolved = session.current.resolve(tree.edgeChild[tree.firstEdge[chance]], 0, { player: 0, iterations: 20 });
+			expect(resolved.solution.spot.source.pot).toBe(72);
+		} finally {
+			session.close();
+		}
+	});
+
+	it('keeps its ranges through an edit, and changes nothing for one that cannot be', () => {
+		const session = openLite(small, ONE);
+		try {
+			session.setRange(0, 'AA,KK,AKs,AQs,76s');
+			const weights = Array.from(session.current.solution.spot.players[0].weights);
+			session.edit({ pot: 80 });
+			expect(Array.from(session.current.solution.spot.players[0].weights)).toEqual(weights);
+			const before = session.current;
+			expect(() => session.edit({ pot: -5 })).toThrow(/pot/);
+			expect(session.current).toBe(before);
+			expect(before.source.pot).toBe(80);
+		} finally {
+			session.close();
+		}
+	});
+
 	it('refines the range it stands on', () => {
 		const session = openLite(small, { ...ONE, sampling: false });
 		try {
