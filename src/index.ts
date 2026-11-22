@@ -2251,7 +2251,8 @@ function planCoarseStart(spot: Spot, options: SolveOptions, maxBytes: number, us
 	const own = spot.source.runoutBuckets;
 	const ownGap = own === true ? DEFAULT_BUCKET_GAP : own || 0;
 	if (iterations === 0 || spot.board.length === 5 || runoutBuckets <= ownGap) return null;
-	const coarseSpot = defineSpot({ ...spot.source, runoutBuckets });
+	// The coarse start stores every hand: a compressed turn's kept hands are chosen for its own deals.
+	const coarseSpot = defineSpot({ ...spot.source, runoutBuckets, streetCompression: undefined });
 	if (coarseSpot.runouts.counts.at(-1)! >= spot.runouts.counts.at(-1)!) return null;
 
 	// A compact spot's coarse spot is compact too: its storage is its layout at
@@ -2783,6 +2784,7 @@ function makeSolution(
 export { formatCards, parseCards };
 export { compressRanges, rebuildRanges, STAND_INS } from './compress.ts';
 export type { CompressedRanges, CompressRangesOptions, RangeCompression } from './compress.ts';
+export type { KeptSets } from './nested.ts';
 export { bettingFrom, checkedDown, exploitabilityInExact, keepWithin, liteConfig, litePreset, openLite, solveLite } from './lite.ts';
 export type { LiteOptions, LitePreset, LiteResolveOptions, LiteSession, LiteSolution, OpenLiteOptions, SolveLiteOptions } from './lite.ts';
 export type { PresetChanges, SettingChange, SizesCut, Street } from './presets.ts';

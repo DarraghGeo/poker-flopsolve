@@ -139,14 +139,14 @@ const allCard = new Float64Array(DECK);
 
 /**
  * Kept sets for one river board, by clustering. With no card to come a hand
- * is its strength and its blockers, and two hands the other player's range
- * sits in the same place against play alike. Each player's candidates are
- * walked in order of strength and gathered while their equities against the
- * other's arriving range, exact under card removal, stay within `width` of
- * each other; a cluster keeps the hand nearest its mean equity, which then
- * weighs what the whole cluster did. So the kept hands carry exactly the
- * weight that arrives, and a hand of the other player sees the range it
- * faces move only inside a cluster.
+ * is its strength and its blockers. Each player's candidates are walked in
+ * order of strength and gathered while two things stay within `width` of
+ * each other: their equities against the other's arriving range, exact
+ * under card removal, and what they block of each of `BANDS` bands of that
+ * range, as a share of it. A cluster keeps the hand nearest its mean equity,
+ * which then weighs what the whole cluster did. So the kept hands carry
+ * exactly the weight that arrives, and a hand of the other player sees the
+ * range it faces move only inside a cluster.
  */
 function clusterRiver(
 	board: Uint8Array,
@@ -201,6 +201,18 @@ function clusterRiver(
 			all += w;
 			allCard[COMBO_CARDS[c * 2]] += w;
 			allCard[COMBO_CARDS[c * 2 + 1]] += w;
+		}
+		// Their range in bands of equal weight by strength, and each band's mass through each card: what a hand of mine blocks of each.
+		bandCard.fill(0);
+		let before = 0;
+		for (let j = 0; j < nTheirs; j++) {
+			const c = theirs[j] % 2048;
+			const w = theirWeight[c];
+			const band = Math.min(BANDS - 1, Math.floor((BANDS * (before + w / 2)) / all));
+			before += w;
+			bandOf[c] = band;
+			bandCard[band * DECK + COMBO_CARDS[c * 2]] += w;
+			bandCard[band * DECK + COMBO_CARDS[c * 2 + 1]] += w;
 		}
 		// Each of my hands' equity, exact under card removal, in one sweep by strength.
 		runCard.fill(0);
@@ -275,11 +287,26 @@ function clusterRiver(
 			const i = slotOf[c];
 			if (i < from || i >= to || combo[i] !== c) continue;
 			const e = equityOf[c];
-			if (members.length > 0 && Math.max(high, e) - Math.min(low, e) > width) close();
-			if (members.length === 0) low = high = e;
-			else {
+			// What it blocks of each band, as a share of their range.
+			const a = COMBO_CARDS[c * 2];
+			const b = COMBO_CARDS[c * 2 + 1];
+			let apart = members.length > 0 && Math.max(high, e) - Math.min(low, e) > width;
+			for (let band = 0; band < BANDS; band++) {
+				const blocks = (bandCard[band * DECK + a] + bandCard[band * DECK + b] - (theirWeight[c] > 0 && bandOf[c] === band ? theirWeight[c] : 0)) / all;
+				blockOf[band] = blocks;
+				if (members.length > 0 && Math.max(bandHigh[band], blocks) - Math.min(bandLow[band], blocks) > width) apart = true;
+			}
+			if (apart) close();
+			if (members.length === 0) {
+				low = high = e;
+				for (let band = 0; band < BANDS; band++) bandLow[band] = bandHigh[band] = blockOf[band];
+			} else {
 				if (e < low) low = e;
 				if (e > high) high = e;
+				for (let band = 0; band < BANDS; band++) {
+					if (blockOf[band] < bandLow[band]) bandLow[band] = blockOf[band];
+					if (blockOf[band] > bandHigh[band]) bandHigh[band] = blockOf[band];
+				}
 			}
 			members.push(i);
 		}
@@ -287,6 +314,19 @@ function clusterRiver(
 	}
 }
 const slotOf = new Int32Array(COMBOS).fill(-1);
+/**
+ * Bands the other range is cut in for what a hand blocks. Two hands of one
+ * equity can block different parts of it, and so bluff and call differently:
+ * clustered on equity alone, a turn spot was 2.5% of pot exploitable in the
+ * full game with 43% of its river hands kept, and with eight bands 1.8% with
+ * 44% (bench/street-compression).
+ */
+const BANDS = 8;
+const bandCard = new Float64Array(BANDS * DECK);
+const bandOf = new Int8Array(COMBOS);
+const blockOf = new Float64Array(BANDS);
+const bandLow = new Float64Array(BANDS);
+const bandHigh = new Float64Array(BANDS);
 
 /** Tolerances up to this keep every candidate. */
 const WHOLE = 1e-9;
