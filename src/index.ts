@@ -684,7 +684,7 @@ export function defineSpot(config: SpotConfig): Spot {
 	if (merge && board.length === 3 && (config.streetCompression?.turn ?? 0) > 0) {
 		throw new Error('streetCompression.turn cannot be used with runoutBuckets: a bucketed river deal relabels hands, and a turn\'s kept hands are chosen for its own deals');
 	}
-	const kept = keptSetsFor(runouts, players, config.streetCompression, board.length);
+	const kept = keptSetsFor(runouts, players, config.streetCompression, board.length, reserves);
 	const layout = buildLayout(tree, runouts, players, 4, historyAlias, undefined, kept);
 	const last = runouts.rounds - 1;
 	const showdownBytes = runouts.counts[last] * (2 * COMBOS + COMBOS + 1) * 2;
@@ -802,6 +802,7 @@ function keptSetsFor(
 	players: readonly [PlayerIndex, PlayerIndex],
 	streets: StreetCompression | undefined,
 	boardCards: number,
+	reserves: readonly (Float64Array | null)[],
 ): KeptSets | null {
 	if (!streets) return null;
 	for (const [name, value] of [['turn', streets.turn], ['river', streets.river]] as const) {
@@ -812,15 +813,20 @@ function keptSetsFor(
 	if (boardCards === 3) tolerance[1] = streets.turn ?? 0;
 	if (boardCards < 5) tolerance[runouts.rounds - 1] = streets.river ?? 0;
 	if (!tolerance.some((value) => value > 0)) return null;
+	// The sets are chosen for each range and its reserve: a stored hand without weight at its reserve's.
+	const chosenFor = players.map((index, player) => {
+		const reserve = reserves[player];
+		return reserve === null ? index.weights : index.weights.map((weight, combo) => (weight > 0 || index.slot[combo] < 0 ? weight : reserve[combo]));
+	}) as [Float64Array, Float64Array];
 	const same = (a: Float64Array, b: Float64Array): boolean => a.every((value, i) => value === b[i]);
 	if (
 		lastKept && lastKept.runouts === runouts && lastKept.tolerance.every((value, i) => value === tolerance[i]) &&
-		same(lastKept.weights[0], players[0].weights) && same(lastKept.weights[1], players[1].weights)
+		same(lastKept.weights[0], chosenFor[0]) && same(lastKept.weights[1], chosenFor[1])
 	) {
 		return lastKept.sets;
 	}
-	const sets = chooseKeptSets(runouts, players, tolerance);
-	if (sets) lastKept = { runouts, weights: [players[0].weights.slice(), players[1].weights.slice()], tolerance, sets };
+	const sets = chooseKeptSets(runouts, players, tolerance, chosenFor);
+	if (sets) lastKept = { runouts, weights: [chosenFor[0].slice(), chosenFor[1].slice()], tolerance, sets };
 	return sets;
 }
 

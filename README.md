@@ -1074,7 +1074,9 @@ Both are off by default, and either street can be left out. It is a `SpotConfig`
   `LiteSolution.resolve` solves the later streets again for every hand.
 - A kept hand weighs what the hands it stands for weigh, whatever the ranges' weights are: a range
   is reweighed in place (`setRange`), and an edit to the betting, pot or stack keeps the kept sets.
-  A hand the range did not hold is taken on a new run, as a hand without storage is.
+  The sets are chosen for each range and its reserve (`oopReserve`, `ipReserve`), so a hand held
+  in reserve is given weight in place too; a hand in neither is taken on a new run, as a hand
+  without storage is.
 
 Measured on wide ranges (407–426 and 541–570 combinations a side, `bench/street-compression`),
 issue #47's betting, 200 iterations of the blueprint on 4 threads in Node. Each cell is the time
@@ -1098,17 +1100,24 @@ solves are 1.8–3.0 apart. Choosing the kept sets took 0.4–1.1 s for the rive
 with the turns, once a spot. On the bench ranges (165–223 combinations) there is less to drop:
 1.4–1.6× at river 0.01 and 2.0–2.2× at 0.02, for 5.1–8.7% of pot against 4.7–5.4%.
 
-A session (`openLite`) keeps the kept sets as it keeps the blueprint. On the two-tone flop with
-the same wide ranges, seconds (and iterations) until the root play settles again, 4 threads:
+A session (`openLite`) keeps the kept sets as it keeps the blueprint, and what starting warm saves
+comes on top of what the kept sets save. On the two-tone flop with the same wide ranges, seconds
+until the root play settles again on 4 threads, the session first and then a new `solveLite` of
+the same spot:
 
 | | Lite | river 0.01 | river 0.02 | turn 0.01, river 0.02 |
 |---|---|---|---|---|
-| opening solve | 56.1 s (360) | 25.4 s (300) | 19.6 s (320) | 16.8 s (340) |
-| a fifth of a range's hand classes to half weight | 18.5 s (100) | 10.1 s (120) | 6.1 s (100) | 4.7 s (100) |
-| the same for another fifth | 28.4 s (160) | 11.8 s (140) | 9.7 s (160) | 8.2 s (180) |
-| a flop bet size moved, 0.33 to 0.5 | 28.9 s (160) | 18.0 s (200) | 13.1 s (200) | 11.5 s (220) |
-| a hand class added (a new run) | 41.7 s (240) | 16.2 s (180) | 10.6 s (160) | 11.5 s (220) |
-| exploitable where it ended, % of pot | 2.27 | 4.43 | 5.82 | 5.99 |
+| opening solve | 45.4 s | 21.7 s | 18.4 s | 16.0 s |
+| a fifth of a range's hand classes to half weight | 13.1 s, new 49.8 | 7.3 s, new 23.6 | 6.4 s, new 17.6 | 5.0 s, new 14.9 |
+| the same for another fifth | 21.3 s, new 52.5 | 12.9 s, new 23.6 | 9.3 s, new 16.0 | 8.6 s, new 13.8 |
+| a flop bet size moved, 0.33 to 0.5 | 26.4 s, new 48.5 | 13.7 s, new 21.5 | 10.9 s, new 14.7 | 8.9 s, new 12.1 |
+| a hand class added from the reserve | 27.6 s, new 47.9 | 13.0 s, new 21.7 | 8.7 s, new 15.2 | 7.6 s, new 12.5 |
+| exploitable where it ended, % of pot | 2.27 | 4.30 | 5.54 | 5.89 |
+
+A move in the session with a turn and a river threshold took 5.0–8.9 s, where the same move took
+13.1–27.6 s in a plain session and a new plain solve 48–53 s. The two savings compound to 65–95%
+of their product: a new solve with kept sets settles in fewer iterations (280–340 against 340–380),
+so there is a little less for a warm start to save.
 
 - **It does not combine with runout buckets under a compressed turn**: a bucketed river deal
   relabels hands, and a turn's kept hands are chosen for its own deals. `solveLite` leaves

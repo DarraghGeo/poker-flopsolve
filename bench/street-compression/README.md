@@ -6,7 +6,7 @@ solve; `compressRanges` thins the ranges for the flop. This measures the three t
 
 | script | what it does |
 |---|---|
-| `session.ts [board] [workers]` | Node: an `openLite` session on the wide ranges, plain and with each variant's kept sets: seconds and iterations to settle for the opening solve, a range reweighed twice, a flop bet size moved and a hand class added, then the exploitability of where it ended, in the same tree with every hand on every runout |
+| `session.ts [board] [workers]` | Node: an `openLite` session on the wide ranges, plain and with each variant's kept sets: seconds and iterations to settle for the opening solve, a range reweighed twice, a flop bet size moved and a hand class added from the reserve, each beside a new `solveLite` of the same spot; then the exploitability of where the session ended, in the same tree with every hand on every runout |
 | `measure.ts [board,...] [workers] [passes]` | Node: Lite's blueprint as it is and with each variant in `VARIANTS`, each run for the same number of passes: boards stored, hands kept on later boards, storage, the time to define the spot (which chooses the kept sets), the time for the passes, exploitability in the same tree with every hand on every runout, and the root play against plain Lite's |
 
 `VARIANTS` separates variants with `;` and a variant's streets with `,`:

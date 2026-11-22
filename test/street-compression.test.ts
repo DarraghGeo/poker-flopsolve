@@ -160,6 +160,39 @@ describe('streetCompression', () => {
 		session.close();
 	});
 
+	it('adds a hand held in reserve in place, as a session without kept sets does', () => {
+		const widest = `${OOP},76s,65s`;
+		const session = openLite({ ...turn, oopReserve: widest }, { streetCompression: { river: 0.02 }, iterations: 12, workers: 1, settle: { every: 6 } });
+		const spot = session.current.solution.spot;
+		// The kept sets were chosen for the range and its reserve, so the reserve's hands have stand-ins already.
+		expect(session.setRange(0, `${OOP},76s`).solution.spot).toBe(spot);
+		expect(session.setRange(0, widest).solution.spot).toBe(spot);
+		session.close();
+	});
+
+	it('previews and warm-starts as a spot without kept sets does', () => {
+		const run = createRun(defineSpot({ ...turn, streetCompression: { river: 0.02 } }), { workers: 1 });
+		run.step(6);
+		// A preview reads the strategy the edited run would start from, on a board with a kept set too.
+		const preview = run.preview({ betSizes: [[1]] });
+		const node = preview.spot.tree.decisionNodes.find((n) => preview.spot.tree.round[n] === 1)!;
+		const view = preview.strategyAt(node, 0);
+		expect(preview.seededNodes).toBeGreaterThan(0);
+		expect(view.probs.subarray(0, view.actions.length).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
+		run.edit({ betSizes: [[1]] });
+		expect(run.spot.kept).toBeDefined();
+		// From kept sets to every hand and back: each takes the other's regrets through the stand-ins.
+		const whole = createRun(defineSpot(turn), { workers: 1, warmStart: run });
+		whole.step(2);
+		const again = createRun(defineSpot({ ...turn, streetCompression: { river: 0.01 } }), { workers: 1, warmStart: whole });
+		again.step(2);
+		expect(Number.isFinite(whole.exploitabilityPercent())).toBe(true);
+		expect(Number.isFinite(again.exploitabilityPercent())).toBe(true);
+		run.close();
+		whole.close();
+		again.close();
+	});
+
 	it('re-solves a later street for every hand', () => {
 		const spot = defineSpot({ ...flop, streetCompression: { turn: 0.02, river: 0.02 } });
 		const blueprint = solve(spot, { iterations: 4, workers: 1 });

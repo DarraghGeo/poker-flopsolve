@@ -50,7 +50,7 @@ export interface KeptSets {
 	readonly scale: Float32Array;
 	/** For a kept candidate, the weight it carried when the sets were chosen, a hand; else 0. */
 	readonly weight: Float32Array;
-	/** Per player, 1 for each combination that had weight when the sets were chosen: the hands they cover. */
+	/** Per player, 1 for each combination the sets were chosen for, the range's and its reserve's: the hands they cover. */
 	readonly held: readonly [Uint8Array, Uint8Array];
 	/** Hands kept and candidates, over all boards of each round and both players. */
 	readonly keptHands: readonly number[];
@@ -343,12 +343,17 @@ interface VendorHand {
  * @param tolerance per round of the spot, the most mismatch its kept sets
  *   may have (as `compressRanges`); 0 leaves the round whole. The spot's own
  *   round, 0, is never compressed here: thin the ranges for that.
+ * @param chosenFor per player, the weights the sets are chosen for: the
+ *   range's own by default. A hand held in reserve (`SpotConfig.oopReserve`)
+ *   is given its reserve weight here, so that it has a stand-in on every
+ *   board before the range holds it, and can be given weight in place.
  * @returns null when no round has a tolerance
  */
 export function chooseKeptSets(
 	runouts: Runouts,
 	players: readonly [PlayerIndex, PlayerIndex],
 	tolerance: readonly number[],
+	chosenFor: readonly [Float64Array, Float64Array] = [players[0].weights, players[1].weights],
 ): KeptSets | null {
 	const rounds = new Uint8Array(runouts.rounds);
 	for (let round = 1; round < runouts.rounds; round++) rounds[round] = rounds[round - 1] === 1 || tolerance[round] > 0 ? 1 : 0;
@@ -417,7 +422,7 @@ export function chooseKeptSets(
 				for (let player = 0; player < 2; player++) {
 					const into = arriving[player];
 					if (!rounds[round - 1]) {
-						into.set(players[player].weights);
+						into.set(chosenFor[player]);
 						continue;
 					}
 					into.fill(0);
@@ -533,7 +538,7 @@ export function chooseKeptSets(
 	};
 	return {
 		tolerance: tolerance.slice(), rounds, start, ...trimmed, keptHands, candidates,
-		held: [Uint8Array.from(players[0].weights, (w) => (w > 0 ? 1 : 0)), Uint8Array.from(players[1].weights, (w) => (w > 0 ? 1 : 0))],
+		held: [Uint8Array.from(chosenFor[0], (w) => (w > 0 ? 1 : 0)), Uint8Array.from(chosenFor[1], (w) => (w > 0 ? 1 : 0))],
 		bytes: start.byteLength + at * (2 + 2 + 1 + 4 + 4),
 	};
 }
