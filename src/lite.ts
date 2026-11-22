@@ -18,7 +18,7 @@ import type { CompressedRanges, CompressRangesOptions } from './compress.ts';
 import { compressRanges, rebuildRanges } from './compress.ts';
 import { linesWithin } from './hybrid.ts';
 import { activeCombos, parseRange } from './range.ts';
-import type { ShareHistories, Solution, SolveOptions, SolveRun, SpotConfig, SubgameBetting } from './index.ts';
+import type { EditPreview, ShareHistories, Solution, SolveOptions, SolveRun, SpotConfig, SpotEdit, SubgameBetting } from './index.ts';
 import { createRun, defineSpot, runToStop, solve } from './index.ts';
 import type { PresetChanges, SettingChange } from './presets.ts';
 import { presetChanges, samplingNote } from './presets.ts';
@@ -460,6 +460,29 @@ export interface LiteSession {
 	 */
 	setRange(player: 0 | 1, range: string | Float64Array): LiteSolution;
 	/**
+	 * Change the caller's pot, stack or betting and settle the blueprint
+	 * again from where it stands (`SolveRun.edit`): a bet or raise size
+	 * added, removed or moved, more or fewer raises, another pot. The
+	 * blueprint is derived again from the edited spot as `liteConfig` derives
+	 * it, so an edit to the turn's or river's sizes changes it only where it
+	 * changes the one size the blueprint keeps there; `resolve` plays the
+	 * edited betting in full either way. The blueprint's run keeps its
+	 * ranges, its stored hands and the lines `keepBudget` chose. Returns the
+	 * new `current`; the one before it is stale.
+	 *
+	 * @param changes the settings of the caller's spot to change
+	 * @throws if the edited spot cannot be defined or does not fit, changing
+	 *   nothing; or from the settling after it, with the edit made and
+	 *   `current` the blueprint as far as it got
+	 */
+	edit(changes: SpotEdit): LiteSolution;
+	/**
+	 * The blueprint `edit` would make and the strategy it would start from,
+	 * without making the change (`SolveRun.preview`): for a page to draw at
+	 * once, and `edit` after.
+	 */
+	preview(changes: SpotEdit): EditPreview;
+	/**
 	 * Run `iterations` more on the range as it stands, with no stop: what a
 	 * page does while the slider is at rest, since a blueprint goes on
 	 * improving past its settle point. Returns the new `current`.
@@ -542,6 +565,19 @@ export function openLite(config: SpotConfig, options: OpenLiteOptions = {}): Lit
 	let source = config;
 	// Iterations of the runs before this one: a range that cannot change in place gets a new run.
 	let earlier = 0;
+	/**
+	 * What to change on the blueprint's run for the caller's spot to be
+	 * `next`: the blueprint `liteConfig` derives from it, less what the run
+	 * holds for itself: its board, its ranges and stored hands (compressed,
+	 * grown or changed in place) and its sharing, with the lines kept.
+	 */
+	const blueprintEdit = (next: SpotConfig): SpotEdit => {
+		const {
+			board: _board, oop: _oop, ip: _ip, oopReserve: _oopReserve, ipReserve: _ipReserve,
+			shareHistories: _share, minWeight: _floor, ...rest
+		} = liteConfig(next, { ...options, compressRanges: undefined });
+		return rest;
+	};
 	/** The blueprint as it stands, its iterations the session's: a run made for a move counts only its own. */
 	const reading = (solution: Solution): LiteSolution =>
 		liteSolution({ ...solution, iterations: earlier + run.completed }, source, run.spot.source, preset.changes, options);
@@ -613,6 +649,22 @@ export function openLite(config: SpotConfig, options: OpenLiteOptions = {}): Lit
 				throw error;
 			}
 			return current;
+		},
+		edit(changes) {
+			const next: SpotConfig = { ...source, ...changes };
+			run.edit(blueprintEdit(next), { resume: LITE_RESUME });
+			source = next;
+			try {
+				current = settleRun(resettle);
+			} catch (error) {
+				// The edit is made all the same: `current` must not read the new tree's storage as the old one's.
+				current = reading(run.snapshot([], 'iterations'));
+				throw error;
+			}
+			return current;
+		},
+		preview(changes) {
+			return run.preview(blueprintEdit({ ...source, ...changes }));
 		},
 		refine(count) {
 			if (!(Number.isInteger(count) && count > 0)) throw new Error(`refine: iterations must be a positive whole number; got ${count}`);

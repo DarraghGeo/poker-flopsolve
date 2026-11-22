@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Editing a Lite session's betting, pot or stack
+
+- `session.edit(changes)` and `session.preview(changes)` on an `openLite` session: the blueprint
+  is derived again from the edited spot and settled from where it stands (`run.edit`). On
+  Ks 9s 4s five edits settled in 32 s against 62 for five `solveLite` calls, the preview in
+  3–16 ms; they ended lower in exploitability on two of the five and 0.3–1.7% of pot higher on
+  three.
+
 ## 0.5.0-beta.5
 
 The sixth beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.4.
