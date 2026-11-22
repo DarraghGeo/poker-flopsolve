@@ -52,16 +52,17 @@ for (const combo of spot.players[1].combos) relevant[combo] = 1;
 
 const weights = runoutWeights(spot.runouts);
 const layout = buildLayout(
-	spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], spot.historyAlias, compact ?? undefined,
+	spot.tree, spot.runouts, spot.players, PRECISION_BYTES[precision], spot.historyAlias, compact ?? undefined, spot.kept,
 );
 
 const showdown = buildShowdownTable(spot.runouts, relevant);
-const active = buildActiveLists(spot.runouts, spot.players, showdown);
-const hands = buildHandSpace(spot.runouts, spot.players, active);
+const active = buildActiveLists(spot.runouts, spot.players, showdown, spot.kept);
+const hands = buildHandSpace(spot.runouts, spot.players, active, spot.kept);
 const ctx: Context = {
 	tree: spot.tree,
 	runouts: spot.runouts,
 	players: spot.players,
+	kept: spot.kept ?? null,
 	layout,
 	showdown,
 	regret: makeRegretStore(precision, setup.regret),

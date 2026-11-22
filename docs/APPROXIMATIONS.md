@@ -578,6 +578,36 @@ Under chance sampling, floored regrets and a different α only slowed it down. E
 
 The plumbing is in this repository's history at commit `f801432`: `setDcfrRule` in src/cfr.ts, a `setRule` export in the engine (the sampling catch-up and every regret floor included), and `measure.ts` variants `alpha=`, `gamma=` and `floor`. `bench/rule/` keeps the logs.
 
+## Choices left out of `streetCompression`
+
+`streetCompression` gives every turn and river board a kept set of hands (README, "A threshold
+for each street"). Three ways of choosing and weighting those sets were measured and dropped, on
+Ts 9s 4h with one bet size and 100 passes unless said otherwise, exploitability read in the full
+game (`trueExploitabilityPercent`).
+
+- **The compressor's own river sets.** `compressRanges`' method, asked once a river board, took 3 ms
+  a board: 4.4 s for a flop's 1,429 rivers, against 0.13 s for the clustering in its place. Over a
+  turn compressed to 0.005 they kept 70% of the river hands for 1.91% of pot, where the clustering
+  as it then was kept 58% for 2.07%.
+- **The compressor's fitted weights.** A kept hand carrying the weight the compressor fitted to it,
+  not the weight of the hands it stands for, was 0.3–0.5% of pot more exploitable at every setting
+  tried (turn 0.005: 1.38% against 1.07%; turn and river 0.01: 2.89% against 2.40%), and ties the
+  sets to the ranges' weights, so a range could not be reweighed in place.
+- **Reading a dropped river hand between two kept hands.** Its reach split between its cluster's
+  kept hand and the next cluster's by equity, and its value read as the same mix, in place of one
+  stand-in: on a turn spot (Ts 9s 4h 2c, two bet sizes, raises) 3.31% against 3.28% at 0.005 and
+  5.69% against 4.86% at 0.04. No better where clusters are tight, worse where they are wide.
+
+What a river cluster is gathered on did matter. On that turn spot, equity alone was 2.45% of pot
+exploitable with 43% of the river hands kept and 3.28% with 22%; with what each hand blocks of
+eight bands of the other range added, 1.78% with 44% and 2.53% with 29%. Two hands of one equity
+can block different parts of the other range, and so bluff and call differently.
+
+Not done: runout buckets under a compressed turn (a bucketed river deal relabels hands, and a
+turn's kept hands are chosen for its own deals, so `solveLite` leaves buckets off there); kept
+sets chosen from the ranges a solve arrives with, which the ranges a hand starts with only
+approximate on lines that narrow them; and choosing the turn sets on more than one thread.
+
 ## Removed before 0.5.0 (#125)
 
 Three options shipped on `staging` during 0.5.0's development, were deprecated by issue #115, and were removed before the release, so no published version has them. The implementations are in this repository's history at commit `3c98470`.

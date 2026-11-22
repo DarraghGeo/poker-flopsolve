@@ -275,6 +275,8 @@ export type SpawnEngineWorker = (setup: EngineWorkerSetup, onError: (error: Erro
 
 /** The most memory the engine lays out: just under wasm32's 4 GB. */
 const MAX_MEMORY = 0xffff0000;
+/** 32-bit words of a thread's header: what `init` in assembly/engine.ts reads, rounded up. */
+const HEADER_WORDS = 48;
 
 /**
  * Control slots shared with engine workers. `failed` is set, never cleared,
@@ -368,8 +370,15 @@ export function createEngine(
 		cardSums: add(null, 52 * 8 + stride * 8),
 		rootMe: add(null, rowBytes),
 		rootOpp: add(null, rowBytes),
-		header: add(null, 40 * 4, false),
+		header: add(null, HEADER_WORDS * 4, false),
 	}));
+	// Kept sets' deal tables (`HandSpace.kept`), only with them.
+	const keptDeals = hands.kept
+		? {
+				rounds: add(hands.kept.rounds), start: add(hands.kept.start), kept: add(hands.kept.kept),
+				orbit: add(hands.kept.orbit), scale: add(hands.kept.scale),
+			}
+		: null;
 	// The exchange between threads.
 	const entries = pool ? pool.plan.entryNodes.length : 0;
 	const entryIndexOf = pool ? add(pool.plan.entryIndexOf) : -1;
@@ -433,7 +442,7 @@ export function createEngine(
 		threads,
 	);
 	for (const mine of own) {
-		const head = new Uint32Array(memory.buffer, offsets[mine.header], 40);
+		const head = new Uint32Array(memory.buffer, offsets[mine.header], HEADER_WORDS);
 		common.forEach((slot, i) => (head[i] = offsets[slot]));
 		head[common.length] = offsets[mine.buffers];
 		head[common.length + 1] = depthBytes;
@@ -441,6 +450,15 @@ export function createEngine(
 		head[common.length + 3] = offsets[mine.cardSums];
 		head[common.length + 4] = input.chipScale;
 		if (stored) head[common.length + 5] = offsets[stored.block];
+		if (keptDeals) {
+			// Words 38 on, which `init` in assembly/engine.ts reads as 0 without kept sets.
+			if (common.length + 6 > 38) throw new Error('The engine header has no room left before the kept sets\' words');
+			head[38] = offsets[keptDeals.rounds];
+			head[39] = offsets[keptDeals.start];
+			head[40] = offsets[keptDeals.kept];
+			head[41] = offsets[keptDeals.orbit];
+			head[42] = offsets[keptDeals.scale];
+		}
 	}
 	if (stored) {
 		const at = (slot: number): number => (slot >= 0 ? offsets[slot] : 0);

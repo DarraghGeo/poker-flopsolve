@@ -651,6 +651,7 @@ against the exact solve at equal iterations, root loss OOP / IP in % of pot (the
 | `largeTree` | preset | WebAssembly | — | at 4× the iterations: 0.38× storage, 0.58× time, root 0.057 / 0.289 (IP's cut 0.33 bet), 0.39% exploitable in its own tree ([Fitting a large tree](#fitting-a-large-tree-largetree)) |
 | `shareHistories` | preset-internal (lite) | both | — | 0.40× storage, 1.00× time, root 0.061 / 0.068, 1.89% exploitable |
 | `compressRanges` (`solveLite`, or on its own) | advanced (a lite option) | both | — | edits the ranges. Wide weighted ranges on a flop: 0.42–0.72× storage, 0.46–0.60× time, root play 1.2–2.7 points off where two Lite solves were 1.8–3.0 apart. Narrow ranges: little, and slower on a monotone flop. A spot that starts on the turn: 0.29–0.54× time, 1.2–1.9 points off (0.6–2.6); on the river, nothing to save. `resolve` solves the turn for every hand again: 5.3–6.9 points per hand from a full blueprint's re-solve, 1.8–3.1 between two of those ([Lite mode](#lite-mode-solvelite)) |
+| `streetCompression` (`solveLite`, `openLite`, or a spot's own) | advanced (a lite option) | both | `runoutBuckets` under a compressed turn; `valuesAt`, `pairValuesAt` and `measure` on a board with a kept set | wide ranges, 200 iterations: river 0.01 is 1.7–2.1× as fast in 0.30–0.44× the storage, 4.6–6.2% exploitable in the full game where Lite is 3.5–5.6%; flop, turn and river together 3.6–4.1× in 0.18–0.24×, 6.3–7.0% ([A threshold for each street](#a-threshold-for-each-street-streetcompression)) |
 | `keepBudget` (`solveLite`), `shareHistories.keepLines`, `linesWithin` | advanced (a lite option) | both | — | turn re-solve gain within 0.1–0.8% of the subgame pot of an unshared blueprint's, against 3.0–4.2% from plain sharing ([History sharing](#history-sharing)) |
 | `runoutBuckets` | preset-internal (lite) | both | — | folds nothing on napkinpoker's weighted ranges. Bench ranges, gap 3: 0.61× time, true exploitability 0.302 against 0.271 ([Runout buckets](#runout-buckets-and-coarse-start)) |
 | `approximations.chanceSampling` | preset-internal (both) | both, threaded | — | at 4× the iterations: 0.69× time, root 0.057 / 0.056, 0.60% exploitable |
@@ -1042,6 +1043,103 @@ sound but not balanced hand by hand. It is for reading how to play, not for a st
 cannot be exploited. `rebuildRanges` is the step on its own, for
 a solve of `compressRanges`' output that is not Lite's (`bench/range-compress`).
 
+#### A threshold for each street (`streetCompression`)
+
+`compressRanges` thins the ranges once, for the flop, and the hands it keeps have to stand for the
+rest on every turn and river. `streetCompression` compresses again on every later board, inside
+the solve: each turn card keeps the fewest hands that match what arrives there, and under it each
+river card keeps the fewest of those again. A board stores and walks only its kept hands, and most
+of a solve's work is on the later streets. With `compressRanges` that is a threshold a street:
+
+```ts
+const lite = solveLite(spot, {
+	workers: 4,
+	compressRanges: { tolerance: 0.01 },            // the flop: which hands are in the solve at all
+	streetCompression: { turn: 0.01, river: 0.02 }, // every turn card, and every river card under it
+});
+lite.changes.notes; // [..., 'streetCompression: each turn and river card keeps only the hands ...']
+```
+
+Both are off by default, and either street can be left out. It is a `SpotConfig` field too, for
+`solve` and `createRun`.
+
+- **`turn`** is a tolerance as `compressRanges`' is: how far the kept hands' equity distributions,
+  on that turn and on every river after it, may be from those of the hands that arrive.
+- **`river`** is a width of equity: a river's hands are gathered in order of strength while their
+  equities against the other range, and what they block of each eighth of it, stay within that of
+  each other, and one hand of each cluster is kept.
+- A hand that is not kept on a board hands its reach to the kept hand it plays most like there
+  and takes that hand's value back, so every hand still has its own strategy on the flop.
+  `strategyAt` and `reachAt` read a hand that is not kept as its stand-in, and
+  `LiteSolution.resolve` solves the later streets again for every hand.
+- A kept hand weighs what the hands it stands for weigh, whatever the ranges' weights are: a range
+  is reweighed in place (`setRange`), and an edit to the betting, pot or stack keeps the kept sets.
+  The sets are chosen for each range and its reserve (`oopReserve`, `ipReserve`), so a hand held
+  in reserve is given weight in place too; a hand in neither is taken on a new run, as a hand
+  without storage is. Sets chosen for one range stay as they are while it is reweighed in
+  place, however far; the next new run (a new hand, an edit) chooses them again for the weights
+  it has.
+- A hand a turn dropped has no part on a river that deals a card of the hand it plays as there:
+  in the solve its reach stops at that river, and read back it plays as the river's kept hand
+  nearest it in strength. The figures below include what that costs.
+- The memory estimate counts the kept sets and their deal maps with the showdown table.
+
+Measured on wide ranges (407–426 and 541–570 combinations a side, `bench/street-compression`),
+issue #47's betting, 200 iterations of the blueprint on 4 threads in Node. Each cell is the time
+against plain Lite's, the storage, and the exploitability in the same tree with every hand on
+every runout (`trueExploitabilityPercent`), % of pot:
+
+| | Rainbow, As Kh 7d | Two-tone, Ts 9s 4h | Monotone, Ks 9s 4s |
+|---|---|---|---|
+| Lite | 39.0 s, 732 MiB, 5.6% | 31.3 s, 408 MiB, 3.5% | 13.0 s, 152 MiB, 4.6% |
+| flop 0.01 (`compressRanges`) | 1.80× as fast, 297 MiB, 5.3% | 1.80×, 230 MiB, 3.9% | 1.24×, 115 MiB, 5.0% |
+| river 0.005 | 1.20×, 332 MiB, 5.9% | 1.54×, 197 MiB, 4.5% | 1.38×, 87 MiB, 4.2% |
+| river 0.01 | 1.70×, 220 MiB, 6.2% | 2.06×, 138 MiB, 5.2% | 1.72×, 67 MiB, 4.6% |
+| river 0.02 | 2.37×, 126 MiB, 7.5% | 2.83×, 82 MiB, 6.5% | 2.44×, 40 MiB, 6.5% |
+| turn 0.01, river 0.01 | 2.80×, 189 MiB, 6.6% | 2.96×, 119 MiB, 5.8% | 2.58×, 49 MiB, 5.4% |
+| flop 0.01, river 0.01 | 2.39×, 207 MiB, 5.8% | 2.41×, 135 MiB, 4.6% | 2.04×, 58 MiB, 5.4% |
+| flop 0.01, turn 0.01, river 0.02 | 3.83×, 134 MiB, 7.0% | 4.07×, 84 MiB, 6.3% | 3.59×, 36 MiB, 6.4% |
+
+A river at 0.01 kept 26–40% of the hands that could be held there, at 0.02 12–20%; a turn at 0.01
+kept 26–39%. The root play moved 1.0–4.9 percentage points from plain Lite's, where two plain
+solves are 1.8–3.0 apart. Choosing the kept sets took 0.4–1.1 s for the rivers alone and 0.8–1.5 s
+with the turns, once a spot. On the bench ranges (165–223 combinations) there is less to drop:
+1.4–1.6× at river 0.01 and 2.0–2.2× at 0.02, for 5.1–8.7% of pot against 4.7–5.4%.
+
+A session (`openLite`) keeps the kept sets as it keeps the blueprint, and what starting warm saves
+comes on top of what the kept sets save. On the two-tone flop with the same wide ranges, seconds
+until the root play settles again on 4 threads, the session first and then a new `solveLite` of
+the same spot:
+
+| | Lite | river 0.01 | river 0.02 | turn 0.01, river 0.02 |
+|---|---|---|---|---|
+| opening solve | 45.4 s | 21.7 s | 18.4 s | 16.0 s |
+| a fifth of a range's hand classes to half weight | 13.1 s, new 49.8 | 7.3 s, new 23.6 | 6.4 s, new 17.6 | 5.0 s, new 14.9 |
+| the same for another fifth | 21.3 s, new 52.5 | 12.9 s, new 23.6 | 9.3 s, new 16.0 | 8.6 s, new 13.8 |
+| a flop bet size moved, 0.33 to 0.5 | 26.4 s, new 48.5 | 13.7 s, new 21.5 | 10.9 s, new 14.7 | 8.9 s, new 12.1 |
+| a hand class added from the reserve | 27.6 s, new 47.9 | 13.0 s, new 21.7 | 8.7 s, new 15.2 | 7.6 s, new 12.5 |
+| exploitable where it ended, % of pot | 2.27 | 4.30 | 5.54 | 5.89 |
+
+A move in the session with a turn and a river threshold took 5.0–8.9 s, where the same move took
+13.1–27.6 s in a plain session and a new plain solve 48–53 s. The two savings compound to 65–95%
+of their product: a new solve with kept sets settles in fewer iterations (280–340 against 340–380),
+so there is a little less for a warm start to save.
+
+- **It does not combine with runout buckets under a compressed turn**: a bucketed river deal
+  relabels hands, and a turn's kept hands are chosen for its own deals. `solveLite` leaves
+  `runoutBuckets` off when `streetCompression.turn` is set from a flop, which is why those rows
+  store more boards; `defineSpot` refuses the two together. A compressed river alone keeps them.
+- **The exploitability a solve reports is its own game's**, the one with kept sets.
+  `run.trueExploitabilityPercent()` plays the strategy in the same tree with every hand on every
+  runout, and is the column above.
+- **`valuesAt`, `pairValuesAt` and `resolveSubgame`'s `measure`** need every hand on the board they
+  start from, and refuse a board with a kept set.
+- **Choosing the kept sets** is part of defining the spot: the compressor once a turn board, a
+  clustering once a river board. It is kept while the ranges and the board are the same.
+
+`bench/street-compression` has the script and its logs, and docs/APPROXIMATIONS.md what was tried
+and left out.
+
 #### A range slider on Lite (`openLite`)
 
 `solveLite` solves one pair of ranges and lets go of the run, so a page with a range slider
@@ -1107,6 +1205,14 @@ moves the session ended less exploitable):
   settles to half the tolerance unless `resettle` gives one, since its fresh average stops
   moving sooner than it is good. It is the fastest of the three and the least even: on the
   monotone flop every move ended 0.2–1.4% of pot more exploitable than `solveLite`.
+
+`session.edit(changes)` and `session.preview(changes)` do for the pot, stack and betting what
+`setRange` does for a range (`run.edit`, above): the blueprint is derived again from the edited
+spot and settled from where it stands. On Ks 9s 4s, five edits (a flop size moved, added and
+removed, a raise size moved, the pot raised) settled in 32 s against 62 for five `solveLite`
+calls, 4–11 s each against 11–17, with the preview in 3–16 ms. They ended 2.5–4.4% of pot
+exploitable against `solveLite`'s 2.7–3.6: lower on two of the five and 0.3–1.7 higher on three.
+Measured on that one flop only.
 
 The runout buckets are chosen by the hands stored, so they hold for every range that changes in
 place. Under the blueprint's shared river histories a reserved hand's river play is not trained

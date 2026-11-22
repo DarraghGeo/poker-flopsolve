@@ -32,7 +32,7 @@ import { COMBO_CARDS, COMBOS } from './cards.ts';
 import type { Solution, SolveOptions, SubgameBetting } from './index.ts';
 import { createRun, defineSpot } from './index.ts';
 import type { Context } from './cfr.ts';
-import { makeBuffers, Mode, traverse } from './cfr.ts';
+import { makeBuffers, Mode, refuseKept, traverse } from './cfr.ts';
 
 /** Settings for {@link resolveSubgame}. */
 export interface ResolveOptions {
@@ -150,6 +150,7 @@ export function resolveSubgame(blueprint: Solution, node: number, board: number,
  * must be the same for mirrored hands, as any reach a solve produces is.
  */
 export function bestResponseAt(ctx: Context, node: number, board: number, traverser: 0 | 1, reachMe: Float64Array, reachOpp: Float64Array): Float64Array {
+	refuseKept(ctx, ctx.tree.round[node], 'bestResponseAt');
 	const lists = ctx.active;
 	const round = ctx.tree.round[node];
 	const listOf = (player: 0 | 1): [number, number] => {

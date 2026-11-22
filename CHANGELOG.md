@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.5.0-beta.6
+
+The seventh beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.5.
+
+### A compression threshold for each street
+
+- `streetCompression: { turn, river }`, on a spot and as a `solveLite` / `openLite` option beside
+  `compressRanges`: every turn card, and under it every river card, keeps a set of hands of its
+  own, and a board stores and walks only those. A hand that is not kept on a board hands its reach
+  to the kept hand it plays most like there and reads that hand's value back, so every hand keeps
+  its own flop strategy. Both engines, every storage, any number of threads.
+- On wide ranges (407–570 combinations a side), 200 iterations of Lite's blueprint on 4 threads: a
+  river at 0.01 ran 1.7–2.1 times as fast in 0.30–0.44 of the storage; with `compressRanges` at
+  0.01 and a turn at 0.01, a river at 0.02 ran 3.6–4.1 times as fast in 0.18–0.24. Played in the
+  same tree with every hand on every runout that was 4.6–6.2% and 6.3–7.0% of pot exploitable,
+  where plain Lite was 3.5–5.6%. Narrow ranges have less to drop: 1.4–1.6 times at river 0.01.
+- Choosing the kept sets is part of defining the spot, 0.4–1.5 s on those ranges, and is kept
+  while the ranges and the board are the same: an edit to the betting reuses them, and a range is
+  reweighed in place.
+- It compounds with a session's warm starts. In an `openLite` session on the two-tone flop with
+  those ranges, a move (a range reweighed, a flop bet size moved, a hand added from the reserve)
+  settled again in 5.0–8.9 s with a turn and a river threshold, where the same move took
+  13.1–27.6 s in a plain session and a new plain solve 48–53 s; the session ended 4.3–5.9% of pot
+  exploitable in the full game against 2.3%. The kept sets are chosen for a range and its
+  reserve, so a hand held in reserve is still added in place.
+- `strategyAt` and `reachAt` read a hand that is not kept as its stand-in, `resolve` solves the
+  later streets again for every hand, and `trueExploitabilityPercent()` measures a solve with kept
+  sets in the full game.
+- `solveLite` leaves `runoutBuckets` off under a compressed turn, which the two cannot share yet;
+  `valuesAt`, `pairValuesAt` and `resolveSubgame`'s `measure` refuse a board with a kept set.
+
+### Editing a Lite session's betting, pot or stack
+
+- `session.edit(changes)` and `session.preview(changes)` on an `openLite` session: the blueprint
+  is derived again from the edited spot and settled from where it stands (`run.edit`). On
+  Ks 9s 4s five edits settled in 32 s against 62 for five `solveLite` calls, the preview in
+  3–16 ms; they ended lower in exploitability on two of the five and 0.3–1.7% of pot higher on
+  three.
+
 ## 0.5.0-beta.5
 
 The sixth beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.4.
