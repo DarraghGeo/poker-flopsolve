@@ -18,7 +18,7 @@ import type { CompressedRanges, CompressRangesOptions } from './compress.ts';
 import { compressRanges, rebuildRanges } from './compress.ts';
 import { linesWithin } from './hybrid.ts';
 import { activeCombos, parseRange } from './range.ts';
-import type { EditPreview, ShareHistories, Solution, SolveOptions, SolveRun, SpotConfig, SpotEdit, SubgameBetting } from './index.ts';
+import type { EditPreview, ShareHistories, Solution, SolveOptions, SolveRun, SpotConfig, SpotEdit, StreetCompression, SubgameBetting } from './index.ts';
 import { createRun, defineSpot, runToStop, solve } from './index.ts';
 import type { PresetChanges, SettingChange } from './presets.ts';
 import { presetChanges, samplingNote } from './presets.ts';
@@ -57,8 +57,20 @@ export interface LiteOptions {
 	 * notes for what it saved and cost.
 	 */
 	readonly noDonk?: boolean;
-	/** `SpotConfig.runoutBuckets` for the blueprint. Default 3. */
+	/**
+	 * `SpotConfig.runoutBuckets` for the blueprint. Default 3; off with
+	 * `streetCompression.turn` from a flop, which a bucketed river deal
+	 * cannot be read through.
+	 */
 	readonly runoutBuckets?: number;
+	/**
+	 * `SpotConfig.streetCompression` for the blueprint: a kept set of hands
+	 * for every turn card, and under it for every river card, each to its
+	 * own tolerance. Default: the caller's, off unless set. With
+	 * `compressRanges`, which thins the ranges for the board the spot
+	 * starts on, that is a threshold for each street.
+	 */
+	readonly streetCompression?: StreetCompression;
 	/**
 	 * `SpotConfig.shareHistories` for the blueprint. Default true, the river.
 	 *
@@ -221,7 +233,10 @@ export function liteConfig(config: SpotConfig, options: LiteOptions = {}): SpotC
 	const removeActions = config.removeActions?.filter(
 		(line) => !line.includes('/') && (flopCap === undefined || aggressions(line) <= flopCap),
 	);
-	const buckets = options.runoutBuckets ?? 3;
+	const streets = options.streetCompression ?? config.streetCompression;
+	// A turn's kept set is chosen for the deals its board stands for exactly.
+	const turnKept = rounds === 3 && (streets?.turn ?? 0) > 0;
+	const buckets = turnKept ? 0 : (options.runoutBuckets ?? 3);
 	const given = typeof config.runoutBuckets === 'number' ? config.runoutBuckets : config.runoutBuckets ? 1 : 0;
 	// Compressed weights are relative to the largest kept, so the caller's
 	// floor is applied to the ranges as given and not carried over.
@@ -237,7 +252,8 @@ export function liteConfig(config: SpotConfig, options: LiteOptions = {}): SpotC
 		allowAllIn: allowAllIn as SpotConfig['allowAllIn'],
 		...(options.noDonk === undefined ? {} : { noDonk: options.noDonk }),
 		...(removeActions === undefined ? {} : { removeActions }),
-		runoutBuckets: Math.max(buckets, given),
+		runoutBuckets: turnKept ? false : Math.max(buckets, given),
+		...(streets ? { streetCompression: streets } : {}),
 		shareHistories: options.shareHistories ?? config.shareHistories ?? true,
 	};
 }
@@ -754,6 +770,10 @@ export function litePreset(config: SpotConfig, options: SolveLiteOptions = {}): 
 	if (options.compressRanges) {
 		const count = (range: string | Float64Array): number => activeCombos(typeof range === 'string' ? parseRange(range) : range).length;
 		change('compressRanges', undefined, options.compressRanges, `compressed to ${count(blueprint.oop)} and ${count(blueprint.ip)} re-weighted combinations (out of position, in position) that keep each range's equity distribution on this board and those that can follow it; approximate: the blueprint has no strategy for a combination left out, and what one combination does is not preserved; resolve solves the later streets for every combination again`);
+	}
+	if (blueprint.streetCompression && (blueprint.streetCompression.turn || blueprint.streetCompression.river)) {
+		const { turn = 0, river = 0 } = blueprint.streetCompression;
+		change('streetCompression', config.streetCompression, blueprint.streetCompression, `each ${[turn > 0 ? 'turn' : '', river > 0 ? 'river' : ''].filter(Boolean).join(' and ')} card keeps only the hands that stand for what arrives there${turn > 0 ? ' (turn: equity distributions within ' + turn + ')' : ''}${river > 0 ? ' (river: equities within ' + river + ')' : ''}; approximate: a hand that is not kept on a board plays there as the kept hand most like it`);
 	}
 	if (sampling) change('approximations.chanceSampling', undefined, sampling, samplingNote(sampling));
 	if (settle) {

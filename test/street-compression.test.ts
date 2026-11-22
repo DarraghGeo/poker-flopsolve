@@ -1,0 +1,266 @@
+import { describe, expect, it } from 'vitest';
+import { createRun, defineSpot, liteConfig, litePreset, openLite, resolveSubgame, solve, solveLite } from '../src/index.ts';
+import type { SpotConfig } from '../src/index.ts';
+import { COMBO_CARDS } from '../src/cards.ts';
+
+/**
+ * `SpotConfig.streetCompression`: a kept set of hands for every turn and river
+ * board, inside one solve. The ranges are wide enough for a board to have
+ * something to drop, the betting small enough to solve in a test.
+ */
+const OOP = 'AA-22,AKs-A2s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s,98s,87s,AKo-ATo,KQo-KTo,QJo';
+const IP = 'AA-22,AKs-A2s,KQs-K8s,QJs-Q9s,JTs-J9s,T9s,98s,87s,76s,AKo-A9o,KQo-KTo,QJo';
+const flop: SpotConfig = { board: 'Ts 9s 4h', pot: 55, stack: 975, oop: OOP, ip: IP, betSizes: [[0.66]], maxRaises: 1 };
+const turn: SpotConfig = { ...flop, board: 'Ts 9s 4h 2c' };
+/** Tolerances too small to drop a hand: every candidate is kept, through the kept sets' own path. */
+const WHOLE = { turn: 1e-12, river: 1e-12 };
+
+describe('streetCompression', () => {
+	it('is the plain solve when every hand is kept, in either engine', () => {
+		for (const engine of ['js', undefined] as const) {
+			const options = { iterations: 6, workers: 1, ...(engine ? { engine } : {}) };
+			const plain = solve(defineSpot(turn), options);
+			const kept = solve(defineSpot({ ...turn, streetCompression: WHOLE }), options);
+			expect(kept.spot.kept).toBeDefined();
+			expect(kept.spot.estimate.totalSlots).toBe(plain.spot.estimate.totalSlots);
+			expect(kept.ev(0)).toBeCloseTo(plain.ev(0), 5);
+			expect(kept.exploitabilityPercent()).toBeCloseTo(plain.exploitabilityPercent(), 5);
+		}
+	});
+
+	it('is the plain solve from a flop when every hand is kept', () => {
+		const options = { iterations: 4, workers: 1 };
+		const plain = solve(defineSpot(flop), options);
+		const kept = solve(defineSpot({ ...flop, streetCompression: WHOLE }), options);
+		expect(kept.ev(0)).toBeCloseTo(plain.ev(0), 5);
+		expect(kept.exploitabilityPercent()).toBeCloseTo(plain.exploitabilityPercent(), 5);
+	});
+
+	it('agrees between the engines where suits mirror and hands are dropped', () => {
+		// Ts 9s 4h leaves two suits alike, so boards store one hand a mirror orbit and a hand
+		// that is dropped can stand for more hands than the one it plays as.
+		const config = { ...flop, streetCompression: { turn: 0.01, river: 0.01 } };
+		const js = solve(defineSpot(config), { iterations: 4, workers: 1, engine: 'js' });
+		const wasm = solve(defineSpot(config), { iterations: 4, workers: 1 });
+		expect(js.spot.kept!.keptHands[1]).toBeLessThan(js.spot.kept!.candidates[1]);
+		expect(wasm.ev(0)).toBeCloseTo(js.ev(0), 2);
+		expect(wasm.exploitabilityPercent()).toBeCloseTo(js.exploitabilityPercent(), 1);
+	});
+
+	it('gives every live hand a strategy on a river under a compressed turn', () => {
+		const spot = defineSpot({ ...flop, streetCompression: { turn: 0.02, river: 0.02 } });
+		const sol = solve(spot, { iterations: 3, workers: 1 });
+		const node = spot.tree.decisionNodes.find((n) => spot.tree.round[n] === 2)!;
+		const player = spot.tree.player[node];
+		const start = (spot.runouts.counts[0] + spot.runouts.counts[1]) * 2;
+		// A hand its turn dropped follows that turn's stand-in, or on a river that deals the
+		// stand-in's card the river's kept hand nearest it in strength: never an even mix by default.
+		let uneven = 0;
+		for (let board = 0; board < 12; board++) {
+			const view = sol.strategyAt(node, board);
+			const cards = Array.from(spot.runouts.cards[2].subarray(board * 5, board * 5 + 5));
+			const keptThere = spot.kept!.start[start + board * 2 + player + 1] - spot.kept!.start[start + board * 2 + player];
+			expect(keptThere).toBeGreaterThan(0);
+			view.combos.forEach((combo, i) => {
+				if (!(spot.players[player].weights[combo] > 0)) return;
+				if (cards.includes(COMBO_CARDS[combo * 2]) || cards.includes(COMBO_CARDS[combo * 2 + 1])) return;
+				const row = view.probs.subarray(i * view.actions.length, (i + 1) * view.actions.length);
+				expect(row.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
+				if (row.some((p) => Math.abs(p - 1 / view.actions.length) > 1e-9)) uneven++;
+			});
+		}
+		expect(uneven).toBeGreaterThan(0);
+	});
+
+	it('stores fewer hands on later boards, and keeps the weight that arrives', () => {
+		const plain = defineSpot(flop);
+		const spot = defineSpot({ ...flop, streetCompression: { turn: 0.01, river: 0.01 } });
+		const kept = spot.kept!;
+		expect(spot.estimate.totalSlots).toBeLessThan(plain.estimate.totalSlots * 0.6);
+		expect(kept.keptHands[1]).toBeLessThan(kept.candidates[1]);
+		expect(kept.keptHands[2]).toBeLessThan(kept.candidates[2]);
+		// A river board's kept hands weigh, between them, what its candidates did.
+		const round = 2;
+		let slots = 0;
+		for (let round0 = 0; round0 < round; round0++) slots += spot.runouts.counts[round0] * 2;
+		for (let board = 0; board < Math.min(40, spot.runouts.counts[round]); board++) {
+			for (let player = 0; player < 2; player++) {
+				const slot = slots + board * 2 + player;
+				let arrived = 0;
+				let keptWeight = 0;
+				for (let i = kept.start[slot]; i < kept.start[slot + 1]; i++) {
+					if (kept.stand[i] === kept.combo[i]) keptWeight += kept.weight[i] * kept.orbit[i];
+				}
+				// What arrived is what the kept hands gather at a reach of one a hand: scale times the candidates' count.
+				const gathered = new Map<number, number>();
+				for (let i = kept.start[slot]; i < kept.start[slot + 1]; i++) gathered.set(kept.stand[i], (gathered.get(kept.stand[i]) ?? 0) + kept.orbit[i]);
+				for (let i = kept.start[slot]; i < kept.start[slot + 1]; i++) {
+					if (kept.stand[i] !== kept.combo[i]) continue;
+					expect(kept.scale[i]).toBeGreaterThan(0);
+					arrived += gathered.get(kept.combo[i])! > 0 ? kept.weight[i] * kept.orbit[i] : 0;
+				}
+				expect(arrived).toBeCloseTo(keptWeight, 6);
+			}
+		}
+	});
+
+	it('solves close to the full game, and a tighter tolerance closer', () => {
+		const measure = (streets: SpotConfig['streetCompression']): number => {
+			const run = createRun(defineSpot({ ...turn, streetCompression: streets }), { workers: 1 });
+			run.step(60);
+			const percent = run.trueExploitabilityPercent();
+			run.close();
+			return percent;
+		};
+		const loose = measure({ river: 0.04 });
+		const tight = measure({ river: 0.005 });
+		// The figure is the kept sets' cost on top of 60 passes' own: a few points of pot at the tight end.
+		expect(tight).toBeLessThan(loose);
+		expect(tight).toBeLessThan(5);
+	});
+
+	it('gives the same answer on any number of threads', () => {
+		const config = { ...turn, streetCompression: { river: 0.01 } };
+		const one = solve(defineSpot(config), { iterations: 8, workers: 1 });
+		const two = solve(defineSpot(config), { iterations: 8, workers: 2 });
+		expect(two.ev(0)).toBeCloseTo(one.ev(0), 4);
+		const pooled = solve(defineSpot(config), { iterations: 8, workers: 2, engine: 'js' });
+		const alone = solve(defineSpot(config), { iterations: 8, workers: 1, engine: 'js' });
+		expect(pooled.ev(0)).toBeCloseTo(alone.ev(0), 8);
+	});
+
+	it('reads a hand that is not kept as its stand-in', () => {
+		const spot = defineSpot({ ...turn, streetCompression: { river: 0.02 } });
+		const sol = solve(spot, { iterations: 6, workers: 1 });
+		const kept = spot.kept!;
+		const node = spot.tree.decisionNodes.find((n) => spot.tree.round[n] === 1)!;
+		const player = spot.tree.player[node];
+		const board = 0;
+		const view = sol.strategyAt(node, board);
+		const row = new Map<number, number[]>();
+		view.combos.forEach((combo, i) => row.set(combo, Array.from(view.probs.subarray(i * view.actions.length, (i + 1) * view.actions.length))));
+		const slot = (spot.runouts.counts[0] + board) * 2 + player;
+		let dropped = 0;
+		for (let i = kept.start[slot]; i < kept.start[slot + 1]; i++) {
+			if (kept.stand[i] === kept.combo[i]) continue;
+			dropped++;
+			expect(row.get(kept.combo[i])).toEqual(row.get(kept.stand[i]));
+		}
+		expect(dropped).toBeGreaterThan(0);
+		// And every hand the board leaves live has a strategy.
+		const dealt = spot.runouts.cards[1][spot.runouts.width[1] - 1];
+		for (const [combo, probs] of row) {
+			if (COMBO_CARDS[combo * 2] === dealt || COMBO_CARDS[combo * 2 + 1] === dealt) continue;
+			expect(probs.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
+		}
+	});
+
+	it('reweighs its hands in place, and takes a new hand on a new run', () => {
+		const run = createRun(defineSpot({ ...turn, streetCompression: { river: 0.01 } }), { workers: 1 });
+		run.step(4);
+		const before = run.spot;
+		// Hands the range held, at other weights: the kept sets stand as they are.
+		run.setRange(0, 'AA-22,AKs-ATs:0.5,KQs,AKo:0.25');
+		expect(run.spot).toBe(before);
+		run.step(2);
+		expect(Number.isFinite(run.exploitabilityPercent())).toBe(true);
+		// A hand it did not hold: a new run, with kept sets chosen again.
+		run.setRange(0, 'AA-22,AKs-ATs,KQs,AKo,72o');
+		expect(run.spot).not.toBe(before);
+		expect(run.spot.kept).toBeDefined();
+		expect(run.spot.kept).not.toBe(before.kept);
+		run.step(2);
+		expect(Number.isFinite(run.exploitabilityPercent())).toBe(true);
+		run.close();
+	});
+
+	it('refuses tolerances that are none, and runout buckets under a compressed turn', () => {
+		expect(() => defineSpot({ ...flop, streetCompression: { turn: 1.5 } })).toThrow(/streetCompression\.turn/);
+		expect(() => defineSpot({ ...flop, streetCompression: { river: -0.1 } })).toThrow(/streetCompression\.river/);
+		expect(() => defineSpot({ ...flop, runoutBuckets: 3, streetCompression: { turn: 0.01 } })).toThrow(/runoutBuckets/);
+		expect(defineSpot({ ...flop, runoutBuckets: 3, streetCompression: { river: 0.01 } }).kept).toBeDefined();
+		expect(defineSpot({ ...flop, streetCompression: {} }).kept).toBeUndefined();
+	});
+
+	it('keeps a Lite session going through a new range and new betting', () => {
+		const session = openLite(turn, { streetCompression: { river: 0.02 }, iterations: 12, workers: 1, settle: { every: 6 } });
+		const kept = session.current.solution.spot.kept;
+		expect(kept).toBeDefined();
+		// Other betting: the kept sets do not depend on it.
+		const edited = session.edit({ betSizes: [[0.5]] });
+		expect(edited.solution.spot.kept).toBe(kept);
+		// Other weights for the hands it holds: the same kept sets, in place.
+		const reweighed = session.setRange(1, 'AA-22,AKs-A2s:0.5,KQs-K8s,QJs-Q9s,JTs-J9s,T9s,98s,87s,76s,AKo-A9o,KQo-KTo:0.25,QJo');
+		expect(reweighed.solution.spot.kept).toBe(kept);
+		expect(Number.isFinite(reweighed.solution.ev(0))).toBe(true);
+		session.close();
+	});
+
+	it('adds a hand held in reserve in place, as a session without kept sets does', () => {
+		const widest = `${OOP},76s,65s`;
+		const session = openLite({ ...turn, oopReserve: widest }, { streetCompression: { river: 0.02 }, iterations: 12, workers: 1, settle: { every: 6 } });
+		const spot = session.current.solution.spot;
+		// The kept sets were chosen for the range and its reserve, so the reserve's hands have stand-ins already.
+		expect(session.setRange(0, `${OOP},76s`).solution.spot).toBe(spot);
+		expect(session.setRange(0, widest).solution.spot).toBe(spot);
+		session.close();
+	});
+
+	it('previews and warm-starts as a spot without kept sets does', () => {
+		const run = createRun(defineSpot({ ...turn, streetCompression: { river: 0.02 } }), { workers: 1 });
+		run.step(6);
+		// A preview reads the strategy the edited run would start from, on a board with a kept set too.
+		const preview = run.preview({ betSizes: [[1]] });
+		const node = preview.spot.tree.decisionNodes.find((n) => preview.spot.tree.round[n] === 1)!;
+		const view = preview.strategyAt(node, 0);
+		expect(preview.seededNodes).toBeGreaterThan(0);
+		expect(view.probs.subarray(0, view.actions.length).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
+		run.edit({ betSizes: [[1]] });
+		expect(run.spot.kept).toBeDefined();
+		// From kept sets to every hand and back: each takes the other's regrets through the stand-ins.
+		const whole = createRun(defineSpot(turn), { workers: 1, warmStart: run });
+		whole.step(2);
+		const again = createRun(defineSpot({ ...turn, streetCompression: { river: 0.01 } }), { workers: 1, warmStart: whole });
+		again.step(2);
+		expect(Number.isFinite(whole.exploitabilityPercent())).toBe(true);
+		expect(Number.isFinite(again.exploitabilityPercent())).toBe(true);
+		run.close();
+		whole.close();
+		again.close();
+	});
+
+	it('re-solves a later street for every hand', () => {
+		const spot = defineSpot({ ...flop, streetCompression: { turn: 0.02, river: 0.02 } });
+		const blueprint = solve(spot, { iterations: 4, workers: 1 });
+		const node = spot.tree.decisionNodes.find((n) => spot.tree.round[n] === 1)!;
+		const sub = resolveSubgame(blueprint, node, 0, { player: 0, iterations: 3, solve: { workers: 1 } });
+		expect(sub.solution.spot.kept).toBeUndefined();
+		// Every hand that reaches the turn is there, kept on the blueprint's turn or not.
+		const reach = blueprint.reachAt(node, 0, 0);
+		let reaching = 0;
+		const dealt = spot.runouts.cards[1][spot.runouts.width[1] - 1];
+		reach.forEach((weight, combo) => {
+			if (!(weight > 0) || COMBO_CARDS[combo * 2] === dealt || COMBO_CARDS[combo * 2 + 1] === dealt) return;
+			reaching++;
+			expect(sub.solution.spot.players[0].slot[combo]).toBeGreaterThanOrEqual(0);
+		});
+		// More reach the turn than its board keeps: the hands it dropped come back through their stand-ins.
+		const slot = (spot.runouts.counts[0] + 0) * 2;
+		let keptThere = 0;
+		for (let i = spot.kept!.start[slot]; i < spot.kept!.start[slot + 1]; i++) if (spot.kept!.stand[i] === spot.kept!.combo[i]) keptThere += spot.kept!.orbit[i];
+		expect(reaching).toBeGreaterThan(keptThere);
+		expect(() => resolveSubgame(blueprint, node, 0, { player: 0, iterations: 3, solve: { workers: 1 }, measure: true })).toThrow(/streetCompression/);
+	});
+
+	it('is a Lite option, with a threshold a street', () => {
+		const lite = liteConfig(flop, { streetCompression: { turn: 0.01, river: 0.02 } });
+		expect(lite.streetCompression).toEqual({ turn: 0.01, river: 0.02 });
+		expect(lite.runoutBuckets).toBe(false);
+		expect(liteConfig(flop, { streetCompression: { river: 0.02 } }).runoutBuckets).toBe(3);
+		const preset = litePreset(flop, { streetCompression: { river: 0.02 } });
+		expect(preset.changes.settings.some((change) => change.setting === 'streetCompression')).toBe(true);
+		const solved = solveLite(turn, { streetCompression: { river: 0.02 }, compressRanges: { tolerance: 0.02 }, iterations: 6, settle: false, workers: 1 });
+		expect(solved.solution.spot.kept).toBeDefined();
+		expect(Number.isFinite(solved.solution.ev(0))).toBe(true);
+	});
+});
