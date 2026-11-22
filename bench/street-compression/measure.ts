@@ -17,8 +17,8 @@
  * an iteration is compared at the same count. Printed for each: the boards
  * stored, the hands kept on later boards out of those that could be held,
  * the storage, the time to define the spot (which chooses the kept sets),
- * the time for the passes and how many times faster than plain Lite that
- * is, the exploitability in the same tree with every hand on every runout
+ * the time for the passes (ten times the quickest ten's, for each ten in
+ * turn) and how many times faster than plain Lite that is, the exploitability in the same tree with every hand on every runout
  * (`trueExploitabilityPercent`; `TRUE=0` skips it), and how far the root
  * play is from plain Lite's, as `bench/range-compress` measures it.
  */
@@ -87,9 +87,16 @@ for (const board of boards) {
 		const spot = defineSpot(preset.config);
 		const defineSeconds = (performance.now() - defined) / 1000;
 		const run = createRun(spot, preset.options);
-		const started = performance.now();
-		run.step(PASSES);
-		const seconds = (performance.now() - started) / 1000;
+		// In tens, and the quickest ten counted for all: a machine doing
+		// something else beside this moved whole runs by a third.
+		let quickest = Infinity;
+		for (let done = 0; done < PASSES; done += 10) {
+			const started = performance.now();
+			run.step(Math.min(10, PASSES - done));
+			const ten = ((performance.now() - started) / 1000) * (10 / Math.min(10, PASSES - done));
+			if (ten < quickest) quickest = ten;
+		}
+		const seconds = (quickest * PASSES) / 10;
 		const exploitable = process.env.TRUE === '0' ? NaN : run.trueExploitabilityPercent();
 		const play = frequencies(run.snapshot());
 		if (variant === 'lite' || plain === null) plain = { seconds, play };

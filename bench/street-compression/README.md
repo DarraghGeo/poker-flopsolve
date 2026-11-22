@@ -21,7 +21,9 @@ Columns:
   a river's candidates are the hands its turn kept.
 - **define s**: `defineSpot`, which chooses the kept sets: the compressor once a turn board, and a
   clustering by strength once a river board.
-- **x Lite**: the passes' time against plain Lite's on the same board.
+- **passes s**: the passes are run ten at a time and the quickest ten counted for all of them: a
+  machine doing something else beside the solve moved whole runs by a third between repeats.
+- **x Lite**: that time against plain Lite's on the same board.
 - **exploitable %**: `trueExploitabilityPercent()`: the strategy played in the same tree with
   every hand on every runout, a hand that is not kept on a board playing as its stand-in. Plain
   Lite's own figure is the floor: history sharing and runout buckets are in it.
