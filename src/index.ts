@@ -1750,9 +1750,12 @@ function createFixedRun(spot: Spot, options: SolveOptions = {}, before = 0): Sol
 		}
 		if (options.warmStart) {
 			const source = options.warmStart;
+			if (options.warmIteration !== undefined && !(Number.isInteger(options.warmIteration) && options.warmIteration >= 0)) {
+				throw new Error(`warmIteration must be a whole number of iterations, zero or more; got ${options.warmIteration}`);
+			}
 			warm = options.warmCards
 				? warmStart(ctx, source.solver.ctx, false, options.warmCards)
-				: warmStart(ctx, source.solver.ctx, sameSpot(spot.source, source.spot.source));
+				: warmStart(ctx, source.solver.ctx, sameSpot(spot, source.spot));
 			offset = options.warmIteration ?? source.totalIterations;
 		} else if (coarsePlan && coarsePlan.iterations > 0) {
 			// Regrets only: the bucketed game's average would have to be outweighed.
@@ -2061,12 +2064,28 @@ export function storageCost(of: Spot, at: Precision): number {
 }
 
 /**
- * Whether two configurations describe the very same game. Limits and how
- * runouts are stored do not change the game, so they are left out.
+ * Whether two spots are the very same game. Limits and how runouts are
+ * stored do not change the game, so they are left out; and the board and
+ * ranges are compared as the spots hold them, not as their configurations
+ * spell them, since a run whose range was changed in place holds it as
+ * weights (`SolveRun.setRange`) where a caller may write it as a string.
  */
-function sameSpot(a: SpotConfig, b: SpotConfig): boolean {
-	// `evPot` only says how EV is reported, not what game is played.
-	const plain = ({ maxBytes: _bytes, maxCombos: _combos, isomorphism: _iso, evPot: _evPot, ...game }: SpotConfig): string =>
+function sameSpot(first: Spot, second: Spot): boolean {
+	if (first.board.length !== second.board.length || first.board.some((card) => !second.board.includes(card))) return false;
+	for (const player of [0, 1] as const) {
+		const [mine, theirs] = [first.players[player], second.players[player]];
+		if (mine.weights.some((weight, combo) => weight !== theirs.weights[combo])) return false;
+		// Stored hands that weigh nothing change no game, unless they chose its runout buckets.
+		if ((first.source.runoutBuckets || second.source.runoutBuckets) &&
+			(mine.count !== theirs.count || mine.combos.some((combo, i) => combo !== theirs.combos[i]))) return false;
+	}
+	const [a, b] = [first.source, second.source];
+	// `evPot` only says how EV is reported, not what game is played; the
+	// board, ranges and their floor are compared above.
+	const plain = ({
+		maxBytes: _bytes, maxCombos: _combos, isomorphism: _iso, evPot: _evPot,
+		board: _board, oop: _oop, ip: _ip, oopReserve: _oopReserve, ipReserve: _ipReserve, minWeight: _floor, ...game
+	}: SpotConfig): string =>
 		JSON.stringify(game, (_, value: unknown) => (value instanceof Float64Array ? Array.from(value) : value));
 	const kept = (config: SpotConfig): readonly string[] | undefined =>
 		typeof config.shareHistories === 'object' ? config.shareHistories.keepLines : undefined;
