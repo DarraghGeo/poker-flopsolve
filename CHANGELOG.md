@@ -1,20 +1,8 @@
 # Changelog
 
-## 0.5.0-beta.3
+## 0.5.0-beta.4
 
-The fourth beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.2.
-
-### A run grows for the hands a range adds
-
-- `run.setRange` no longer needs hands reserved ahead. For a hand the spot does not store, or a
-  range that breaks a suit symmetry it folds, the run becomes one on a wider spot, started from
-  its own regrets, behind the same `run` object. On the bench turn two classes added took 15 ms
-  and then 0.29 s to 0.3% of pot, where storing every hand ahead made the re-solve 2.6 s and the
-  first solve 4.2 s for 0.66; on the flop 0.3 s and 3.5 s, against 10.8 s and 90 s for 14.
-- Changed from 0.5.0-beta.2, where such a range threw `RangeNotInPlaceError`: `{ grow: false }`
-  keeps that. After a run grows, `run.spot` and `run.solver` are the wider run's, so code that
-  kept either should read it again.
-- `openLite` uses it, so a session's `setRange` is the run's own.
+The fifth beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.3.
 
 ### Fixed: warm starts
 
@@ -31,6 +19,22 @@ The fourth beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 
 - `warmIteration` must be a whole number of zero or more.
 - `run.warmStart.regrets` says whether regrets were carried: with it and `averages` both
   false (a warm start from an `analysisOnly` run of another spot), nothing was.
+
+## 0.5.0-beta.3
+
+The fourth beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.2.
+
+### A run grows for the hands a range adds
+
+- `run.setRange` no longer needs hands reserved ahead. For a hand the spot does not store, or a
+  range that breaks a suit symmetry it folds, the run becomes one on a wider spot, started from
+  its own regrets, behind the same `run` object. On the bench turn two classes added took 15 ms
+  and then 0.29 s to 0.3% of pot, where storing every hand ahead made the re-solve 2.6 s and the
+  first solve 4.2 s for 0.66; on the flop 0.3 s and 3.5 s, against 10.8 s and 90 s for 14.
+- Changed from 0.5.0-beta.2, where such a range threw `RangeNotInPlaceError`: `{ grow: false }`
+  keeps that. After a run grows, `run.spot` and `run.solver` are the wider run's, so code that
+  kept either should read it again.
+- `openLite` uses it, so a session's `setRange` is the run's own.
 
 ### Measured and not kept: Lite without its first full walk (issue #164)
 
