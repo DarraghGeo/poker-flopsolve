@@ -91,6 +91,13 @@ export function spawnWorker(_setup: WorkerSetup, _onError: (error: Error) => voi
 export function warmEngineThreads(_count: number): void {}
 
 /**
+ * Nothing to do in a browser, whose engine threads go back to
+ * `prepareThreads`'s pool when a run closes and serve the next as they are.
+ * @param _count waiting threads to add to, or take from, those kept ready
+ */
+export function holdEngineThreads(_count: number): void {}
+
+/**
  * Hand one idle engine thread a solve's setup.
  * @param setup what the thread needs to join the solve
  * @param onError called if the thread dies, so the solve can stop waiting on it

@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Editing a run's betting, pot or stack
+
+- `run.edit(changes)` puts the run on the edited spot, behind the same object, started from its
+  regrets and average: a bet or raise size added, removed or moved, more or fewer raises, another
+  pot or stack. A size the tree did not have is seeded from its nearest neighbour. It takes
+  1–4 ms on the bench river, 15–26 ms on the turn on 4 threads and about 0.2 s on the flop.
+- `run.preview(changes)` gives the edited tree and the strategy the run would start from in
+  0.5–5 ms on any street, without allocating anything.
+- After an edit the river is back at 0.3% of pot in 1–6 ms and the turn in 44 ms to 0.7 s; the
+  flop, where an iteration takes 70–130 ms, in one to three seconds.
+- `warmTolerance` and `warmAverages` are new `warmStart` options: the largest size ratio still
+  matched (`Infinity` seeds a new size from its neighbour), and whether the average is carried.
+- In Node a run that has been replaced once (an edit, or growing for a hand) keeps as many
+  engine threads waiting as it uses, so the next replacement does not wait for threads to start:
+  a threaded turn edit took 56 ms the first time and 15–26 after.
+
 ## 0.5.0-beta.4
 
 The fifth beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.3.
