@@ -15,8 +15,8 @@
  *
  * The two trees are walked together from the root. A decision matches when
  * the same player acts in the same round; its actions match by kind, and bets
- * and raises by size as a fraction of the pot, the nearest within a factor of
- * `SIZE_TOLERANCE`. Whatever matches nothing starts cold. Boards match by
+ * and raises by the chips they add as a fraction of the pot, the nearest
+ * within a factor of `SIZE_TOLERANCE`. Whatever matches nothing starts cold. Boards match by
  * their real cards, so two spots may store different runouts (one folding
  * mirrored deals, the other not); hands match by combination, so a range may
  * have grown or shrunk.
@@ -54,48 +54,85 @@ export interface WarmStartReport {
 	 * reach 0.1% of pot carrying it, 100 without, 125 from cold.
 	 */
 	readonly averages: boolean;
+	/**
+	 * Whether regrets were carried over: false where either side keeps none
+	 * (an `analysisOnly` run). With `averages` false as well, nothing was.
+	 */
+	readonly regrets: boolean;
+}
+
+/** How two trees pair up; see `matchTrees`. */
+interface TreeMatch {
+	/** Each decision node of `to`'s counterpart in `from`, or -1. */
+	readonly match: Int32Array;
+	/** For each matched node of `to`, which of the old node's actions each of its actions continues, or -1. */
+	readonly actions: Map<number, Int32Array>;
+}
+
+/**
+ * Pair each decision node of `to` with its counterpart in `from`, and each
+ * of its actions with the old action it continues.
+ *
+ * The trees are walked together, each player's investment kept along the
+ * way: a bet or raise is measured by the chips it adds, as a share of the
+ * pot it is made into. An edge's own target is the actor's whole investment,
+ * earlier streets included, and measured by that, sizes drew together as
+ * the pot grew: after a flop bet and call, a third of the pot on the turn
+ * was taken for half of it.
+ */
+function matchTrees(to: Tree, from: Tree, tolerance: number): TreeMatch {
+	const match = new Int32Array(to.nodeCount).fill(-1);
+	const actions = new Map<number, Int32Array>();
+	const limit = Math.log(tolerance);
+	const walk = (a: number, b: number, mine: readonly [number, number], theirs: readonly [number, number]): void => {
+		if (to.kind[a] !== from.kind[b] || to.round[a] !== from.round[b]) return;
+		if (to.kind[a] === NodeKind.Chance) {
+			walk(to.edgeChild[to.firstEdge[a]], from.edgeChild[from.firstEdge[b]], mine, theirs);
+			return;
+		}
+		if (to.kind[a] !== NodeKind.Decision || to.player[a] !== from.player[b]) return;
+		match[a] = b;
+		const actor = to.player[a];
+		const actionOf = new Int32Array(to.numEdges[a]).fill(-1);
+		actions.set(a, actionOf);
+		for (let e = 0; e < to.numEdges[a]; e++) {
+			const edge = to.firstEdge[a] + e;
+			const kind = to.edgeAction[edge];
+			const sized = kind === ActionKind.Bet || kind === ActionKind.Raise;
+			const size = (to.edgeTarget[edge] - mine[actor]) / to.pot[a];
+			let best = -1;
+			let bestGap = Infinity;
+			for (let o = 0; o < from.numEdges[b]; o++) {
+				const candidate = from.firstEdge[b] + o;
+				if (from.edgeAction[candidate] !== kind) continue;
+				if (!sized) {
+					best = candidate;
+					bestGap = 0;
+					break;
+				}
+				const gap = Math.abs(Math.log((from.edgeTarget[candidate] - theirs[actor]) / from.pot[b] / size));
+				if (gap < bestGap) {
+					bestGap = gap;
+					best = candidate;
+				}
+			}
+			if (best < 0 || !(bestGap <= limit)) continue;
+			actionOf[e] = best - from.firstEdge[b];
+			// A check or a fold has no target; anything else leaves the actor at its own.
+			const after = (invested: readonly [number, number], target: number): [number, number] =>
+				actor === 0 ? [Math.max(invested[0], target), invested[1]] : [invested[0], Math.max(invested[1], target)];
+			walk(to.edgeChild[edge], from.edgeChild[best], after(mine, to.edgeTarget[edge]), after(theirs, from.edgeTarget[best]));
+		}
+	};
+	walk(0, 0, [0, 0], [0, 0]);
+	return { match, actions };
 }
 
 /**
  * Pair each decision node of `to` with its counterpart in `from`, or -1.
  */
 export function matchNodes(to: Tree, from: Tree, tolerance = SIZE_TOLERANCE): Int32Array {
-	const match = new Int32Array(to.nodeCount).fill(-1);
-	const walk = (a: number, b: number): void => {
-		if (to.kind[a] !== from.kind[b] || to.round[a] !== from.round[b]) return;
-		if (to.kind[a] === NodeKind.Chance) {
-			walk(to.edgeChild[to.firstEdge[a]], from.edgeChild[from.firstEdge[b]]);
-			return;
-		}
-		if (to.kind[a] !== NodeKind.Decision || to.player[a] !== from.player[b]) return;
-		match[a] = b;
-		for (let e = 0; e < to.numEdges[a]; e++) {
-			const edge = to.firstEdge[a] + e;
-			const other = matchEdge(to, edge, a, from, b, tolerance);
-			if (other >= 0) walk(to.edgeChild[edge], from.edgeChild[other]);
-		}
-	};
-	walk(0, 0);
-	return match;
-}
-
-function matchEdge(to: Tree, edge: number, node: number, from: Tree, other: number, tolerance: number): number {
-	const kind = to.edgeAction[edge];
-	const sized = kind === ActionKind.Bet || kind === ActionKind.Raise;
-	const size = to.edgeTarget[edge] / to.pot[node];
-	let best = -1;
-	let bestGap = Infinity;
-	for (let e = 0; e < from.numEdges[other]; e++) {
-		const candidate = from.firstEdge[other] + e;
-		if (from.edgeAction[candidate] !== kind) continue;
-		if (!sized) return candidate;
-		const gap = Math.abs(Math.log(from.edgeTarget[candidate] / from.pot[other] / size));
-		if (gap < bestGap) {
-			bestGap = gap;
-			best = candidate;
-		}
-	}
-	return bestGap <= Math.log(tolerance) ? best : -1;
+	return matchTrees(to, from, tolerance).match;
 }
 
 /** Read one block — a node on a board — as plain numbers, `actions * count` of them. */
@@ -262,21 +299,23 @@ export function warmStart(
 	const a = to.runouts.initial;
 	const b = from.runouts.initial;
 	if (cards) checkRelabelling(cards, a, b);
-	else if (a.length !== b.length || a.some((card, i) => card !== b[i])) {
+	// The same cards, in whatever order each spot was given them.
+	else if (a.length !== b.length || a.some((card) => !b.includes(card))) {
 		throw new Error('A warm start must come from a solve of the same board, unless `warmCards` relabels one onto the other');
 	}
 	// A real board of `to` as `from` sees it: its own given board first, in
 	// its order, then the dealt cards relabelled.
 	const asSource = (real: number[]): number[] =>
-		cards ? [...b, ...real.slice(a.length).map((card) => cards[card])] : real;
+		[...b, ...real.slice(a.length).map((card) => (cards ? cards[card] : card))];
 	// Each hand of `to` as the hand of `from` it plays as.
 	const comboOf = new Uint16Array(COMBOS);
 	for (let combo = 0; combo < COMBOS; combo++) {
 		comboOf[combo] = cards ? comboIndex(cards[COMBO_CARDS[combo * 2]], cards[COMBO_CARDS[combo * 2 + 1]]) : combo;
 	}
-	const match = matchNodes(to.tree, from.tree, tolerance);
+	const { match, actions: actionsOf } = matchTrees(to.tree, from.tree, tolerance);
 	const { tree } = to;
-	const width = to.layout.maxActions * COMBOS;
+	// Wide enough for a block of either tree: an old node is read whole, and may have more actions than any new one.
+	const width = Math.max(to.layout.maxActions, from.layout.maxActions) * COMBOS;
 	const oldRegret = new Float64Array(width);
 	const oldSum = new Float64Array(width);
 	const newRegret = new Float64Array(width);
@@ -292,19 +331,10 @@ export function warmStart(
 	// each node was most of a warm start's time.
 	const rounds = to.runouts.rounds;
 	const nodesOf: number[][] = Array.from({ length: rounds * 2 }, () => []);
-	const actionsOf = new Map<number, Int32Array>();
 	let matched = 0;
 	for (const node of tree.decisionNodes) {
-		const old = match[node];
-		if (old < 0) continue;
+		if (match[node] < 0) continue;
 		matched++;
-		const actions = tree.numEdges[node];
-		const actionOf = new Int32Array(actions).fill(-1);
-		for (let e = 0; e < actions; e++) {
-			const other = matchEdge(tree, tree.firstEdge[node] + e, node, from.tree, old, tolerance);
-			if (other >= 0) actionOf[e] = other - from.tree.firstEdge[old];
-		}
-		actionsOf.set(node, actionOf);
 		nodesOf[tree.round[node] * 2 + tree.player[node]].push(node);
 	}
 
@@ -401,7 +431,7 @@ export function warmStart(
 			}
 		}
 	}
-	return { matchedNodes: matched, decisionNodes: tree.decisionNodes.length, averages };
+	return { matchedNodes: matched, decisionNodes: tree.decisionNodes.length, averages, regrets: hasRegret };
 }
 
 /**

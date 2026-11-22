@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0-beta.4
+
+The fifth beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.3.
+
+### Fixed: warm starts
+
+- A warm start into a tree with fewer actions than its source read past its buffers where
+  blocks are re-encoded (mirrored boards, 16-bit and compact storage): on wide hand lists it
+  wrote NaN regrets at 32 bits and dropped seeded ones at 16. `copySubtree` had the same.
+- Bet sizes are matched by the chips a bet adds over the pot. They were matched by the
+  actor's whole investment over the pot, which drew sizes together once chips had gone in: after
+  a flop bet and call, a third of the pot on the turn was seeded onto half of it.
+- A solve of the same board with its cards in another order is taken, where it was refused.
+- A spot is recognised as the same, and its average resumed, by the board and ranges it holds,
+  not by how its configuration spells them; before, a run whose range `setRange` had changed
+  was never the same spot as one given that range.
+- `warmIteration` must be a whole number of zero or more.
+- `run.warmStart.regrets` says whether regrets were carried: with it and `averages` both
+  false (a warm start from an `analysisOnly` run of another spot), nothing was.
+
 ## 0.5.0-beta.3
 
 The fourth beta of 0.5.0 (`npm install poker-flopsolve@beta`): everything since 0.5.0-beta.2.

@@ -57,7 +57,7 @@ describe('warm start across boards', () => {
 		const warm = createRun(defineSpot(flop), { ...ONE, warmStart: source, warmCards: rankSwap(rank('4'), rank('5')) });
 		const cold = createRun(defineSpot(flop), ONE);
 		try {
-			expect(warm.warmStart).toEqual({ matchedNodes: warm.spot.tree.decisionNodes.length, decisionNodes: warm.spot.tree.decisionNodes.length, averages: false });
+			expect(warm.warmStart).toEqual({ matchedNodes: warm.spot.tree.decisionNodes.length, decisionNodes: warm.spot.tree.decisionNodes.length, averages: false, regrets: true });
 			expect(warm.totalIterations).toBe(60);
 			cold.step(1);
 			warm.step(1);

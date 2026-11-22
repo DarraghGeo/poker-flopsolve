@@ -75,7 +75,8 @@ export function copySubtree(to: Context, from: Context, averages: boolean, fromN
 	const match = matchSubtree(to.tree, from.tree, fromNode);
 	const invested = investedBefore(from.tree, fromNode);
 	const { tree } = to;
-	const width = to.layout.maxActions * COMBOS;
+	// Wide enough for a block of either tree: an old node is read whole, and may have more actions than any new one.
+	const width = Math.max(to.layout.maxActions, from.layout.maxActions) * COMBOS;
 	const oldRegret = new Float64Array(width);
 	const oldSum = new Float64Array(width);
 	const newRegret = new Float64Array(width);
@@ -144,7 +145,7 @@ export function copySubtree(to: Context, from: Context, averages: boolean, fromN
 			if (averages) writeBlock(to.strategySum, to.sumScale, SUM_STEPS, block, offset, length, newSum);
 		}
 	}
-	return { matchedNodes: matched, decisionNodes: tree.decisionNodes.length, averages };
+	return { matchedNodes: matched, decisionNodes: tree.decisionNodes.length, averages, regrets: hasRegret };
 }
 
 /** Whether `node` is a decision a chance node deals into. */
