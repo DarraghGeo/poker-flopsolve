@@ -28,6 +28,7 @@ describe('coarse start', () => {
 				matchedNodes: run.spot.tree.decisionNodes.length,
 				decisionNodes: run.spot.tree.decisionNodes.length,
 				averages: false,
+				regrets: true,
 			});
 			run.step(3);
 			expect(run.completed).toBe(3);
