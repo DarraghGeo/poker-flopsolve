@@ -26,14 +26,14 @@ import { buildHandSpace } from './hands.ts';
 import { createEngine, threadProfiles } from './engine.ts';
 import type { WasmStorage } from './engine.ts';
 import type { WarmStartReport } from './warm.ts';
-import { warmStart } from './warm.ts';
+import { matchTrees, warmStart } from './warm.ts';
 import type { SettleOptions } from './settle.ts';
 import { settlePlan, trackSettle } from './settle.ts';
 import { aliasHistories } from './history-merge.ts';
 import { betRows, DEFAULT_CHIP_SCALE, treeConfig } from './betting.ts';
 import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
-import { DEFAULT_MAX_BYTES, PLATFORM, spawnEngineWorker, threadAdvice, threadLimit, warmEngineThreads } from './platform/node.ts';
+import { DEFAULT_MAX_BYTES, PLATFORM, holdEngineThreads, spawnEngineWorker, threadAdvice, threadLimit, warmEngineThreads } from './platform/node.ts';
 import type { ActiveLists, CompactPlan, Context, Layout, PlayerIndex, RegretStore, RootValues, SamplingOptions, Solver, SumStore } from './cfr.ts';
 import {
 	buildActiveLists,
@@ -995,6 +995,26 @@ export interface SolveOptions {
 	 */
 	readonly warmIteration?: number;
 	/**
+	 * For a `warmStart`: the largest ratio between two bet sizes, as shares
+	 * of the pot, still taken as the same size. Default 1.35. `Infinity`
+	 * seeds every bet and raise from the nearest of its kind the old tree
+	 * had at that decision, so a size the old tree lacked starts from its
+	 * neighbour's regrets, and the decisions below it from those below its
+	 * neighbour: on the bench river a third bet size then started 9%
+	 * of pot exploitable where unseeded it started at 32%.
+	 */
+	readonly warmTolerance?: number;
+	/**
+	 * For a `warmStart`: carry the average strategy over as well as the
+	 * regrets. Default: only for the very same spot, which resumes it. True
+	 * for another spot makes the new run's strategy, before it has run, the
+	 * old run's average rather than the play its regrets give, which is what
+	 * `SolveRun.edit` wants on screen; a low `warmIteration` then lets
+	 * DCFR's discounting replace it within a few iterations. Carried at the
+	 * old run's own count it outweighs the new spot's play for long.
+	 */
+	readonly warmAverages?: boolean;
+	/**
 	 * Approximations that keep the game but solve it more cheaply. All off by
 	 * default. Each costs some accuracy, which the exploitability — measured
 	 * exactly, in the full game — shows.
@@ -1345,6 +1365,37 @@ export interface SetRangeOptions {
 	readonly grow?: boolean;
 }
 
+/**
+ * What `SolveRun.edit` changes: anything of a spot but its board and ranges,
+ * which is to say its pot, stack and betting.
+ */
+export type SpotEdit = Partial<Omit<SpotConfig, 'board' | 'oop' | 'ip' | 'oopReserve' | 'ipReserve'>>;
+
+/** Settings for `SolveRun.edit`. */
+export interface EditOptions {
+	/**
+	 * The iteration count the run resumes from, unless it was lower; a CFR+
+	 * run keeps its count. Default `RANGE_RESUME`, 10. A change that keeps
+	 * every decision (a size nudged, another pot) went on more smoothly from
+	 * 20; one that adds decisions, from 10.
+	 */
+	readonly resume?: number;
+}
+
+/** A spot as `SolveRun.edit` would make it, and the strategy it would start from; see `SolveRun.preview`. */
+export interface EditPreview {
+	/** The edited spot: its tree is the one to draw. */
+	readonly spot: Spot;
+	/** Decision nodes of the edited tree that the run's tree can stand for. */
+	readonly seededNodes: number;
+	/**
+	 * The strategy the edited run would start from at a decision: the run's
+	 * average strategy at the decision that stands for it, each action from
+	 * the action that stands for it, an even mix where nothing does.
+	 */
+	strategyAt(node: number, board: number): StrategyView;
+}
+
 /** An in-progress solve the caller drives. */
 export interface SolveRun {
 	readonly spot: Spot;
@@ -1407,6 +1458,40 @@ export interface SolveRun {
 	 *   breaks a symmetry. Nothing has changed in either case
 	 */
 	setRange(player: 0 | 1, range: string | Float64Array, options?: SetRangeOptions): void;
+	/**
+	 * Change the spot's pot, stack or betting and keep solving, from what
+	 * the run has learnt: a bet or raise size added, removed or moved, more
+	 * or fewer raises, cuts, another pot.
+	 *
+	 * The run becomes one on the edited spot, behind this same object, as it
+	 * does when it grows for a hand (`SetRangeOptions.grow`). Every decision
+	 * the old tree can stand for starts from its regrets, bets and raises
+	 * matched to the nearest size of their kind (`warmTolerance: Infinity`),
+	 * so a size the tree did not have starts as its neighbour and is solved
+	 * from there. A raise where the old tree had none starts from nothing.
+	 * `spot` and `solver` are the new run's from then on.
+	 *
+	 * What it costs is the new run's setup and a copy of the regrets:
+	 * 1–4 ms on the bench river, 15–26 ms on the turn on 4 threads, about
+	 * 0.2 s on the flop. `snapshot()` straight after is the seeded strategy, before any
+	 * iteration; `preview` gives it without making the change, in
+	 * milliseconds on any street.
+	 *
+	 * @param changes the settings to change; the rest stay as they are
+	 * @throws if the edited spot cannot be defined or does not fit, with
+	 *   nothing changed; and on an `analysisOnly` run
+	 */
+	edit(changes: SpotEdit, options?: EditOptions): void;
+	/**
+	 * The spot `edit` would make and the strategy it would start from,
+	 * without making the change or allocating its storage: for a page to
+	 * draw the edited tree at once, and `edit` and refine after.
+	 *
+	 * @param changes as for `edit`
+	 * @throws if the edited spot cannot be defined, or stores other runouts or
+	 *   hands than the run (a change of `isomorphism`, `runoutBuckets` or `minWeight`)
+	 */
+	preview(changes: SpotEdit): EditPreview;
 	/** Distance from equilibrium as a percentage of the pot. */
 	exploitabilityPercent(): number;
 	/**
@@ -1443,12 +1528,52 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 	let inner = createFixedRun(spot, options);
 	// Iterations of the runs before this one.
 	let earlier = 0;
+	// Engine threads this run has asked to have waiting; see `replace`.
+	let reserved = 0;
 	// What a wider run is created with: neither the run this one was started
 	// from, which must not be held past its use, nor its relabelling or count,
 	// nor a coarse start, since the wider run has this one to start from.
 	const { warmStart: _source, warmCards: _cards, warmIteration: _count, ...kept } = options;
 	const { coarseStart: _coarse, ...approximations } = options.approximations ?? {};
 	const base: SolveOptions = { ...kept, ...(options.approximations ? { approximations } : {}) };
+	/**
+	 * Put a run on `next` in this one's place, started from its regrets:
+	 * what growing for a hand and editing the tree both come to.
+	 */
+	const replace = (next: Spot, resume: number | undefined, seeding: SolveOptions): void => {
+		const old = inner;
+		const dcfr = (base.algorithm ?? 'dcfr') === 'dcfr';
+		const resumed = dcfr ? Math.min(old.totalIterations, resume ?? RANGE_RESUME) : old.totalIterations;
+		const before = earlier + old.completed;
+		let made: FixedRun;
+		// The old run's threads first, which the new one needs where threads
+		// are borrowed (a browser); its storage stays readable.
+		old.close();
+		try {
+			made = createFixedRun(next, { ...base, ...seeding, warmStart: old as SolveRun, warmIteration: resumed }, before);
+		} catch (error) {
+			// Back on the spot it had: the same one, so the average and the
+			// count come too. If that fails as well, the run stays as it
+			// was, closed, and the first failure is the one to report.
+			try {
+				made = createFixedRun(old.spot, { ...base, warmStart: old as SolveRun }, before);
+			} catch {
+				throw error;
+			}
+			earlier = before;
+			inner = made;
+			throw error;
+		}
+		// A run replaced once will be again: from here on, as many threads as
+		// it uses are kept waiting, so the next replacement need not wait for
+		// its own to start.
+		if (reserved === 0 && made.engine === 'wasm' && made.workers > 1) {
+			reserved = made.workers - 1;
+			holdEngineThreads(reserved);
+		}
+		earlier = before;
+		inner = made;
+	};
 	return {
 		get spot() {
 			return inner.spot;
@@ -1494,30 +1619,72 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 				oopReserve: stored(old.spot.players[0]),
 				ipReserve: stored(old.spot.players[1]),
 			});
-			const dcfr = (base.algorithm ?? 'dcfr') === 'dcfr';
-			const resumed = dcfr ? Math.min(old.totalIterations, settings.resume ?? RANGE_RESUME) : old.totalIterations;
-			// The old run's threads first, which the new one needs where
-			// threads are borrowed (a browser); its storage stays readable.
-			old.close();
-			const before = earlier + old.completed;
-			let next: SolveRun;
-			try {
-				next = createFixedRun(wider, { ...base, warmStart: old, warmIteration: resumed }, before);
-			} catch (error) {
-				// Back on the ranges it had: the same spot, so the average and
-				// the count come too. If that fails as well, the run stays as it
-				// was, closed, and the first failure is the one to report.
-				try {
-					next = createFixedRun(old.spot, { ...base, warmStart: old }, before);
-				} catch {
-					throw error;
-				}
-				earlier = before;
-				inner = next;
-				throw error;
+			replace(wider, settings.resume, {});
+		},
+		edit(changes, settings = {}) {
+			if (base.analysisOnly) throw new Error('edit: an analysisOnly run has only a loaded average, which a new tree could not take over');
+			if (settings.resume !== undefined && !(Number.isInteger(settings.resume) && settings.resume >= 0)) {
+				throw new Error(`edit: resume must be a whole number of iterations; got ${settings.resume}`);
 			}
-			earlier = before;
-			inner = next;
+			// Defined before anything is let go: a spot that cannot be throws here, with nothing changed.
+			// The average comes too, so the strategy on screen is the one `preview` showed until
+			// iterations replace it; not under CFR+, which would never let go of it.
+			replace(defineSpot({ ...inner.spot.source, ...changes }), settings.resume, {
+				warmTolerance: Infinity,
+				warmAverages: (base.algorithm ?? 'dcfr') === 'dcfr',
+			});
+		},
+		preview(changes) {
+			const from = inner;
+			const spot = defineSpot({ ...from.spot.source, ...changes });
+			const { tree } = spot;
+			// Its boards and hands are read as the run's own, so they must be: an
+			// edit that changes how runouts are folded or which hands are kept
+			// (`isomorphism`, `runoutBuckets`, `minWeight`) has no preview.
+			const sameHands = ([0, 1] as const).every((player) => {
+				const [mine, theirs] = [spot.players[player].combos, from.spot.players[player].combos];
+				return mine.length === theirs.length && mine.every((combo, i) => combo === theirs[i]);
+			});
+			if (!sameHands || spot.runouts.counts.some((count, round) => count !== from.spot.runouts.counts[round])) {
+				throw new Error('preview: the edited spot stores other runouts or hands than the run, which could not be read as its own; edit it instead');
+			}
+			const { match, actions } = matchTrees(tree, from.spot.tree, Infinity);
+			let seeded = 0;
+			for (const node of tree.decisionNodes) if (match[node] >= 0) seeded++;
+			return {
+				spot,
+				seededNodes: seeded,
+				strategyAt(node, board) {
+					if (tree.kind[node] !== NodeKind.Decision) throw new Error(`Node ${node} is not a decision`);
+					const owner = tree.player[node] as 0 | 1;
+					const { combos } = spot.players[owner];
+					const count = tree.numEdges[node];
+					const names: string[] = [];
+					for (let e = 0; e < count; e++) names.push(actionLabel(tree.edgeAction[tree.firstEdge[node] + e], tree.edgeTarget[tree.firstEdge[node] + e], spot.chipScale));
+					const probs = new Float64Array(combos.length * count).fill(1 / count);
+					const old = match[node];
+					if (old >= 0) {
+						const source = from.solver.averageStrategyAt(old, board);
+						const actionOf = actions.get(node)!;
+						for (let i = 0; i < combos.length; i++) {
+							let total = 0;
+							for (let e = 0; e < count; e++) if (actionOf[e] >= 0) total += source.probs[i * source.actions + actionOf[e]];
+							// An exactly even mix is a hand the run has nothing on (one the
+							// board blocks, say), and the edited run will have nothing on it
+							// either: it stays even over the edited decision's own actions.
+							const first = source.probs[i * source.actions];
+							let even = true;
+							for (let o = 1; o < source.actions; o++) if (source.probs[i * source.actions + o] !== first) even = false;
+							// Nor does anything carry where no action it took has one to stand for it.
+							if (even || !(total > 0)) continue;
+							for (let e = 0; e < count; e++) {
+								probs[i * count + e] = actionOf[e] >= 0 ? source.probs[i * source.actions + actionOf[e]] / total : 0;
+							}
+						}
+					}
+					return { node, board, player: owner, actions: names, combos, probs };
+				},
+			};
 		},
 		exploitabilityPercent() {
 			return inner.exploitabilityPercent();
@@ -1530,9 +1697,14 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
 		},
 		close() {
 			inner.close();
+			if (reserved > 0) holdEngineThreads(-reserved);
+			reserved = 0;
 		},
 	};
 }
+
+/** What a run on one spot does itself; replacing it by another is `createRun`'s. */
+type FixedRun = Omit<SolveRun, 'edit' | 'preview'>;
 
 /**
  * A run on the spot it was created for, whose `setRange` throws for a range
@@ -1540,7 +1712,7 @@ export function createRun(spot: Spot, options: SolveOptions = {}): SolveRun {
  *
  * @param before iterations the caller's run completed on the runs before this one, which its snapshots count too
  */
-function createFixedRun(spot: Spot, options: SolveOptions = {}, before = 0): SolveRun {
+function createFixedRun(spot: Spot, options: SolveOptions = {}, before = 0): FixedRun {
 	if (options.analysisOnly && options.approximations?.currentProfileEv) {
 		throw new Error('approximations.currentProfileEv needs regrets, and an analysisOnly run has none');
 	}
@@ -1754,8 +1926,8 @@ function createFixedRun(spot: Spot, options: SolveOptions = {}, before = 0): Sol
 				throw new Error(`warmIteration must be a whole number of iterations, zero or more; got ${options.warmIteration}`);
 			}
 			warm = options.warmCards
-				? warmStart(ctx, source.solver.ctx, false, options.warmCards)
-				: warmStart(ctx, source.solver.ctx, sameSpot(spot, source.spot));
+				? warmStart(ctx, source.solver.ctx, false, options.warmCards, options.warmTolerance)
+				: warmStart(ctx, source.solver.ctx, options.warmAverages ?? sameSpot(spot, source.spot), undefined, options.warmTolerance);
 			offset = options.warmIteration ?? source.totalIterations;
 		} else if (coarsePlan && coarsePlan.iterations > 0) {
 			// Regrets only: the bucketed game's average would have to be outweighed.

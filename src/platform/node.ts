@@ -96,13 +96,15 @@ interface IdleThread {
 interface EnginePool {
 	readonly idle: IdleThread[];
 	kept: number;
+	/** Waiting threads that runs have asked to have ready for a run replacing them; see `holdEngineThreads`. */
+	reserved: number;
 }
 
 const ENGINE_POOL_KEY = Symbol.for('poker-flopsolve.node-engine-threads');
 
 function enginePool(): EnginePool {
 	const holder = globalThis as unknown as Record<symbol, EnginePool | undefined>;
-	holder[ENGINE_POOL_KEY] ??= { idle: [], kept: 0 };
+	holder[ENGINE_POOL_KEY] ??= { idle: [], kept: 0, reserved: 0 };
 	return holder[ENGINE_POOL_KEY];
 }
 
@@ -130,7 +132,7 @@ function dropIdle(thread: IdleThread): void {
 function setLingers(): void {
 	const pool = enginePool();
 	pool.idle.forEach((thread, i) => {
-		if (i < pool.kept) {
+		if (i < pool.kept + pool.reserved) {
 			if (thread.linger) clearTimeout(thread.linger);
 			thread.linger = null;
 		} else if (!thread.linger) {
@@ -193,6 +195,23 @@ export function spawnEngineWorker(setup: EngineWorkerSetup, onError: (error: Err
 			warmEngineThreads(enginePool().idle.length + 1);
 		},
 	};
+}
+
+/**
+ * Ask for `count` more waiting engine threads to be kept ready (or, negative,
+ * that many fewer), and start what is missing. A run that has once been
+ * replaced by another (`SolveRun.edit`, a run growing) asks for as many as
+ * it uses: the run replacing it takes them without the wait a new thread
+ * costs, and the old run's threads, ended with it, are replaced in the
+ * background for the time after. New threads each time, since one that has
+ * served a solve holds that solve's storage until it is collected.
+ * @param count waiting threads to add to, or take from, those kept ready
+ */
+export function holdEngineThreads(count: number): void {
+	const pool = enginePool();
+	pool.reserved = Math.max(0, pool.reserved + count);
+	if (count > 0) warmEngineThreads(pool.kept + pool.reserved);
+	else setLingers();
 }
 
 /**
