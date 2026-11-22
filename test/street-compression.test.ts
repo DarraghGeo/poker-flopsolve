@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createRun, defineSpot, liteConfig, litePreset, solve, solveLite } from '../src/index.ts';
+import { createRun, defineSpot, liteConfig, litePreset, openLite, resolveSubgame, solve, solveLite } from '../src/index.ts';
 import type { SpotConfig } from '../src/index.ts';
 import { COMBO_CARDS } from '../src/cards.ts';
 
@@ -144,6 +144,43 @@ describe('streetCompression', () => {
 		expect(() => defineSpot({ ...flop, runoutBuckets: 3, streetCompression: { turn: 0.01 } })).toThrow(/runoutBuckets/);
 		expect(defineSpot({ ...flop, runoutBuckets: 3, streetCompression: { river: 0.01 } }).kept).toBeDefined();
 		expect(defineSpot({ ...flop, streetCompression: {} }).kept).toBeUndefined();
+	});
+
+	it('keeps a Lite session going through a new range and new betting', () => {
+		const session = openLite(turn, { streetCompression: { river: 0.02 }, iterations: 12, workers: 1, settle: { every: 6 } });
+		const kept = session.current.solution.spot.kept;
+		expect(kept).toBeDefined();
+		// Other betting: the kept sets do not depend on it.
+		const edited = session.edit({ betSizes: [[0.5]] });
+		expect(edited.solution.spot.kept).toBe(kept);
+		// Other weights for the hands it holds: the same kept sets, in place.
+		const reweighed = session.setRange(1, 'AA-22,AKs-A2s:0.5,KQs-K8s,QJs-Q9s,JTs-J9s,T9s,98s,87s,76s,AKo-A9o,KQo-KTo:0.25,QJo');
+		expect(reweighed.solution.spot.kept).toBe(kept);
+		expect(Number.isFinite(reweighed.solution.ev(0))).toBe(true);
+		session.close();
+	});
+
+	it('re-solves a later street for every hand', () => {
+		const spot = defineSpot({ ...flop, streetCompression: { turn: 0.02, river: 0.02 } });
+		const blueprint = solve(spot, { iterations: 4, workers: 1 });
+		const node = spot.tree.decisionNodes.find((n) => spot.tree.round[n] === 1)!;
+		const sub = resolveSubgame(blueprint, node, 0, { player: 0, iterations: 3, solve: { workers: 1 } });
+		expect(sub.solution.spot.kept).toBeUndefined();
+		// Every hand that reaches the turn is there, kept on the blueprint's turn or not.
+		const reach = blueprint.reachAt(node, 0, 0);
+		let reaching = 0;
+		const dealt = spot.runouts.cards[1][spot.runouts.width[1] - 1];
+		reach.forEach((weight, combo) => {
+			if (!(weight > 0) || COMBO_CARDS[combo * 2] === dealt || COMBO_CARDS[combo * 2 + 1] === dealt) return;
+			reaching++;
+			expect(sub.solution.spot.players[0].slot[combo]).toBeGreaterThanOrEqual(0);
+		});
+		// More reach the turn than its board keeps: the hands it dropped come back through their stand-ins.
+		const slot = (spot.runouts.counts[0] + 0) * 2;
+		let keptThere = 0;
+		for (let i = spot.kept!.start[slot]; i < spot.kept!.start[slot + 1]; i++) if (spot.kept!.stand[i] === spot.kept!.combo[i]) keptThere += spot.kept!.orbit[i];
+		expect(reaching).toBeGreaterThan(keptThere);
+		expect(() => resolveSubgame(blueprint, node, 0, { player: 0, iterations: 3, solve: { workers: 1 }, measure: true })).toThrow(/streetCompression/);
 	});
 
 	it('is a Lite option, with a threshold a street', () => {

@@ -507,21 +507,16 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 				// Reach is symmetric under the member's relabelling, so one
 				// walk serves every member; only the values are spread.
 				if (viaKept) {
-					// Every candidate reads its stand-in's value, once per hand it stands for.
+					// Every candidate reads its stand-in's value, once per hand it stands for:
+					// a candidate can stand for more than its stand-in does, so the board's
+					// own `packed` mark does not say whether any does.
 					const from = i32At(candStart, childSlot + traverser);
 					const candidates = i32At(candStart, childSlot + traverser + 1) - from;
 					const stands = candKept + (<usize>from << 1);
-					if (load<u8>(packed + <usize>(childSlot + traverser))) {
-						const orbits = candOrbit + (<usize>from << 2);
-						for (let i = 0; i < candidates; i++) {
-							const at = out + (<usize>load<u16>(upMe + (<usize>i << 1)) << 2);
-							store<f32>(at, load<f32>(at) + f32At(value, <i32>load<u16>(stands + (<usize>i << 1))) * f32At(orbits, i));
-						}
-					} else {
-						for (let i = 0; i < candidates; i++) {
-							const at = out + (<usize>load<u16>(upMe + (<usize>i << 1)) << 2);
-							store<f32>(at, load<f32>(at) + f32At(value, <i32>load<u16>(stands + (<usize>i << 1))));
-						}
+					const orbits = candOrbit + (<usize>from << 2);
+					for (let i = 0; i < candidates; i++) {
+						const at = out + (<usize>load<u16>(upMe + (<usize>i << 1)) << 2);
+						store<f32>(at, load<f32>(at) + f32At(value, <i32>load<u16>(stands + (<usize>i << 1))) * f32At(orbits, i));
 					}
 				} else if (load<u8>(packed + <usize>(childSlot + traverser))) {
 					// An entry stands for its whole orbit: weight it so, and
@@ -708,17 +703,10 @@ function gatherKept(slot: i32, ups: usize, reach: usize, into: usize, count: i32
 	const from = i32At(candStart, slot);
 	const candidates = i32At(candStart, slot + 1) - from;
 	const stands = candKept + (<usize>from << 1);
-	if (load<u8>(packed + <usize>slot)) {
-		const orbits = candOrbit + (<usize>from << 2);
-		for (let i = 0; i < candidates; i++) {
-			const at = into + (<usize>load<u16>(stands + (<usize>i << 1)) << 2);
-			store<f32>(at, load<f32>(at) + f32At(reach, <i32>load<u16>(ups + (<usize>i << 1))) * f32At(orbits, i));
-		}
-	} else {
-		for (let i = 0; i < candidates; i++) {
-			const at = into + (<usize>load<u16>(stands + (<usize>i << 1)) << 2);
-			store<f32>(at, load<f32>(at) + f32At(reach, <i32>load<u16>(ups + (<usize>i << 1))));
-		}
+	const orbits = candOrbit + (<usize>from << 2);
+	for (let i = 0; i < candidates; i++) {
+		const at = into + (<usize>load<u16>(stands + (<usize>i << 1)) << 2);
+		store<f32>(at, load<f32>(at) + f32At(reach, <i32>load<u16>(ups + (<usize>i << 1))) * f32At(orbits, i));
 	}
 	const scales = listScale + (<usize>i32At(listStart, slot) << 2);
 	for (let k = 0; k < count; k++) {
