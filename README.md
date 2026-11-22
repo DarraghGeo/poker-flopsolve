@@ -337,6 +337,49 @@ pot against 105–185 from cold on the bench river and turn. Every run built on 
 object is reweighted with it. For Lite, [`openLite`](#a-range-slider-on-lite-openlite) wraps
 this with the settle rule.
 
+### Changing the betting, pot or stack
+
+A page where bet sizes and raises are edited cannot solve the spot again at every edit.
+`run.edit` changes the spot behind the same run and starts from what the run has learnt, and
+`run.preview` gives the strategy it will start from without doing the work, to draw at once:
+
+```ts
+const preview = run.preview({ betSizes: [[0.33, 0.75, 1.25]] });   // milliseconds, on any street
+draw(preview.spot.tree, preview.strategyAt(0, 0));                 // the seeded answer, on screen
+run.edit({ betSizes: [[0.33, 0.75, 1.25]] });                      // the run is now on that tree
+run.step(10);                                                      // refine; snapshot() as it goes
+```
+
+Every decision the old tree can stand for starts from its regrets and its average, bets and
+raises matched to the nearest size of their kind, so a size the tree did not have plays as its
+neighbour until iterations tell them apart. A raise where the old tree had none starts from
+nothing. Hands grown or changed with `setRange` are kept. Measured on the bench spots, each
+solved first (river and turn to 0.3% of pot, flop to 0.5%), 4 threads on turn and flop:
+
+| | `preview` | `edit` | seeded, before any iteration | after 50 ms | back at the target |
+|---|---|---|---|---|---|
+| River, any edit below | 0.5–2 ms | 1–4 ms | 1.5–19% | at the target | 1–6 ms |
+| Turn, a size nudged | 1–5 ms | 56 ms (the first edit) | 1.3% | 0.34% | 0.17 s |
+| Turn, a size added | 1–5 ms | 16 ms | 19% | 1.7% | 0.19 s |
+| Turn, a size removed | 1–5 ms | 15 ms | 1.2% | at the target | 45 ms |
+| Turn, one more raise | 1–5 ms | 18 ms | 68% | 13% | 0.7 s |
+| Turn, pot 60 to 72 | 1–5 ms | 26 ms | 4.6% | 2.3% | 0.3 s |
+| Flop, a size nudged | 4–5 ms | 0.17 s | 1.6% | no iteration yet | 0.7 s |
+| Flop, a size added | 4–5 ms | 0.26 s | 8.9% | no iteration yet | 0.73% at 3 s |
+| Flop, a size removed | 4–5 ms | 0.18 s | 1.0% | no iteration yet | 1.7 s |
+| Flop, one more raise | 4–5 ms | 0.20 s | 41% | no iteration yet | 0.69% at 3 s |
+| Flop, pot 60 to 72 | 4–5 ms | 0.20 s | 3.1% | no iteration yet | 1.1 s |
+
+So the seeded answer is on screen in milliseconds everywhere, the river and most turn edits
+are solved again within 50 ms to a quarter of a second, and the flop, where one iteration takes
+70–130 ms, refines over one to three seconds. The seeded figure for a new raise is what an
+opponent could win by using it against even play where the tree is new; the strategy at the
+decisions the old tree had is the old one. On Node a run that has been edited once keeps as
+many threads waiting as it uses, new ones each time, so later edits do not wait for threads to
+start: the first threaded turn edit took 56 ms and the rest 15–26. `enableThreads(n)` has them
+waiting from the start.
+`warmTolerance` and `warmAverages` are the same seeding for a `warmStart` of your own.
+
 ## Re-solving from a node
 
 Solve the whole spot with a coarse tree, then re-solve the street you are looking at

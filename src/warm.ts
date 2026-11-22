@@ -62,7 +62,7 @@ export interface WarmStartReport {
 }
 
 /** How two trees pair up; see `matchTrees`. */
-interface TreeMatch {
+export interface TreeMatch {
 	/** Each decision node of `to`'s counterpart in `from`, or -1. */
 	readonly match: Int32Array;
 	/** For each matched node of `to`, which of the old node's actions each of its actions continues, or -1. */
@@ -80,7 +80,7 @@ interface TreeMatch {
  * the pot grew: after a flop bet and call, a third of the pot on the turn
  * was taken for half of it.
  */
-function matchTrees(to: Tree, from: Tree, tolerance: number): TreeMatch {
+export function matchTrees(to: Tree, from: Tree, tolerance: number): TreeMatch {
 	const match = new Int32Array(to.nodeCount).fill(-1);
 	const actions = new Map<number, Int32Array>();
 	const limit = Math.log(tolerance);
