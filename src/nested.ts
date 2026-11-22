@@ -63,7 +63,9 @@ export interface KeptSets {
  * player's list there, or -1 for a hand the board blocks or the range does
  * not hold. A kept hand is at its own entry and a candidate at its
  * stand-in's; a hand an earlier board dropped follows the hand that board
- * plays it as. Without kept sets on the round, each list entry's own hands.
+ * plays it as, and on a river that deals that hand's card, the kept hand
+ * nearest it in strength. Without kept sets on the round, each list entry's
+ * own hands.
  *
  * @param out one per combination, overwritten
  */
@@ -103,6 +105,17 @@ export function playsAs(
 	const parentFrom = lists.start[(lists.roundBase[round - 1] + parent) * 2 + player];
 	const width = runouts.width[round];
 	const dealt = runouts.cards[round][board * width + width - 1];
+	// A final board's kept hands' strengths, worked out only if some hand needs them.
+	let strengths: Int32Array | null = null;
+	const suits = [0, 0, 0, 0];
+	const strengthOn = (c: number): number => {
+		const a = COMBO_CARDS[c * 2];
+		const b = COMBO_CARDS[c * 2 + 1];
+		const mine = [suits[0], suits[1], suits[2], suits[3]];
+		mine[a & 3] |= 1 << (a >> 2);
+		mine[b & 3] |= 1 << (b >> 2);
+		return evaluate(mine[0], mine[1], mine[2], mine[3]);
+	};
 	for (let h = 0; h < COMBOS; h++) {
 		if (out[h] >= 0 || above[h] < 0 || COMBO_CARDS[h * 2] === dealt || COMBO_CARDS[h * 2 + 1] === dealt) continue;
 		const entry = parentFrom + above[h];
@@ -112,6 +125,19 @@ export function playsAs(
 				break;
 			}
 		}
+		if (out[h] >= 0 || width !== 5 || count === 0) continue;
+		// The card dealt holds every hand its parent plays it as: in the solve
+		// its reach stops here, and to read it takes the kept hand nearest it
+		// in strength, the best this board can say of it.
+		if (strengths === null) {
+			for (let i = 0; i < width; i++) suits[runouts.cards[round][board * width + i] & 3] |= 1 << (runouts.cards[round][board * width + i] >> 2);
+			strengths = new Int32Array(count);
+			for (let i = 0; i < count; i++) strengths[i] = strengthOn(lists.memberCombo[lists.memberStart[from + i]]);
+		}
+		const mine = strengthOn(h);
+		let nearest = 0;
+		for (let i = 1; i < count; i++) if (Math.abs(strengths[i] - mine) < Math.abs(strengths[nearest] - mine)) nearest = i;
+		out[h] = nearest;
 	}
 }
 

@@ -452,6 +452,7 @@ export function createEngine(
 		if (stored) head[common.length + 5] = offsets[stored.block];
 		if (keptDeals) {
 			// Words 38 on, which `init` in assembly/engine.ts reads as 0 without kept sets.
+			if (common.length + 6 > 38) throw new Error('The engine header has no room left before the kept sets\' words');
 			head[38] = offsets[keptDeals.rounds];
 			head[39] = offsets[keptDeals.start];
 			head[40] = offsets[keptDeals.kept];

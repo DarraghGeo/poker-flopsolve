@@ -36,6 +36,42 @@ describe('streetCompression', () => {
 		expect(kept.exploitabilityPercent()).toBeCloseTo(plain.exploitabilityPercent(), 5);
 	});
 
+	it('agrees between the engines where suits mirror and hands are dropped', () => {
+		// Ts 9s 4h leaves two suits alike, so boards store one hand a mirror orbit and a hand
+		// that is dropped can stand for more hands than the one it plays as.
+		const config = { ...flop, streetCompression: { turn: 0.01, river: 0.01 } };
+		const js = solve(defineSpot(config), { iterations: 4, workers: 1, engine: 'js' });
+		const wasm = solve(defineSpot(config), { iterations: 4, workers: 1 });
+		expect(js.spot.kept!.keptHands[1]).toBeLessThan(js.spot.kept!.candidates[1]);
+		expect(wasm.ev(0)).toBeCloseTo(js.ev(0), 2);
+		expect(wasm.exploitabilityPercent()).toBeCloseTo(js.exploitabilityPercent(), 1);
+	});
+
+	it('gives every live hand a strategy on a river under a compressed turn', () => {
+		const spot = defineSpot({ ...flop, streetCompression: { turn: 0.02, river: 0.02 } });
+		const sol = solve(spot, { iterations: 3, workers: 1 });
+		const node = spot.tree.decisionNodes.find((n) => spot.tree.round[n] === 2)!;
+		const player = spot.tree.player[node];
+		const start = (spot.runouts.counts[0] + spot.runouts.counts[1]) * 2;
+		// A hand its turn dropped follows that turn's stand-in, or on a river that deals the
+		// stand-in's card the river's kept hand nearest it in strength: never an even mix by default.
+		let uneven = 0;
+		for (let board = 0; board < 12; board++) {
+			const view = sol.strategyAt(node, board);
+			const cards = Array.from(spot.runouts.cards[2].subarray(board * 5, board * 5 + 5));
+			const keptThere = spot.kept!.start[start + board * 2 + player + 1] - spot.kept!.start[start + board * 2 + player];
+			expect(keptThere).toBeGreaterThan(0);
+			view.combos.forEach((combo, i) => {
+				if (!(spot.players[player].weights[combo] > 0)) return;
+				if (cards.includes(COMBO_CARDS[combo * 2]) || cards.includes(COMBO_CARDS[combo * 2 + 1])) return;
+				const row = view.probs.subarray(i * view.actions.length, (i + 1) * view.actions.length);
+				expect(row.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
+				if (row.some((p) => Math.abs(p - 1 / view.actions.length) > 1e-9)) uneven++;
+			});
+		}
+		expect(uneven).toBeGreaterThan(0);
+	});
+
 	it('stores fewer hands on later boards, and keeps the weight that arrives', () => {
 		const plain = defineSpot(flop);
 		const spot = defineSpot({ ...flop, streetCompression: { turn: 0.01, river: 0.01 } });

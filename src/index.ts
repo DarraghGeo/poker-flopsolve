@@ -687,7 +687,8 @@ export function defineSpot(config: SpotConfig): Spot {
 	const kept = keptSetsFor(runouts, players, config.streetCompression, board.length, reserves);
 	const layout = buildLayout(tree, runouts, players, 4, historyAlias, undefined, kept);
 	const last = runouts.rounds - 1;
-	const showdownBytes = runouts.counts[last] * (2 * COMBOS + COMBOS + 1) * 2;
+	// Kept sets are tables too: the sets themselves, and about as much again for the deal maps built from them.
+	const showdownBytes = runouts.counts[last] * (2 * COMBOS + COMBOS + 1) * 2 + (kept ? kept.bytes * 2 : 0);
 	const bytes = layout.bytes + showdownBytes;
 	const compressedBytes = buildLayout(tree, runouts, players, 2, historyAlias, undefined, kept).bytes + showdownBytes;
 	// Shared storage is walked once per history all the same.
@@ -2103,6 +2104,8 @@ function createFixedRun(spot: Spot, options: SolveOptions = {}, before = 0): Fix
 			if (spot.kept) {
 				// Each board's kept hands stand for the hands the ranges held when
 				// they were chosen: weights may move in place, a new hand may not.
+				// The sets stay as chosen however far the weights move; a new run
+				// (a new hand, an edit) chooses them again for the weights it has.
 				const held = spot.kept.held[player];
 				for (let combo = 0; combo < COMBOS; combo++) {
 					if (nextRange[combo] > 0 && held[combo] === 0) {

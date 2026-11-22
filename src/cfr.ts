@@ -1462,15 +1462,9 @@ export function traverse(
 }
 
 /**
- * One deal's values in a sampled chance node's training walk. A deal not
- * walked gives its baseline, the values it returned when last walked; a
- * walked deal gives `b + (v - b) / p` and its `v` becomes the new baseline
- * (with the 'latest' estimator, `v` itself). A deal never walked yet is
- * always walked. Returned in the child's hand space, as a walk's are.
- */
-/**
  * A player's reach on a board with a kept set: every candidate's reach, times
- * the hands it stands for, added to its stand-in and scaled as fitted.
+ * the hands it stands for, added to its stand-in, which then holds it for each
+ * hand it stands for itself.
  */
 function gatherKept(
 	deals: KeptDeals,
@@ -1490,6 +1484,13 @@ function gatherKept(
 	for (let k = 0; k < count; k++) into[k] *= scale[listFrom + k];
 }
 
+/**
+ * One deal's values in a sampled chance node's training walk. A deal not
+ * walked gives its baseline, the values it returned when last walked; a
+ * walked deal gives `b + (v - b) / p` and its `v` becomes the new baseline
+ * (with the 'latest' estimator, `v` itself). A deal never walked yet is
+ * always walked. Returned in the child's hand space, as a walk's are.
+ */
 function sampledValue(
 	ctx: Context,
 	s: Sampling,

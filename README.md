@@ -1076,7 +1076,13 @@ Both are off by default, and either street can be left out. It is a `SpotConfig`
   is reweighed in place (`setRange`), and an edit to the betting, pot or stack keeps the kept sets.
   The sets are chosen for each range and its reserve (`oopReserve`, `ipReserve`), so a hand held
   in reserve is given weight in place too; a hand in neither is taken on a new run, as a hand
-  without storage is.
+  without storage is. Sets chosen for one range stay as they are while it is reweighed in
+  place, however far; the next new run (a new hand, an edit) chooses them again for the weights
+  it has.
+- A hand a turn dropped has no part on a river that deals a card of the hand it plays as there:
+  in the solve its reach stops at that river, and read back it plays as the river's kept hand
+  nearest it in strength. The figures below include what that costs.
+- The memory estimate counts the kept sets and their deal maps with the showdown table.
 
 Measured on wide ranges (407–426 and 541–570 combinations a side, `bench/street-compression`),
 issue #47's betting, 200 iterations of the blueprint on 4 threads in Node. Each cell is the time
