@@ -60,6 +60,15 @@ let depthBytes: usize = 0;
 let rowBytes: usize = 0;
 let cardSums: usize = 0;
 let chipScale: f64 = 1;
+// Kept sets (`HandSpace.kept` in src/hands.ts), all 0 without them: per round
+// whether its boards have them, each list slot's candidates, and per candidate
+// where its stand-in sits in the board's list and the hands it stands for;
+// per list entry, what the reach gathered on it is multiplied by.
+let keptRounds: usize = 0;
+let candStart: usize = 0;
+let candKept: usize = 0;
+let candOrbit: usize = 0;
+let listScale: usize = 0;
 
 /**
  * Built twice. False: the default engine, 32-bit storage only. True: the
@@ -312,6 +321,11 @@ export function init(header: usize): void {
 	rowBytes = <usize>load<u32>(header + 136);
 	cardSums = <usize>load<u32>(header + 140);
 	chipScale = <f64>load<u32>(header + 144);
+	keptRounds = <usize>load<u32>(header + 152);
+	candStart = <usize>load<u32>(header + 156);
+	candKept = <usize>load<u32>(header + 160);
+	candOrbit = <usize>load<u32>(header + 164);
+	listScale = <usize>load<u32>(header + 168);
 	if (STORAGE) {
 		const at = <usize>load<u32>(header + 148);
 		storageBlock = at;
@@ -467,6 +481,7 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 		// Chance sampling decides how each deal's values are had; how they
 		// spread over the deal's mirror images is the same either way.
 		const sampleHere = sampleRounds !== 0 && mode === TRAIN && applyUpdates && ((sampleRounds >> nextRound) & 1) !== 0;
+		const viaKept = keptRounds !== 0 && load<u8>(keptRounds + <usize>nextRound) !== 0;
 		for (let childBoard = first; childBoard < last; childBoard++) {
 			const childSlot = (nextBase + childBoard) * 2;
 			const nMe = i32At(listCount, childSlot + traverser);
@@ -477,16 +492,38 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 			for (let m = firstMember; m < membersEnd; m++) {
 				const upMe = up + (<usize>i32At(ups, m * 2 + traverser) << 1);
 				if (m === firstMember && sampleHere) {
-					value = sampledValue(traverser, node, child, childSlot, childBoard, upMe, up + (<usize>i32At(ups, m * 2 + opponent) << 1), reachMe, reachOpp, childMe, childOpp, depth);
+					value = sampledValue(traverser, node, child, childSlot, childBoard, upMe, up + (<usize>i32At(ups, m * 2 + opponent) << 1), reachMe, reachOpp, childMe, childOpp, depth, viaKept);
 				} else if (m === firstMember) {
 					const upOpp = up + (<usize>i32At(ups, m * 2 + opponent) << 1);
-					for (let k = 0; k < nMe; k++) store<f32>(childMe + (<usize>k << 2), f32At(reachMe, <i32>load<u16>(upMe + (<usize>k << 1))));
-					for (let k = 0; k < nOpp; k++) store<f32>(childOpp + (<usize>k << 2), f32At(reachOpp, <i32>load<u16>(upOpp + (<usize>k << 1))));
+					if (viaKept) {
+						gatherKept(childSlot + traverser, upMe, reachMe, childMe, nMe);
+						gatherKept(childSlot + opponent, upOpp, reachOpp, childOpp, nOpp);
+					} else {
+						for (let k = 0; k < nMe; k++) store<f32>(childMe + (<usize>k << 2), f32At(reachMe, <i32>load<u16>(upMe + (<usize>k << 1))));
+						for (let k = 0; k < nOpp; k++) store<f32>(childOpp + (<usize>k << 2), f32At(reachOpp, <i32>load<u16>(upOpp + (<usize>k << 1))));
+					}
 					value = traverse(traverser, child, childBoard, childMe, childOpp, depth + 1);
 				}
 				// Reach is symmetric under the member's relabelling, so one
 				// walk serves every member; only the values are spread.
-				if (load<u8>(packed + <usize>(childSlot + traverser))) {
+				if (viaKept) {
+					// Every candidate reads its stand-in's value, once per hand it stands for.
+					const from = i32At(candStart, childSlot + traverser);
+					const candidates = i32At(candStart, childSlot + traverser + 1) - from;
+					const stands = candKept + (<usize>from << 1);
+					if (load<u8>(packed + <usize>(childSlot + traverser))) {
+						const orbits = candOrbit + (<usize>from << 2);
+						for (let i = 0; i < candidates; i++) {
+							const at = out + (<usize>load<u16>(upMe + (<usize>i << 1)) << 2);
+							store<f32>(at, load<f32>(at) + f32At(value, <i32>load<u16>(stands + (<usize>i << 1))) * f32At(orbits, i));
+						}
+					} else {
+						for (let i = 0; i < candidates; i++) {
+							const at = out + (<usize>load<u16>(upMe + (<usize>i << 1)) << 2);
+							store<f32>(at, load<f32>(at) + f32At(value, <i32>load<u16>(stands + (<usize>i << 1))));
+						}
+					}
+				} else if (load<u8>(packed + <usize>(childSlot + traverser))) {
 					// An entry stands for its whole orbit: weight it so, and
 					// share the parent's total among its own orbit below.
 					const weights = multiplicity + (<usize>i32At(listStart, childSlot + traverser) << 2);
@@ -662,6 +699,35 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
 }
 
 /**
+ * A player's reach on a board with a kept set, as `gatherKept` in src/cfr.ts:
+ * every candidate's reach, times the hands it stands for, added to its
+ * stand-in and scaled as fitted.
+ */
+function gatherKept(slot: i32, ups: usize, reach: usize, into: usize, count: i32): void {
+	memory.fill(into, 0, <usize>count << 2);
+	const from = i32At(candStart, slot);
+	const candidates = i32At(candStart, slot + 1) - from;
+	const stands = candKept + (<usize>from << 1);
+	if (load<u8>(packed + <usize>slot)) {
+		const orbits = candOrbit + (<usize>from << 2);
+		for (let i = 0; i < candidates; i++) {
+			const at = into + (<usize>load<u16>(stands + (<usize>i << 1)) << 2);
+			store<f32>(at, load<f32>(at) + f32At(reach, <i32>load<u16>(ups + (<usize>i << 1))) * f32At(orbits, i));
+		}
+	} else {
+		for (let i = 0; i < candidates; i++) {
+			const at = into + (<usize>load<u16>(stands + (<usize>i << 1)) << 2);
+			store<f32>(at, load<f32>(at) + f32At(reach, <i32>load<u16>(ups + (<usize>i << 1))));
+		}
+	}
+	const scales = listScale + (<usize>i32At(listStart, slot) << 2);
+	for (let k = 0; k < count; k++) {
+		const at = into + (<usize>k << 2);
+		store<f32>(at, load<f32>(at) * f32At(scales, k));
+	}
+}
+
+/**
  * One deal's values in a sampled chance node's training walk, as
  * `sampledValue` in src/cfr.ts: a deal not walked gives its baseline, the
  * values it returned when last walked; a walked deal gives `b + (v - b) / p`
@@ -669,7 +735,7 @@ function traverse(traverser: i32, node: i32, board: i32, reachMe: usize, reachOp
  */
 function sampledValue(
 	traverser: i32, node: i32, child: i32, childSlot: i32, childBoard: i32, upMe: usize, upOpp: usize,
-	reachMe: usize, reachOpp: usize, childMe: usize, childOpp: usize, depth: i32,
+	reachMe: usize, reachOpp: usize, childMe: usize, childOpp: usize, depth: i32, viaKept: bool,
 ): usize {
 	const opponent = 1 - traverser;
 	const nMe = i32At(listCount, childSlot + traverser);
@@ -678,8 +744,13 @@ function sampledValue(
 	const fresh = load<i32>(walkAt) === 0;
 	if (!fresh && !sampled(node, childBoard, iteration)) return at;
 	const nOpp = i32At(listCount, childSlot + opponent);
-	for (let k = 0; k < nMe; k++) store<f32>(childMe + (<usize>k << 2), f32At(reachMe, <i32>load<u16>(upMe + (<usize>k << 1))));
-	for (let k = 0; k < nOpp; k++) store<f32>(childOpp + (<usize>k << 2), f32At(reachOpp, <i32>load<u16>(upOpp + (<usize>k << 1))));
+	if (viaKept) {
+		gatherKept(childSlot + traverser, upMe, reachMe, childMe, nMe);
+		gatherKept(childSlot + opponent, upOpp, reachOpp, childOpp, nOpp);
+	} else {
+		for (let k = 0; k < nMe; k++) store<f32>(childMe + (<usize>k << 2), f32At(reachMe, <i32>load<u16>(upMe + (<usize>k << 1))));
+		for (let k = 0; k < nOpp; k++) store<f32>(childOpp + (<usize>k << 2), f32At(reachOpp, <i32>load<u16>(upOpp + (<usize>k << 1))));
+	}
 	const value = traverse(traverser, child, childBoard, childMe, childOpp, depth + 1);
 	for (let k = 0; k < nMe; k++) {
 		const o = <usize>k << 2;

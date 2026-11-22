@@ -21,6 +21,7 @@
 
 import { COMBOS, DECK } from './cards.ts';
 import type { PlayerIndex } from './cfr.ts';
+import type { KeptSets } from './nested.ts';
 import type { Runouts } from './runouts.ts';
 
 /** The active lists, as `buildActiveLists` lays them out. */
@@ -50,6 +51,27 @@ export interface HandSpace {
 	 */
 	readonly sameStart: Int32Array;
 	readonly same: Int32Array;
+	/**
+	 * Deals onto boards with kept sets (`chooseKeptSets`), else null. For a
+	 * round dealt this way, `up` holds a parent hand for each of the board's
+	 * candidates, in the kept sets' order, rather than for each hand of its
+	 * list.
+	 */
+	readonly kept: KeptDeals | null;
+}
+
+/** What a deal onto a board with a kept set looks up, beside `up`. */
+export interface KeptDeals {
+	/** Per round, 1 where its boards have kept sets. */
+	readonly rounds: Uint8Array;
+	/** Candidates of each list slot, as `KeptSets.start`. */
+	readonly start: Int32Array;
+	/** Per candidate, where its stand-in sits in the board's list. */
+	readonly kept: Uint16Array;
+	/** Per candidate, the hands it stands for on its board. */
+	readonly orbit: Float32Array;
+	/** Per list entry, what the reach gathered on it is multiplied by. */
+	readonly scale: Float32Array;
 }
 
 /**
@@ -81,9 +103,20 @@ export function buildHandSpace(
 	runouts: Runouts,
 	players: readonly [PlayerIndex, PlayerIndex],
 	lists: HandLists,
+	sets: KeptSets | null = null,
 ): HandSpace {
 	void players;
 	const indexOf = new Int32Array(COMBOS).fill(-1);
+	const thinned = (round: number): boolean => sets !== null && sets.rounds[round] === 1;
+	// How many hands a deal maps: the board's candidates under kept sets, else its list.
+	const mapped = (round: number, board: number, player: number): number => {
+		if (!thinned(round)) return span(lists, round, board, player)[1];
+		const slot = (lists.roundBase[round] + board) * 2 + player;
+		return sets!.start[slot + 1] - sets!.start[slot];
+	};
+	const keptAt = sets ? new Uint16Array(sets.combo.length) : null;
+	const scale = sets ? new Float32Array(lists.list.length).fill(1) : null;
+	const childIndex = new Int32Array(COMBOS).fill(-1);
 
 	// Deals.
 	const upStart: Int32Array[] = [new Int32Array(0)];
@@ -94,7 +127,7 @@ export function buildHandSpace(
 		const orbitStart = runouts.orbitStart[round];
 		for (let child = 0; child < runouts.counts[round]; child++) {
 			const deals = orbitStart[child + 1] - orbitStart[child];
-			upLength += deals * (span(lists, round, child, 0)[1] + span(lists, round, child, 1)[1]);
+			upLength += deals * (mapped(round, child, 0) + mapped(round, child, 1));
 		}
 	}
 	const up = new Uint16Array(upLength);
@@ -108,6 +141,32 @@ export function buildHandSpace(
 				const [parentFrom, parentCount] = span(lists, round - 1, parent, player);
 				markMembers(lists, parentFrom, parentCount, indexOf, false);
 				const [childFrom, childCount] = span(lists, round, child, player);
+				if (thinned(round)) {
+					// Each candidate's parent hand, per deal; and, once for the
+					// board, where its stand-in sits in the board's list.
+					const slot = (lists.roundBase[round] + child) * 2 + player;
+					const from = sets!.start[slot];
+					const to = sets!.start[slot + 1];
+					markMembers(lists, childFrom, childCount, childIndex, false);
+					for (let i = from; i < to; i++) {
+						const at = childIndex[sets!.stand[i]];
+						if (at < 0) throw new Error('A stand-in is not in its board\'s list');
+						keptAt![i] = at;
+						if (sets!.stand[i] === sets!.combo[i]) scale![childFrom + at] = sets!.scale[i];
+					}
+					markMembers(lists, childFrom, childCount, childIndex, true);
+					for (let m = orbitStart[child]; m < orbitStart[child + 1]; m++) {
+						const back = runouts.maps.combo[runouts.maps.inverse(runouts.orbitMap[round][m])];
+						starts[m * 2 + player] = upAt;
+						for (let i = from; i < to; i++) {
+							const at = indexOf[back[sets!.combo[i]]];
+							if (at < 0) throw new Error('A candidate\'s parent hand is not in its parent\'s list');
+							up[upAt++] = at;
+						}
+					}
+					markMembers(lists, parentFrom, parentCount, indexOf, true);
+					continue;
+				}
 				for (let m = orbitStart[child]; m < orbitStart[child + 1]; m++) {
 					// The member's map sends a real hand onto the stored board;
 					// its inverse sends a stored hand back to the real one.
@@ -146,7 +205,10 @@ export function buildHandSpace(
 	}
 	sameStart[slots] = sameAt;
 
-	return { upStart, up, sameStart, same };
+	const kept: KeptDeals | null = sets
+		? { rounds: sets.rounds, start: sets.start, kept: keptAt!, orbit: Float32Array.from(sets.orbit), scale: scale! }
+		: null;
+	return { upStart, up, sameStart, same, kept };
 }
 
 /**

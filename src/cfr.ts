@@ -22,11 +22,13 @@ import { COMBO_CARDS, COMBOS, DECK } from './cards.ts';
 import type { Runouts } from './runouts.ts';
 import type { ShowdownTable, TerminalScratch } from './showdown.ts';
 import { makeTerminalScratch } from './showdown.ts';
-import type { HandSpace } from './hands.ts';
+import type { HandSpace, KeptDeals } from './hands.ts';
 import { foldValuesHands, foldValuesPacked, showdownValuesHands, showdownValuesPacked } from './hands.ts';
 import type { Tree } from './tree.ts';
 import { pairValues } from './pairs.ts';
 import type { Kernels } from './kernels.ts';
+import type { KeptSets } from './nested.ts';
+import { playsAs } from './nested.ts';
 import { loadKernels } from './kernels.ts';
 import { NodeKind } from './tree.ts';
 
@@ -172,6 +174,7 @@ export interface CompactPlan {
  *   owned by another takes its owner's blocks and adds none. Unset, every
  *   node owns its own.
  * @param compact compact storage's plan, for `SpotConfig.compactStorage`
+ * @param kept the boards' kept sets (`chooseKeptSets`): a block there has a row per kept hand
  */
 export function buildLayout(
 	tree: Tree,
@@ -180,8 +183,9 @@ export function buildLayout(
 	bytesPerElement: number,
 	alias?: Int32Array,
 	compact?: CompactPlan,
+	kept?: KeptSets | null,
 ): Layout {
-	const { roundBase, rowStart, totals } = liveRows(runouts, players);
+	const { roundBase, rowStart, totals } = liveRows(runouts, players, kept ?? null);
 
 	const offset = new Float64Array(tree.nodeCount).fill(-1);
 	const blockOffset = new Int32Array(tree.nodeCount).fill(-1);
@@ -263,7 +267,7 @@ export function buildLayout(
 }
 
 /** `liveRows` of the players last asked about, per set of runouts. */
-const liveRowsOf = new WeakMap<Runouts, { players: readonly [PlayerIndex, PlayerIndex]; rows: LiveRows }>();
+const liveRowsOf = new WeakMap<Runouts, { players: readonly [PlayerIndex, PlayerIndex]; kept: KeptSets | null; rows: LiveRows }>();
 
 interface LiveRows {
 	readonly roundBase: Int32Array;
@@ -280,9 +284,9 @@ interface LiveRows {
  * it is kept for the spot's runouts and players: defining a spot lays its
  * storage out up to three times, and each run once more.
  */
-function liveRows(runouts: Runouts, players: readonly [PlayerIndex, PlayerIndex]): LiveRows {
+function liveRows(runouts: Runouts, players: readonly [PlayerIndex, PlayerIndex], sets: KeptSets | null = null): LiveRows {
 	const kept = liveRowsOf.get(runouts);
-	if (kept && kept.players[0] === players[0] && kept.players[1] === players[1]) return kept.rows;
+	if (kept && kept.players[0] === players[0] && kept.players[1] === players[1] && kept.kept === sets) return kept.rows;
 	const roundBase = new Int32Array(runouts.rounds + 1);
 	for (let round = 0; round < runouts.rounds; round++) roundBase[round + 1] = roundBase[round] + runouts.counts[round];
 	const rowStart = new Int32Array(roundBase[runouts.rounds] * 2);
@@ -302,6 +306,14 @@ function liveRows(runouts: Runouts, players: readonly [PlayerIndex, PlayerIndex]
 			for (let player = 0; player < 2; player++) {
 				const index = players[player];
 				let live = 0;
+				if (sets !== null && sets.rounds[round] === 1) {
+					// A board with a kept set holds its kept hands and no others.
+					const slot = (roundBase[round] + board) * 2 + player;
+					for (let i = sets.start[slot]; i < sets.start[slot + 1]; i++) if (sets.stand[i] === sets.combo[i]) live++;
+					rowStart[slot] = totals[round * 2 + player];
+					totals[round * 2 + player] += live;
+					continue;
+				}
 				for (let i = 0; i < index.count; i++) {
 					const combo = index.combos[i];
 					if (onBoard[COMBO_CARDS[combo * 2]] || onBoard[COMBO_CARDS[combo * 2 + 1]]) continue;
@@ -321,7 +333,7 @@ function liveRows(runouts: Runouts, players: readonly [PlayerIndex, PlayerIndex]
 		}
 	}
 	const rows = { roundBase, rowStart, totals };
-	liveRowsOf.set(runouts, { players, rows });
+	liveRowsOf.set(runouts, { players, kept: sets, rows });
 	return rows;
 }
 
@@ -400,6 +412,8 @@ export interface Context {
 	readonly active: ActiveLists;
 	/** How hand-space vectors move between boards and meet at terminals. */
 	readonly hands: HandSpace;
+	/** Each later board's kept hands under `streetCompression`, else unset or null. */
+	readonly kept?: KeptSets | null;
 	/**
 	 * Board completions still to come after each round, with four cards already
 	 * removed for the two hands. A hand that ends early would otherwise be
@@ -754,6 +768,7 @@ function buildActiveLists(
 	runouts: Runouts,
 	players: readonly [PlayerIndex, PlayerIndex],
 	showdown: ShowdownTable | null = null,
+	sets: KeptSets | null = null,
 ): ActiveLists {
 	const roundBase = new Int32Array(runouts.rounds + 1);
 	for (let round = 0; round < runouts.rounds; round++) {
@@ -776,6 +791,8 @@ function buildActiveLists(
 	let members = new Uint16Array(capacity);
 	const onBoard = new Uint8Array(DECK);
 	const seen = new Uint8Array(COMBOS);
+	// On a board with a kept set (`chooseKeptSets`), the hands kept there.
+	const keptHere = new Uint8Array(COMBOS);
 	const comboMaps = runouts.maps.combo;
 	const last = runouts.rounds - 1;
 	let entries = 0;
@@ -804,6 +821,8 @@ function buildActiveLists(
 				const index = players[player];
 				const slot = (roundBase[round] + board) * 2 + player;
 				start[slot] = entries;
+				const thinned = sets !== null && sets.rounds[round] === 1;
+				if (thinned) for (let i = sets.start[slot]; i < sets.start[slot + 1]; i++) if (sets.stand[i] === sets.combo[i]) keptHere[sets.combo[i]] = 1;
 				// The showdown table already holds this board's hands by
 				// strength, ties in ascending order: the player's own, in that
 				// order, are their list. Elsewhere, their range in its order.
@@ -824,6 +843,7 @@ function buildActiveLists(
 						combo = index.combos[c];
 						if (onBoard[COMBO_CARDS[combo * 2]] || onBoard[COMBO_CARDS[combo * 2 + 1]]) continue;
 					}
+					if (thinned && keptHere[combo] === 0) continue;
 					// Only the lowest hand of a mirror orbit is stored; see `orbitLeader`.
 					let leader = true;
 					for (let k = stabFrom; k < stabTo; k++) {
@@ -854,6 +874,7 @@ function buildActiveLists(
 					entries++;
 				}
 				count[slot] = entries - start[slot];
+				if (thinned) for (let i = sets.start[slot]; i < sets.start[slot + 1]; i++) keptHere[sets.combo[i]] = 0;
 			}
 		}
 	}
@@ -1237,6 +1258,10 @@ export function traverse(
 		const sampling = ctx.sampling ?? null;
 		const sampleHere =
 			sampling !== null && mode === Mode.Train && ctx.applyUpdates && !ctx.expandOrbits && sampling.rounds[nextRound] === 1;
+		// Boards with kept sets: reach is gathered onto the kept hands, and
+		// every candidate reads its stand-in's value (`chooseKeptSets`).
+		const deals = ctx.hands.kept;
+		const viaKept = deals !== null && deals.rounds[nextRound] === 1;
 
 		for (let childBoard = from; childBoard < to; childBoard++) {
 			const childMySlot = (lists.roundBase[nextRound] + childBoard) * 2 + traverser;
@@ -1260,11 +1285,22 @@ export function traverse(
 					);
 				} else if (value === null || ctx.expandOrbits) {
 					const upOpp = upStart[m * 2 + opponent];
-					for (let k = 0; k < nMe; k++) childMe[k] = reachMe[up[upMe + k]];
-					for (let k = 0; k < nOpp; k++) childOpp[k] = reachOpp[up[upOpp + k]];
+					if (viaKept) {
+						gatherKept(deals, lists.start[childMySlot], childMySlot, up, upMe, reachMe, childMe, nMe);
+						gatherKept(deals, lists.start[childOppSlot], childOppSlot, up, upOpp, reachOpp, childOpp, nOpp);
+					} else {
+						for (let k = 0; k < nMe; k++) childMe[k] = reachMe[up[upMe + k]];
+						for (let k = 0; k < nOpp; k++) childOpp[k] = reachOpp[up[upOpp + k]];
+					}
 					value = traverse(ctx, buffers, mode, traverser, iterWeight, child, childBoard, childMe, childOpp, depth + 1);
 				}
-				if (lists.packed[childMySlot]) {
+				if (viaKept) {
+					const kept = deals.kept;
+					const orbit = deals.orbit;
+					for (let i = deals.start[childMySlot], end = deals.start[childMySlot + 1], u = upMe; i < end; i++, u++) {
+						out[up[u]] += value[kept[i]] * orbit[i];
+					}
+				} else if (lists.packed[childMySlot]) {
 					// An entry stands for its whole orbit: weight it so, and
 					// share the parent's total among its own orbit below.
 					const childFrom = lists.start[childMySlot];
@@ -1432,6 +1468,28 @@ export function traverse(
  * (with the 'latest' estimator, `v` itself). A deal never walked yet is
  * always walked. Returned in the child's hand space, as a walk's are.
  */
+/**
+ * A player's reach on a board with a kept set: every candidate's reach, times
+ * the hands it stands for, added to its stand-in and scaled as fitted.
+ */
+function gatherKept(
+	deals: KeptDeals,
+	listFrom: number,
+	slot: number,
+	up: Uint16Array,
+	upAt: number,
+	reach: Float64Array,
+	into: Float64Array,
+	count: number,
+): void {
+	for (let k = 0; k < count; k++) into[k] = 0;
+	const kept = deals.kept;
+	const orbit = deals.orbit;
+	for (let i = deals.start[slot], end = deals.start[slot + 1], u = upAt; i < end; i++, u++) into[kept[i]] += reach[up[u]] * orbit[i];
+	const scale = deals.scale;
+	for (let k = 0; k < count; k++) into[k] *= scale[listFrom + k];
+}
+
 function sampledValue(
 	ctx: Context,
 	s: Sampling,
@@ -1464,8 +1522,14 @@ function sampledValue(
 	const up = ctx.hands.up;
 	const upMe = upStart[member * 2 + traverser];
 	const upOpp = upStart[member * 2 + opponent];
-	for (let k = 0; k < nMe; k++) childMe[k] = reachMe[up[upMe + k]];
-	for (let k = 0; k < nOpp; k++) childOpp[k] = reachOpp[up[upOpp + k]];
+	const deals = ctx.hands.kept;
+	if (deals !== null && deals.rounds[nextRound] === 1) {
+		gatherKept(deals, lists.start[childMySlot], childMySlot, up, upMe, reachMe, childMe, nMe);
+		gatherKept(deals, lists.start[childOppSlot], childOppSlot, up, upOpp, reachOpp, childOpp, nOpp);
+	} else {
+		for (let k = 0; k < nMe; k++) childMe[k] = reachMe[up[upMe + k]];
+		for (let k = 0; k < nOpp; k++) childOpp[k] = reachOpp[up[upOpp + k]];
+	}
 	const value = traverse(ctx, buffers, Mode.Train, traverser, t, child, childBoard, childMe, childOpp, depth + 1);
 	// The child's buffer is free again, so the estimate goes in place.
 	const weight = s.unbiased ? 1 / s.p : 1;
@@ -2120,6 +2184,17 @@ export function makeSolver(ctx: Context): Solver {
 				// A packed entry's strategy is its whole orbit's.
 				for (let m = lists.memberStart[from + i]; m < lists.memberStart[from + i + 1]; m++) {
 					const at = index.slot[lists.memberCombo[m]];
+					for (let a = 0; a < actions; a++) probs[at * actions + a] = strategy[a * count + i];
+				}
+			}
+			const round = ctx.tree.round[node];
+			if (ctx.kept && ctx.kept.rounds[round] === 1) {
+				// A hand that is not kept here plays as its stand-in.
+				const plays = new Int32Array(COMBOS);
+				playsAs(ctx.kept, ctx.runouts, lists, round, board, owner, plays);
+				for (let at = 0; at < index.count; at++) {
+					const i = plays[index.combos[at]];
+					if (i < 0) continue;
 					for (let a = 0; a < actions; a++) probs[at * actions + a] = strategy[a * count + i];
 				}
 			}

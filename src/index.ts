@@ -35,6 +35,8 @@ import type { Pool } from './parallel.ts';
 import { defaultWorkerCount, planShards, startPool } from './parallel.ts';
 import { DEFAULT_MAX_BYTES, PLATFORM, holdEngineThreads, spawnEngineWorker, threadAdvice, threadLimit, warmEngineThreads } from './platform/node.ts';
 import type { ActiveLists, CompactPlan, Context, Layout, PlayerIndex, RegretStore, RootValues, SamplingOptions, Solver, SumStore } from './cfr.ts';
+import { chooseKeptSets } from './nested.ts';
+import type { KeptSets } from './nested.ts';
 import {
 	buildActiveLists,
 	buildLayout,
@@ -316,6 +318,32 @@ export interface SpotConfig {
 	 * against when the spot is defined.
 	 */
 	readonly compactStorage?: CompactStorage;
+	/**
+	 * Compress the ranges again on every later board — an approximation, off
+	 * by default. See `StreetCompression`. Set here because it decides which
+	 * hands each board stores.
+	 */
+	readonly streetCompression?: StreetCompression;
+}
+
+/**
+ * Range compression street by street, inside one solve. `compressRanges`
+ * thins the ranges for the board a spot starts on; this gives every later
+ * board a kept set of its own: on each turn card the fewest hands that match
+ * what arrives there, and under it on each river card the fewest of those
+ * again. Only kept hands are stored and walked on a board, and most of a
+ * solve's work is on the later streets.
+ *
+ * Each value is a tolerance, as `CompressRangesOptions.tolerance`: the most
+ * mismatch a board's kept set may have. Unset or 0 leaves that street whole.
+ * A hand that is not kept on a board plays there as the kept hand most like
+ * it, and its strategy there reads as that hand's.
+ */
+export interface StreetCompression {
+	/** Tolerance on each turn card. Ignored for a spot that starts on the turn or the river. */
+	readonly turn?: number;
+	/** Tolerance on each river card. Ignored for a spot that starts on the river. */
+	readonly river?: number;
 }
 
 /**
@@ -545,6 +573,8 @@ export interface Spot {
 	readonly source: SpotConfig;
 	/** Each node's storage owner under `shareHistories`; unset without it. */
 	readonly historyAlias?: Int32Array;
+	/** Each later board's kept hands under `streetCompression`; unset without it. */
+	readonly kept?: KeptSets;
 	/**
 	 * Find the stored board standing for a real one, and how hands relabel
 	 * onto it. Board indices everywhere else — `strategyAt`, `reachAt`,
@@ -651,16 +681,17 @@ export function defineSpot(config: SpotConfig): Spot {
 	const tree = buildTree(treeConfig(config, rows), runouts);
 
 	const historyAlias = config.shareHistories ? shareHistories(tree, runouts, config, chipScale) : undefined;
-	const layout = buildLayout(tree, runouts, players, 4, historyAlias);
+	const kept = keptSetsFor(runouts, players, config.streetCompression, board.length);
+	const layout = buildLayout(tree, runouts, players, 4, historyAlias, undefined, kept);
 	const last = runouts.rounds - 1;
 	const showdownBytes = runouts.counts[last] * (2 * COMBOS + COMBOS + 1) * 2;
 	const bytes = layout.bytes + showdownBytes;
-	const compressedBytes = buildLayout(tree, runouts, players, 2, historyAlias).bytes + showdownBytes;
+	const compressedBytes = buildLayout(tree, runouts, players, 2, historyAlias, undefined, kept).bytes + showdownBytes;
 	// Shared storage is walked once per history all the same.
 	const walkedSlots = layout.walkedSlots;
 	const compact = config.compactStorage ? compactPlan(config.compactStorage, runouts.rounds) : null;
 	const compactBytes = compact
-		? buildLayout(tree, runouts, players, 4, historyAlias, compact).bytes + showdownBytes
+		? buildLayout(tree, runouts, players, 4, historyAlias, compact, kept).bytes + showdownBytes
 		: null;
 	const needed = compactBytes ?? compressedBytes;
 
@@ -700,6 +731,7 @@ export function defineSpot(config: SpotConfig): Spot {
 		stackUnits: Math.round(config.stack * chipScale),
 		source: config,
 		...(historyAlias ? { historyAlias } : {}),
+		...(kept ? { kept } : {}),
 		resolveBoard(cards) {
 			return resolveBoard(runouts, typeof cards === 'string' ? parseCards(cards) : cards);
 		},
@@ -750,8 +782,44 @@ interface SetupTables {
 	readonly hands: HandSpace;
 }
 
-/** The tables last built, and the runouts and hands they were built for. */
-let keptTables: { runouts: Runouts; combos: readonly [Uint16Array, Uint16Array]; tables: SetupTables } | null = null;
+/** The tables last built, and the runouts, hands and kept sets they were built for. */
+let keptTables: { runouts: Runouts; combos: readonly [Uint16Array, Uint16Array]; kept: KeptSets | null; tables: SetupTables } | null = null;
+
+/** The kept sets last chosen, and what they were chosen for. */
+let lastKept: { runouts: Runouts; weights: readonly [Float64Array, Float64Array]; tolerance: readonly number[]; sets: KeptSets } | null = null;
+
+/**
+ * The kept sets `streetCompression` asks for, or null. Choosing them is a
+ * compression per board, and a spot is defined more than once on the way to
+ * a solve, so the last set is kept while the runouts, the weights and the
+ * tolerances are the same.
+ */
+function keptSetsFor(
+	runouts: Runouts,
+	players: readonly [PlayerIndex, PlayerIndex],
+	streets: StreetCompression | undefined,
+	boardCards: number,
+): KeptSets | null {
+	if (!streets) return null;
+	for (const [name, value] of [['turn', streets.turn], ['river', streets.river]] as const) {
+		if (value !== undefined && !(value >= 0 && value < 1)) throw new Error(`streetCompression.${name} must be from 0 to under 1; got ${value}`);
+	}
+	// Rounds count from the spot's own street: the turn is round 1 from a flop, the river the last.
+	const tolerance = new Array<number>(runouts.rounds).fill(0);
+	if (boardCards === 3) tolerance[1] = streets.turn ?? 0;
+	if (boardCards < 5) tolerance[runouts.rounds - 1] = streets.river ?? 0;
+	if (!tolerance.some((value) => value > 0)) return null;
+	const same = (a: Float64Array, b: Float64Array): boolean => a.every((value, i) => value === b[i]);
+	if (
+		lastKept && lastKept.runouts === runouts && lastKept.tolerance.every((value, i) => value === tolerance[i]) &&
+		same(lastKept.weights[0], players[0].weights) && same(lastKept.weights[1], players[1].weights)
+	) {
+		return lastKept.sets;
+	}
+	const sets = chooseKeptSets(runouts, players, tolerance);
+	if (sets) lastKept = { runouts, weights: [players[0].weights.slice(), players[1].weights.slice()], tolerance, sets };
+	return sets;
+}
 
 /**
  * The showdown ranking, hand lists and hand-space maps of a spot. They
@@ -765,15 +833,19 @@ let keptTables: { runouts: Runouts; combos: readonly [Uint16Array, Uint16Array];
 function setupTables(spot: Spot, relevant: Uint8Array): SetupTables {
 	const [first, second] = [spot.players[0].combos, spot.players[1].combos];
 	const same = (a: Uint16Array, b: Uint16Array): boolean => a.length === b.length && a.every((combo, i) => combo === b[i]);
-	if (keptTables && keptTables.runouts === spot.runouts && same(keptTables.combos[0], first) && same(keptTables.combos[1], second)) {
+	const kept = spot.kept ?? null;
+	if (
+		keptTables && keptTables.runouts === spot.runouts && keptTables.kept === kept &&
+		same(keptTables.combos[0], first) && same(keptTables.combos[1], second)
+	) {
 		return keptTables.tables;
 	}
 	// Let the old set go before the new one is built, so both are never held.
 	keptTables = null;
 	const showdown = buildShowdownTable(spot.runouts, relevant);
-	const active = buildActiveLists(spot.runouts, spot.players, showdown);
-	const hands = buildHandSpace(spot.runouts, spot.players, active);
-	keptTables = { runouts: spot.runouts, combos: [first, second], tables: { showdown, active, hands } };
+	const active = buildActiveLists(spot.runouts, spot.players, showdown, kept);
+	const hands = buildHandSpace(spot.runouts, spot.players, active, kept);
+	keptTables = { runouts: spot.runouts, combos: [first, second], kept, tables: { showdown, active, hands } };
 	return keptTables.tables;
 }
 
@@ -787,6 +859,7 @@ function setupTables(spot: Spot, relevant: Uint8Array): SetupTables {
 export function releaseSetupCache(): void {
 	keptRunouts = null;
 	keptTables = null;
+	lastKept = null;
 }
 
 /** Whether some hand of `a` and some hand of `b` share no card. */
@@ -1756,7 +1829,7 @@ function createFixedRun(spot: Spot, options: SolveOptions = {}, before = 0): Fix
 	}
 	const { showdown, active, hands } = setupTables(spot, relevant);
 	const layoutAt = (at: Precision): Layout => buildLayout(
-		spot.tree, spot.runouts, spot.players, PRECISION_BYTES[at], spot.historyAlias, compact ?? undefined,
+		spot.tree, spot.runouts, spot.players, PRECISION_BYTES[at], spot.historyAlias, compact ?? undefined, spot.kept,
 	);
 	let layout = layoutAt(precision);
 	const weights = runoutWeights(spot.runouts);
@@ -1848,6 +1921,7 @@ function createFixedRun(spot: Spot, options: SolveOptions = {}, before = 0): Fix
 		tree: spot.tree,
 		runouts: spot.runouts,
 		players: spot.players,
+		kept: spot.kept ?? null,
 		layout,
 		showdown,
 		regret: engine
@@ -2075,8 +2149,8 @@ function createFixedRun(spot: Spot, options: SolveOptions = {}, before = 0): Fix
 			return (100 * solver.exploitability()) / (spot.potUnits / spot.chipScale);
 		},
 		trueExploitabilityPercent() {
-			if (!spot.runouts.approximate) return this.exploitabilityPercent();
-			const real = createRun(defineSpot({ ...spot.source, runoutBuckets: false }), {
+			if (!spot.runouts.approximate && !spot.kept) return this.exploitabilityPercent();
+			const real = createRun(defineSpot({ ...spot.source, runoutBuckets: false, streetCompression: undefined }), {
 				workers: threadCount,
 				precision,
 				wasmStorage: options.wasmStorage,
@@ -2218,9 +2292,9 @@ function baselineCost(of: Spot, sampling: SamplingOptions): number {
 	const relevant = new Uint8Array(COMBOS);
 	for (const combo of of.players[0].combos) relevant[combo] = 1;
 	for (const combo of of.players[1].combos) relevant[combo] = 1;
-	const active = buildActiveLists(of.runouts, of.players, buildShowdownTable(of.runouts, relevant));
+	const active = buildActiveLists(of.runouts, of.players, buildShowdownTable(of.runouts, relevant), of.kept);
 	const compact = of.source.compactStorage ? compactPlan(of.source.compactStorage, of.runouts.rounds) : undefined;
-	const layout = buildLayout(of.tree, of.runouts, of.players, 4, of.historyAlias, compact);
+	const layout = buildLayout(of.tree, of.runouts, of.players, 4, of.historyAlias, compact, of.kept);
 	return samplingBytes(planSampling(of.tree, of.runouts, active, layout, sampling));
 }
 
@@ -2231,7 +2305,7 @@ export function storageCost(of: Spot, at: Precision): number {
 	}
 	const plan = compactPlan(of.source.compactStorage!, of.runouts.rounds);
 	const bytesAt = (width: number): number =>
-		buildLayout(of.tree, of.runouts, of.players, width, of.historyAlias, plan).bytes;
+		buildLayout(of.tree, of.runouts, of.players, width, of.historyAlias, plan, of.kept).bytes;
 	return of.estimate.compactBytes + bytesAt(PRECISION_BYTES[at]) - bytesAt(4);
 }
 

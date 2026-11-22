@@ -30,6 +30,7 @@ import type { Context, RegretStore, SumStore } from './cfr.ts';
 import { COMPACT_SUM_STEPS, regretMatch, scaleExponent, SHIFT_SCALE } from './cfr.ts';
 import { COMBO_CARDS, COMBOS, DECK, comboIndex } from './cards.ts';
 import { markMembers } from './hands.ts';
+import { playsAs } from './nested.ts';
 import type { Runouts } from './runouts.ts';
 import { resolveBoard } from './runouts.ts';
 import type { Tree } from './tree.ts';
@@ -358,7 +359,9 @@ export function warmStart(
 				const newFrom = to.active.start[newSlot];
 				const count = to.active.count[newSlot];
 				// Every hand an old entry stands for is at that entry.
-				markMembers(from.active, oldFrom, oldCount, position, false);
+				const thinned = from.kept != null && from.kept.rounds[round] === 1;
+				if (thinned) playsAs(from.kept!, from.runouts, from.active, round, resolved.board, owner, position);
+				else markMembers(from.active, oldFrom, oldCount, position, false);
 				let sources = 0;
 				for (let i = 0; i < count; i++) {
 					for (let m = to.active.memberStart[newFrom + i]; m < to.active.memberStart[newFrom + i + 1]; m++) {
@@ -366,7 +369,8 @@ export function warmStart(
 					}
 					sourceEnd[i] = sources;
 				}
-				markMembers(from.active, oldFrom, oldCount, position, true);
+				if (thinned) position.fill(-1);
+				else markMembers(from.active, oldFrom, oldCount, position, true);
 
 				// Plain storage on both sides and one old hand for each new one:
 				// the usual case, copied store to store.
