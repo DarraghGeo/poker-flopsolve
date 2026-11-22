@@ -6,6 +6,7 @@ solve; `compressRanges` thins the ranges for the flop. This measures the three t
 
 | script | what it does |
 |---|---|
+| `session.ts [board] [workers]` | Node: an `openLite` session on the wide ranges, plain and with each variant's kept sets: seconds and iterations to settle for the opening solve, a range reweighed twice, a flop bet size moved and a hand class added, then the exploitability of where it ended, in the same tree with every hand on every runout |
 | `measure.ts [board,...] [workers] [passes]` | Node: Lite's blueprint as it is and with each variant in `VARIANTS`, each run for the same number of passes: boards stored, hands kept on later boards, storage, the time to define the spot (which chooses the kept sets), the time for the passes, exploitability in the same tree with every hand on every runout, and the root play against plain Lite's |
 
 `VARIANTS` separates variants with `;` and a variant's streets with `,`:
@@ -35,6 +36,7 @@ Columns:
 
 - `bench-ranges-4t.log`: the bench ranges, 165–223 combinations a side.
 - `wide-ranges-4t.log`: `wide-ranges.txt`.
+- `session-two-tone-4t.log`: `session.ts` on Ts 9s 4h.
 
 A compressed turn turns runout buckets off (a bucketed river deal relabels hands, and a turn's kept
 hands are chosen for its own deals), so those rows store more boards than plain Lite does.

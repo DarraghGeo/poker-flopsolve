@@ -1,0 +1,7 @@
+
+two-tone (Ts 9s 4h), 4 threads; seconds (iterations) to settle
+variant                  | open            | reweigh         | reweigh back    | bet size moved  | hand added      | exploitable %
+lite                     |   56.1 s ( 360) |   18.5 s ( 100) |   28.4 s ( 160) |   28.9 s ( 160) |   41.7 s ( 240) |     2.27
+river=0.01               |   25.4 s ( 300) |   10.1 s ( 120) |   11.8 s ( 140) |   18.0 s ( 200) |   16.2 s ( 180) |     4.43
+river=0.02               |   19.6 s ( 320) |    6.1 s ( 100) |    9.7 s ( 160) |   13.1 s ( 200) |   10.6 s ( 160) |     5.82
+turn=0.01,river=0.02     |   16.8 s ( 340) |    4.7 s ( 100) |    8.2 s ( 180) |   11.5 s ( 220) |   11.5 s ( 220) |     5.99

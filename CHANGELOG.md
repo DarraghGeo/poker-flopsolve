@@ -17,6 +17,9 @@
 - Choosing the kept sets is part of defining the spot, 0.4–1.5 s on those ranges, and is kept
   while the ranges and the board are the same: an edit to the betting reuses them, and a range is
   reweighed in place.
+- In an `openLite` session on the two-tone flop with those ranges, a range reweighed settled again
+  in 4.7–11.8 s where plain Lite took 18.5–28.4, and a moved flop bet size in 11.5–18.0 s where it
+  took 28.9; the session ended 4.4–6.0% of pot exploitable in the full game against 2.3%.
 - `strategyAt` and `reachAt` read a hand that is not kept as its stand-in, `resolve` solves the
   later streets again for every hand, and `trueExploitabilityPercent()` measures a solve with kept
   sets in the full game.
